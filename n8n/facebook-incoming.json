@@ -1,0 +1,47 @@
+{
+  "name": "Facebook Incoming Example",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fb-incoming"
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        300,
+        300
+      ],
+      "id": "WebhookNode"
+    },
+    {
+      "parameters": {
+        "authentication": "none",
+        "url": "http://django:8000/webhooks/facebook/",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        540,
+        300
+      ],
+      "id": "ForwardToDjango",
+      "credentials": {}
+    }
+  ],
+  "connections": {
+    "WebhookNode": {
+      "main": [
+        [
+          {
+            "node": "ForwardToDjango",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
+

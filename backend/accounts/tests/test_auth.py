@@ -1,0 +1,335 @@
+from django.test import TestCase
+from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
+from rest_framework import status
+from accounts.models import Project, ProjectUser
+
+User = get_user_model()
+
+
+class SignUpViewTests(TestCase):
+	"""Test cases for user signup functionality"""
+	
+	def setUp(self):
+		"""Set up test client"""
+		self.client = APIClient()
+		self.signup_url = "/api/auth/signup/"
+	
+	def test_signup_success(self):
+		"""Test successful user signup"""
+		data = {
+			"first_name": "John",
+			"last_name": "Doe",
+			"email": "john.doe@example.com",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.signup_url, data, format="json")
+		
+		# Check response status
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		
+		# Check response structure
+		self.assertTrue(response.data["success"])
+		self.assertEqual(response.data["message"], "User created successfully")
+		self.assertIn("data", response.data)
+		self.assertIn("user", response.data["data"])
+		
+		# Check user was created
+		user = User.objects.get(email="john.doe@example.com")
+		self.assertEqual(user.first_name, "John")
+		self.assertEqual(user.last_name, "Doe")
+		self.assertEqual(user.username, "john.doe@example.com")
+		
+		# Check default project was created
+		project_user = ProjectUser.objects.filter(user=user).first()
+		self.assertIsNotNone(project_user)
+		self.assertEqual(project_user.role, "admin")
+		self.assertEqual(project_user.project.name, "Default Project")
+		
+		# Check user data in response
+		user_data = response.data["data"]["user"]
+		self.assertEqual(user_data["id"], str(user.id))
+		self.assertEqual(user_data["first_name"], "John")
+	
+	def test_signup_duplicate_email(self):
+		"""Test signup with duplicate email fails"""
+		# Create existing user
+		User.objects.create_user(
+			username="existing@example.com",
+			email="existing@example.com",
+			password="password123"
+		)
+		
+		data = {
+			"first_name": "Jane",
+			"last_name": "Doe",
+			"email": "existing@example.com",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.signup_url, data, format="json")
+		
+		# Check response status
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		
+		# Check error message (custom exception handler wraps errors)
+		self.assertFalse(response.data["success"])
+		self.assertIn("error", response.data)
+		self.assertIn("details", response.data["error"])
+		self.assertIn("email", response.data["error"]["details"])
+	
+	def test_signup_missing_fields(self):
+		"""Test signup with missing required fields"""
+		# Missing email
+		data = {
+			"first_name": "John",
+			"last_name": "Doe",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.signup_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("email", response.data["error"]["details"])
+		
+		# Missing password
+		data = {
+			"first_name": "John",
+			"last_name": "Doe",
+			"email": "john@example.com"
+		}
+		
+		response = self.client.post(self.signup_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("password", response.data["error"]["details"])
+		
+		# Missing first_name
+		data = {
+			"last_name": "Doe",
+			"email": "john@example.com",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.signup_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("first_name", response.data["error"]["details"])
+		
+		# Missing last_name
+		data = {
+			"first_name": "John",
+			"email": "john@example.com",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.signup_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("last_name", response.data["error"]["details"])
+	
+	def test_signup_invalid_email(self):
+		"""Test signup with invalid email format"""
+		data = {
+			"first_name": "John",
+			"last_name": "Doe",
+			"email": "invalid-email",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.signup_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("email", response.data["error"]["details"])
+	
+	def test_signup_password_too_short(self):
+		"""Test signup with password shorter than 8 characters"""
+		data = {
+			"first_name": "John",
+			"last_name": "Doe",
+			"email": "john@example.com",
+			"password": "short"
+		}
+		
+		response = self.client.post(self.signup_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("password", response.data["error"]["details"])
+	
+	def test_signup_creates_default_project(self):
+		"""Test that signup creates a default project for the user"""
+		data = {
+			"first_name": "John",
+			"last_name": "Doe",
+			"email": "john@example.com",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.signup_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		
+		user = User.objects.get(email="john@example.com")
+		project_user = ProjectUser.objects.get(user=user)
+		
+		self.assertIsNotNone(project_user.project)
+		self.assertEqual(project_user.project.name, "Default Project")
+		self.assertIsNotNone(project_user.project.slug)
+
+
+class LoginViewTests(TestCase):
+	"""Test cases for user login functionality"""
+	
+	def setUp(self):
+		"""Set up test client and test user"""
+		self.client = APIClient()
+		self.login_url = "/api/auth/login/"
+		
+		# Create a test user
+		self.user = User.objects.create_user(
+			username="testuser@example.com",
+			email="testuser@example.com",
+			password="testpass123",
+			first_name="Test",
+			last_name="User"
+		)
+		
+		# Create a default project for the user
+		project = Project.objects.create(name="Test Project", slug="test-project-123")
+		ProjectUser.objects.create(project=project, user=self.user, role="admin")
+	
+	def test_login_success(self):
+		"""Test successful login"""
+		data = {
+			"email": "testuser@example.com",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.login_url, data, format="json")
+		
+		# Check response status
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		
+		# Check response structure
+		self.assertTrue(response.data["success"])
+		self.assertEqual(response.data["message"], "Login successful")
+		self.assertIn("data", response.data)
+		self.assertIn("user", response.data["data"])
+		self.assertIn("projects", response.data["data"])
+		
+		# Check user data
+		user_data = response.data["data"]["user"]
+		self.assertEqual(user_data["id"], str(self.user.id))
+		self.assertEqual(user_data["first_name"], "Test")
+		
+		# Check projects data
+		projects_data = response.data["data"]["projects"]
+		self.assertEqual(len(projects_data), 1)
+		self.assertEqual(projects_data[0]["name"], "Test Project")
+		self.assertEqual(projects_data[0]["role"], "admin")
+	
+	def test_login_invalid_email(self):
+		"""Test login with non-existent email"""
+		data = {
+			"email": "nonexistent@example.com",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.login_url, data, format="json")
+		
+		# Check response status
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		
+		# Check error message (custom exception handler wraps errors)
+		self.assertFalse(response.data["success"])
+		self.assertIn("error", response.data)
+		self.assertIn("details", response.data["error"])
+		self.assertIn("non_field_errors", response.data["error"]["details"])
+	
+	def test_login_invalid_password(self):
+		"""Test login with incorrect password"""
+		data = {
+			"email": "testuser@example.com",
+			"password": "wrongpassword"
+		}
+		
+		response = self.client.post(self.login_url, data, format="json")
+		
+		# Check response status
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		
+		# Check error message (custom exception handler wraps errors)
+		self.assertFalse(response.data["success"])
+		self.assertIn("error", response.data)
+		self.assertIn("details", response.data["error"])
+		self.assertIn("non_field_errors", response.data["error"]["details"])
+	
+	def test_login_missing_email(self):
+		"""Test login with missing email"""
+		data = {
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.login_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("email", response.data["error"]["details"])
+	
+	def test_login_missing_password(self):
+		"""Test login with missing password"""
+		data = {
+			"email": "testuser@example.com"
+		}
+		
+		response = self.client.post(self.login_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("password", response.data["error"]["details"])
+	
+	def test_login_inactive_user(self):
+		"""Test login with inactive user account"""
+		# Deactivate user
+		self.user.is_active = False
+		self.user.save()
+		
+		data = {
+			"email": "testuser@example.com",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.login_url, data, format="json")
+		
+		# Check response status
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		
+		# Check error message (custom exception handler wraps errors)
+		self.assertFalse(response.data["success"])
+		self.assertIn("error", response.data)
+		self.assertIn("details", response.data["error"])
+		self.assertIn("non_field_errors", response.data["error"]["details"])
+	
+	def test_login_invalid_email_format(self):
+		"""Test login with invalid email format"""
+		data = {
+			"email": "invalid-email",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.login_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("email", response.data["error"]["details"])
+	
+	def test_login_returns_user_projects(self):
+		"""Test that login returns all user's projects"""
+		# Create additional project for the user
+		project2 = Project.objects.create(name="Project 2", slug="project-2-123")
+		ProjectUser.objects.create(project=project2, user=self.user, role="member")
+		
+		data = {
+			"email": "testuser@example.com",
+			"password": "testpass123"
+		}
+		
+		response = self.client.post(self.login_url, data, format="json")
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		
+		projects_data = response.data["data"]["projects"]
+		self.assertEqual(len(projects_data), 2)
+		
+		# Check both projects are returned
+		project_names = [p["name"] for p in projects_data]
+		self.assertIn("Test Project", project_names)
+		self.assertIn("Project 2", project_names)
+
