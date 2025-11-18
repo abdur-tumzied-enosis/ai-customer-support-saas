@@ -14,6 +14,6 @@ COPY backend/req_v2.txt /app/req_v2.txt
 RUN pip install --no-cache-dir -r /app/req_v2.txt
 COPY backend /app
 
-CMD ["gunicorn", "-w", "3", "-b", "0.0.0.0:8000", "core.wsgi:application"]
+CMD ["gunicorn", "-w", "3", "-b", "0.0.0.0:8000", "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", "core.wsgi:application"]
 
 

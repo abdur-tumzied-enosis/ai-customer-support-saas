@@ -49,10 +49,24 @@ class Message(models.Model):
 	contact = models.ForeignKey(CustomerContact, on_delete=models.CASCADE, related_name="messages")
 	direction = models.CharField(max_length=8, choices=DIRECTION_CHOICES)
 	text = models.TextField(blank=True, default="")
+	# Facebook message metadata
+	external_message_id = models.CharField(max_length=255, blank=True, default="", db_index=True)  # Facebook message ID (mid)
+	timestamp = models.BigIntegerField(null=True, blank=True)  # Facebook timestamp
+	reply_to_message = models.ForeignKey(
+		"self", on_delete=models.SET_NULL, null=True, blank=True, related_name="replies"
+	)  # Reference to the message this is replying to
+	is_reply = models.BooleanField(default=False)  # Whether this message is a reply
+	has_attachments = models.BooleanField(default=False)  # Whether message has attachments
+	attachment_info = models.JSONField(default=list, blank=True)  # List of attachment metadata
+	# Full raw metadata from webhook
 	meta = models.JSONField(default=dict, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 
 	class Meta:
-		indexes = [models.Index(fields=["project", "created_at"])]
+		indexes = [
+			models.Index(fields=["project", "created_at"]),
+			models.Index(fields=["contact", "created_at"]),
+			models.Index(fields=["external_message_id"]),
+		]
 
 

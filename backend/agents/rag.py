@@ -1,7 +1,9 @@
+import re
 from dataclasses import dataclass
 from typing import Callable, Optional, List, Any, Dict, TypedDict, Literal, Sequence
 from .llm import create_basic_agent
-
+import logging
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Context:
@@ -63,16 +65,65 @@ def generate_reply(question: str, context: Context, deps: Optional[ToolDeps] = N
 	messages = list(history or [])
 	messages.append({"role": "user", "content": question})
 	result = agent.invoke({"messages": messages})
+	logger.info(f"Result: {result}")
 
-	# Best-effort extraction of final content
+	# Extract text from structured response format
+	try:
+		# Check if result has structured_response (from response_format)
+		if result.get("structured_response"):
+			structured = result["structured_response"]
+			if hasattr(structured, "text"):
+				text = structured.text
+				# Clean up if it contains metadata
+				if isinstance(text, str):
+					return text.strip()
+			elif isinstance(structured, dict) and "text" in structured:
+				text = structured["text"]
+				if isinstance(text, str):
+					return text.strip()
+	except Exception:
+		pass
+
+	# Best-effort extraction of final content (fallback)
 	try:
 		messages = result.get("messages")  # type: ignore[attr-defined]
 		if messages:
 			last = messages[-1]
 			content = getattr(last, "content", None) or (last.get("content") if isinstance(last, dict) else None)
-			return content or str(result)
+			if content:
+				# Clean up structured response format strings
+				content_str = str(content)
+				# Remove "Returning structured response: text=" prefix if present
+				if "Returning structured response:" in content_str:
+					# Extract text from format: Returning structured response: text="<content>"
+					match = re.search(r'text=["\'](.*?)["\']', content_str)
+					if match:
+						return match.group(1).strip()
+					# Try to extract from text="..." format
+					match = re.search(r'text=(.+?)(?:\s|$)', content_str)
+					if match:
+						text = match.group(1).strip('"\'')
+						return text.strip()
+				return content_str.strip()
 	except Exception:
 		pass
 
+	# Final fallback - clean up string representation
 	content = getattr(result, "content", None)
-	return content or str(result)
+	if content:
+		content_str = str(content)
+		# Remove structured response metadata if present
+		if "Returning structured response:" in content_str:
+			match = re.search(r'text=["\'](.*?)["\']', content_str)
+			if match:
+				return match.group(1).strip()
+		return content_str.strip()
+	
+	# Last resort - convert to string and clean
+	result_str = str(result)
+	if "Returning structured response:" in result_str:
+		match = re.search(r'text=["\'](.*?)["\']', result_str)
+		if match:
+			return match.group(1).strip()
+	
+	return result_str.strip()

@@ -42,6 +42,8 @@ MIDDLEWARE = [
 	"django.contrib.auth.middleware.AuthenticationMiddleware",
 	"django.contrib.messages.middleware.MessageMiddleware",
 	"django.middleware.clickjacking.XFrameOptionsMiddleware",
+	# "core.middleware.RequestLoggingMiddleware",
+	"core.middleware.ExceptionHandlingMiddleware",
 ]
 
 ROOT_URLCONF = "core.urls"
@@ -123,7 +125,6 @@ REST_FRAMEWORK = {
 	"DEFAULT_RENDERER_CLASSES": [
 		"rest_framework.renderers.JSONRenderer",
 	],
-	"EXCEPTION_HANDLER": "core.exceptions.custom_exception_handler",
 }
 
 # CORS Settings
@@ -139,5 +140,50 @@ CSRF_TRUSTED_ORIGINS = [
 	"http://localhost:3000",
 	"http://127.0.0.1:3000",
 ]
+
+# Logging Configuration
+LOGGING = {
+	"version": 1,
+	"disable_existing_loggers": False,
+	"formatters": {
+		"verbose": {
+			"format": "[{asctime}] [{levelname}] {name} {message}",
+			"style": "{",
+			"datefmt": "%Y-%m-%d %H:%M:%S",
+		},
+		"simple": {
+			"format": "[{asctime}] [{levelname}] {message}",
+			"style": "{",
+			"datefmt": "%Y-%m-%d %H:%M:%S",
+		},
+	},
+	"handlers": {
+		"console": {
+			"class": "logging.StreamHandler",
+			"formatter": "verbose",
+		},
+	},
+	"root": {
+		"handlers": ["console"],
+		"level": "INFO",
+	},
+	"loggers": {
+		"django": {
+			"handlers": ["console"],
+			"level": "INFO",
+			"propagate": False,
+		},
+		"django.request": {
+			"handlers": ["console"],
+			"level": "INFO",
+			"propagate": False,
+		},
+		"core": {
+			"handlers": ["console"],
+			"level": "INFO",
+			"propagate": False,
+		},
+	},
+}
 
 
