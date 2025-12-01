@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Context:
 	vector_collection: Optional[str] = None
+	custom_instructions: Optional[List[dict]] = None  # List of {'label': str, 'message': str}
 
 
 @dataclass
@@ -30,7 +31,7 @@ def _build_tools_from_context(context: Context, deps: ToolDeps):
 			retriever = None
 
 	def retrieve_business_context(query: str) -> str:
-		"""Retrieve relevant knowledge snippets for this business given a user query."""
+		"""Retrieve relevant knowledge snippets for given a user query."""
 		if not retriever:
 			return ""
 		# LangChain v1 retrievers implement Runnable; use invoke()
@@ -61,7 +62,8 @@ class ChatMessage(TypedDict):
 def generate_reply(question: str, context: Context, deps: Optional[ToolDeps] = None, history: Optional[Sequence[ChatMessage]] = None) -> str:
 	deps = deps or ToolDeps()
 	tools = _build_tools_from_context(context, deps)
-	agent = create_basic_agent(tools)
+	# Pass custom instructions to the agent
+	agent = create_basic_agent(tools, custom_instructions=context.custom_instructions)
 	messages = list(history or [])
 	messages.append({"role": "user", "content": question})
 	result = agent.invoke({"messages": messages})

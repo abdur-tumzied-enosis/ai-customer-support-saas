@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,8 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Upload, FileText, Plus, Trash2, File, Users, Loader2 } from "lucide-react";
-import { documentApi } from "@/lib/api";
+import { Upload, FileText, Plus, Trash2, File, Loader2 } from "lucide-react";
+import { documentApi, customInstructionApi, type CustomInstruction } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
 
@@ -34,19 +34,15 @@ type Document = {
 	} | null;
 };
 
-type CustomInstruction = {
-	id: string;
-	label: string;
-	message: string;
-	createdAt: Date;
-};
-
 export default function KnowledgePage() {
 	const { projects, loading: authLoading } = useAuth();
 	const [documents, setDocuments] = useState<Document[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [instructions, setInstructions] = useState<CustomInstruction[]>([]);
+	const [instructionsLoading, setInstructionsLoading] = useState(false);
 	const [uploading, setUploading] = useState(false);
+	const [savingInstruction, setSavingInstruction] = useState(false);
+	const [deletingInstructionId, setDeletingInstructionId] = useState<string | null>(null);
 	const [instructionDialogOpen, setInstructionDialogOpen] = useState(false);
 	const [newInstruction, setNewInstruction] = useState({ label: "", message: "" });
 	const [alert, setAlert] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -54,14 +50,7 @@ export default function KnowledgePage() {
 	// Get the first project (for now, we'll use the first one)
 	const currentProjectId = projects && projects.length > 0 ? String(projects[0].id) : null;
 
-	// Fetch documents on mount
-	useEffect(() => {
-		if (!authLoading && currentProjectId) {
-			fetchDocuments();
-		}
-	}, [authLoading, currentProjectId]);
-
-	async function fetchDocuments() {
+	const fetchDocuments = useCallback(async () => {
 		if (!currentProjectId) return;
 
 		setLoading(true);
@@ -73,7 +62,30 @@ export default function KnowledgePage() {
 		} finally {
 			setLoading(false);
 		}
-	}
+	}, [currentProjectId]);
+
+	const fetchInstructions = useCallback(async () => {
+		if (!currentProjectId) return;
+
+		setInstructionsLoading(true);
+		try {
+			// Fetch project-level instructions (knowledge_base_id = null)
+			const response = await customInstructionApi.list(currentProjectId, null);
+			setInstructions(response.data.instructions);
+		} catch (error) {
+			setAlert({ type: "error", message: formatError(error) });
+		} finally {
+			setInstructionsLoading(false);
+		}
+	}, [currentProjectId]);
+
+	// Fetch documents and instructions on mount
+	useEffect(() => {
+		if (!authLoading && currentProjectId) {
+			fetchDocuments();
+			fetchInstructions();
+		}
+	}, [authLoading, currentProjectId, fetchDocuments, fetchInstructions]);
 
 	function formatFileSize(bytes: number): string {
 		if (bytes < 1024) return bytes + " B";
@@ -219,28 +231,48 @@ export default function KnowledgePage() {
 		);
 	}
 
-	function handleAddInstruction() {
+	async function handleAddInstruction() {
 		if (!newInstruction.label.trim() || !newInstruction.message.trim()) {
 			setAlert({ type: "error", message: "Please fill in both label and message fields" });
 			return;
 		}
 
-		const instruction: CustomInstruction = {
-			id: Math.random().toString(36).slice(2),
-			label: newInstruction.label.trim(),
-			message: newInstruction.message.trim(),
-			createdAt: new Date(),
-		};
+		if (!currentProjectId) {
+			setAlert({ type: "error", message: "No project selected" });
+			return;
+		}
 
-		setInstructions((prev) => [...prev, instruction]);
-		setNewInstruction({ label: "", message: "" });
-		setInstructionDialogOpen(false);
-		setAlert({ type: "success", message: "Custom instruction added successfully" });
+		setSavingInstruction(true);
+		try {
+			const response = await customInstructionApi.create({
+				project_id: currentProjectId,
+				knowledge_base_id: null, // Project-level instruction
+				label: newInstruction.label.trim(),
+				message: newInstruction.message.trim(),
+			});
+
+			setInstructions((prev) => [response.data.instruction, ...prev]);
+			setNewInstruction({ label: "", message: "" });
+			setInstructionDialogOpen(false);
+			setAlert({ type: "success", message: "Custom instruction added successfully" });
+		} catch (error) {
+			setAlert({ type: "error", message: formatError(error) });
+		} finally {
+			setSavingInstruction(false);
+		}
 	}
 
-	function handleDeleteInstruction(id: string) {
-		setInstructions((prev) => prev.filter((inst) => inst.id !== id));
-		setAlert({ type: "success", message: "Custom instruction deleted successfully" });
+	async function handleDeleteInstruction(id: string) {
+		setDeletingInstructionId(id);
+		try {
+			await customInstructionApi.delete(id);
+			setInstructions((prev) => prev.filter((inst) => inst.id !== id));
+			setAlert({ type: "success", message: "Custom instruction deleted successfully" });
+		} catch (error) {
+			setAlert({ type: "error", message: formatError(error) });
+		} finally {
+			setDeletingInstructionId(null);
+		}
 	}
 
 	// Show loading state while auth is loading
@@ -391,17 +423,32 @@ export default function KnowledgePage() {
 												setInstructionDialogOpen(false);
 												setNewInstruction({ label: "", message: "" });
 											}}
+											disabled={savingInstruction}
 										>
 											Cancel
 										</Button>
-										<Button onClick={handleAddInstruction}>Add Instruction</Button>
+										<Button onClick={handleAddInstruction} disabled={savingInstruction}>
+											{savingInstruction ? (
+												<>
+													<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+													Saving...
+												</>
+											) : (
+												"Add Instruction"
+											)}
+										</Button>
 									</div>
 								</div>
 							</DialogContent>
 						</Dialog>
 					</div>
 
-					{instructions.length > 0 ? (
+					{instructionsLoading ? (
+						<div className="text-center py-8 text-muted-foreground">
+							<Loader2 className="h-12 w-12 mx-auto mb-2 opacity-50 animate-spin" />
+							<p>Loading instructions...</p>
+						</div>
+					) : instructions.length > 0 ? (
 						<div className="space-y-3">
 							{instructions.map((inst) => (
 								<Card key={inst.id}>
@@ -410,15 +457,20 @@ export default function KnowledgePage() {
 											<div className="flex items-center gap-2">
 												<Badge variant="outline">{inst.label}</Badge>
 												<span className="text-xs text-muted-foreground">
-													Added {new Date(inst.createdAt).toLocaleDateString()}
+													Added {new Date(inst.created_at).toLocaleDateString()}
 												</span>
 											</div>
 											<Button
 												variant="ghost"
 												size="icon"
 												onClick={() => handleDeleteInstruction(inst.id)}
+												disabled={deletingInstructionId === inst.id}
 											>
-												<Trash2 className="h-4 w-4" />
+												{deletingInstructionId === inst.id ? (
+													<Loader2 className="h-4 w-4 animate-spin" />
+												) : (
+													<Trash2 className="h-4 w-4" />
+												)}
 											</Button>
 										</div>
 									</CardHeader>

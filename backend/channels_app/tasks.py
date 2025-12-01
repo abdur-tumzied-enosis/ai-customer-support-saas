@@ -2,7 +2,7 @@ from celery import shared_task
 from django.db import transaction
 import uuid
 
-from knowledge.models import KnowledgeBase
+from knowledge.models import KnowledgeBase, CustomInstruction
 from .models import Message, ChannelCredential
 from .facebook_client import send_text_message
 from .service.message_service import create_outbound_message
@@ -11,6 +11,37 @@ from agents.vector_store import get_retriever
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+def get_effective_instructions(project_id: str, knowledge_base_id: str = None) -> list:
+	"""
+	Get effective custom instructions for a project/knowledge base.
+	Returns KB-level instructions if they exist, otherwise project-level.
+	
+	Args:
+		project_id: Project UUID
+		knowledge_base_id: Optional Knowledge Base UUID
+	
+	Returns:
+		List of instruction dicts with 'label' and 'message' keys
+	"""
+	# Try KB-level instructions first
+	if knowledge_base_id:
+		kb_instructions = CustomInstruction.objects.filter(
+			project_id=project_id,
+			knowledge_base_id=knowledge_base_id
+		).order_by('-created_at')
+		
+		if kb_instructions.exists():
+			return [{'label': inst.label, 'message': inst.message} for inst in kb_instructions]
+	
+	# Fall back to project-level instructions
+	project_instructions = CustomInstruction.objects.filter(
+		project_id=project_id,
+		knowledge_base__isnull=True
+	).order_by('-created_at')
+	
+	return [{'label': inst.label, 'message': inst.message} for inst in project_instructions]
 
 
 def format_message_with_context(message: Message) -> str:
@@ -81,8 +112,15 @@ def handle_incoming_message(message_id: str, knowledge_base_id: str) -> None:
 		# Prepare current message text with context
 		current_message_text = format_message_with_context(msg)
 		
+		# Get effective custom instructions for this project/KB
+		custom_instructions = get_effective_instructions(str(project.id), str(knowledge_base.id))
+		logger.info(f"Using {len(custom_instructions)} custom instructions")
+		
 		# Generate reply via RAG
-		context = Context(vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name))
+		context = Context(
+			vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name),
+			custom_instructions=custom_instructions
+		)
 		deps = ToolDeps(retriever_factory=get_retriever)
 
 		logger.info(f"Generating reply for message {msg.id} with text: {current_message_text}")
@@ -165,8 +203,15 @@ def handle_ui_message(message_id: str) -> None:
 			# Prepare current message text with context
 			current_message_text = format_message_with_context(msg)
 			
+			# Get effective custom instructions for this project/KB
+			custom_instructions = get_effective_instructions(str(project.id), str(knowledge_base.id))
+			logger.info(f"Using {len(custom_instructions)} custom instructions")
+			
 			# Generate reply via RAG
-			context = Context(vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name))
+			context = Context(
+				vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name),
+				custom_instructions=custom_instructions
+			)
 			deps = ToolDeps(retriever_factory=get_retriever)
 
 			logger.info(f"Generating reply for UI message {msg.id} with text: {current_message_text}")

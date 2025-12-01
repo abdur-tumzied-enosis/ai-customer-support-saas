@@ -260,6 +260,106 @@ export const documentApi = {
 	},
 };
 
+// Custom Instruction type
+export type CustomInstruction = {
+	id: string;
+	label: string;
+	message: string;
+	knowledge_base_id: string | null;
+	knowledge_base_name: string | null;
+	created_at: string;
+	updated_at: string;
+};
+
+// Custom Instruction API functions
+export const customInstructionApi = {
+	/**
+	 * List instructions for a project.
+	 * @param projectId - Project UUID
+	 * @param knowledgeBaseId - Optional KB UUID to filter by specific KB (null for project-level only)
+	 */
+	list: async (projectId: string, knowledgeBaseId?: string | null) => {
+		const params = new URLSearchParams();
+		params.append("project_id", projectId);
+		if (knowledgeBaseId !== undefined) {
+			params.append("knowledge_base_id", knowledgeBaseId || "");
+		}
+
+		return apiFetch<{
+			instructions: CustomInstruction[];
+			count: number;
+		}>(`/api/kb/instructions/?${params.toString()}`);
+	},
+
+	/**
+	 * Get the effective instructions for a KB (KB-level if exists, else project-level).
+	 */
+	resolve: async (projectId: string, knowledgeBaseId?: string) => {
+		const params = new URLSearchParams();
+		params.append("project_id", projectId);
+		if (knowledgeBaseId) {
+			params.append("knowledge_base_id", knowledgeBaseId);
+		}
+
+		return apiFetch<{
+			instructions: CustomInstruction[];
+			count: number;
+			source: "project" | "knowledge_base";
+		}>(`/api/kb/instructions/resolve/?${params.toString()}`);
+	},
+
+	/**
+	 * Create a new instruction.
+	 * @param data.project_id - Project UUID (required)
+	 * @param data.knowledge_base_id - KB UUID (optional, null for project-level)
+	 * @param data.label - Instruction label
+	 * @param data.message - Instruction message
+	 */
+	create: async (data: {
+		project_id: string;
+		knowledge_base_id?: string | null;
+		label: string;
+		message: string;
+	}) => {
+		return apiFetch<{
+			instruction: CustomInstruction;
+		}>("/api/kb/instructions/", {
+			method: "POST",
+			json: data,
+		});
+	},
+
+	/**
+	 * Get a specific instruction.
+	 */
+	get: async (instructionId: string) => {
+		return apiFetch<{
+			instruction: CustomInstruction;
+		}>(`/api/kb/instructions/${instructionId}/`);
+	},
+
+	/**
+	 * Update an instruction.
+	 */
+	update: async (instructionId: string, data: { label?: string; message?: string }) => {
+		return apiFetch<{
+			instruction: CustomInstruction;
+		}>(`/api/kb/instructions/${instructionId}/`, {
+			method: "PATCH",
+			json: data,
+		});
+	},
+
+	/**
+	 * Delete an instruction.
+	 */
+	delete: async (instructionId: string) => {
+		return apiFetch(`/api/kb/instructions/${instructionId}/`, {
+			method: "DELETE",
+		});
+	},
+};
+
 // Channel API functions
 export const channelApi = {
 	configureFacebook: async (data: {

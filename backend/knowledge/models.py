@@ -200,3 +200,34 @@ class IngestionJob(models.Model):
 		return f"{doc_name} - {self.status} ({self.progress}%)"
 
 
+class CustomInstruction(models.Model):
+	"""
+	Custom instructions that define agent behavior.
+	- If knowledge_base is null: project-level instruction (default for all KBs)
+	- If knowledge_base is set: KB-specific instruction (overrides project-level)
+	"""
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="custom_instructions")
+	knowledge_base = models.ForeignKey(
+		KnowledgeBase,
+		on_delete=models.CASCADE,
+		null=True,
+		blank=True,
+		related_name="custom_instructions"
+	)
+	label = models.CharField(max_length=255)
+	message = models.TextField()
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ['-created_at']
+		indexes = [
+			models.Index(fields=['project', 'knowledge_base']),
+		]
+
+	def __str__(self) -> str:
+		scope = self.knowledge_base.name if self.knowledge_base else "Project"
+		return f"{self.label} ({scope})"
+
+
