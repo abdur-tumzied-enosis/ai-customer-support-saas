@@ -1,7 +1,8 @@
 from typing import Optional, Dict, Any, List
+import uuid
 
 from accounts.models import Project
-from channels_app.models import Message, CustomerContact
+from channels_app.models import Message, CustomerContact, Conversation
 
 import logging
 logger = logging.getLogger(__name__)
@@ -17,7 +18,9 @@ def create_inbound_message(
 	is_reply: bool = False,
 	has_attachments: bool = False,
 	attachment_info: List[Dict[str, Any]] = None,
-	meta: Dict[str, Any] = None
+	meta: Dict[str, Any] = None,
+	conversation: Optional[Conversation] = None,
+	status: str = "completed"
 ) -> Message:
 	"""
 	Create an inbound message record.
@@ -33,6 +36,8 @@ def create_inbound_message(
 		has_attachments: Whether the message has attachments
 		attachment_info: List of attachment metadata dictionaries
 		meta: Full raw metadata from webhook/event
+		conversation: Optional conversation this message belongs to
+		status: Message status (default: "completed" for external messages, "pending" for UI)
 		
 	Returns:
 		Created Message instance
@@ -42,10 +47,16 @@ def create_inbound_message(
 	if meta is None:
 		meta = {}
 	
+	# If conversation is not provided but contact has one, use it
+	if conversation is None and contact.conversation:
+		conversation = contact.conversation
+	
 	msg = Message.objects.create(
 		project=project,
 		contact=contact,
+		conversation=conversation,
 		direction="in",
+		status=status,
 		text=text,
 		external_message_id=external_message_id,
 		timestamp=timestamp,
@@ -58,8 +69,50 @@ def create_inbound_message(
 	
 	logger.info(
 		f"Inbound message created: id={msg.id}, text={text[:50] if text else 'N/A'}, "
-		f"has_attachments={has_attachments}, is_reply={is_reply}"
+		f"has_attachments={has_attachments}, is_reply={is_reply}, status={status}"
 	)
+	
+	return msg
+
+
+def create_ui_message(
+	conversation: Conversation,
+	text: str
+) -> Message:
+	"""
+	Create a message for UI conversations.
+	
+	Args:
+		conversation: The conversation this message belongs to
+		text: The message text content
+		
+	Returns:
+		Created Message instance with status="pending" and agent_reply_id pre-generated
+	"""
+	if not conversation.contact:
+		raise ValueError("Conversation must have a contact")
+	
+	# Generate UUID for future agent reply message
+	agent_reply_uuid = uuid.uuid4()
+	
+	msg = Message.objects.create(
+		project=conversation.project,
+		contact=conversation.contact,
+		conversation=conversation,
+		direction="in",
+		status="pending",
+		text=text,
+		external_message_id="",
+		timestamp=None,
+		reply_to_message=None,
+		agent_reply_id=agent_reply_uuid,
+		is_reply=False,
+		has_attachments=False,
+		attachment_info=[],
+		meta={},
+	)
+	
+	logger.info(f"UI message created: id={msg.id}, conversation={conversation.id}, agent_reply_id={agent_reply_uuid}, text={text[:50]}")
 	
 	return msg
 
@@ -69,7 +122,9 @@ def create_outbound_message(
 	contact: CustomerContact,
 	text: str,
 	external_message_id: str = "",
-	meta: Dict[str, Any] = None
+	meta: Dict[str, Any] = None,
+	conversation: Optional[Conversation] = None,
+	id: Optional[uuid.UUID] = None
 ) -> Message:
 	"""
 	Create an outbound message record.
@@ -80,6 +135,8 @@ def create_outbound_message(
 		text: The message text content
 		external_message_id: External platform message ID (if available)
 		meta: Additional metadata dictionary
+		conversation: Optional conversation this message belongs to
+		id: Optional UUID to use as message ID (for linking with agent_reply_id)
 		
 	Returns:
 		Created Message instance
@@ -87,19 +144,32 @@ def create_outbound_message(
 	if meta is None:
 		meta = {}
 	
-	msg = Message.objects.create(
-		project=project,
-		contact=contact,
-		direction="out",
-		text=text,
-		external_message_id=external_message_id,
-		timestamp=None,
-		reply_to_message=None,
-		is_reply=False,
-		has_attachments=False,
-		attachment_info=[],
-		meta=meta,
-	)
+	# If conversation is not provided but contact has one, use it
+	if conversation is None and contact.conversation:
+		conversation = contact.conversation
+	
+	# Create message with optional ID
+	create_kwargs = {
+		"project": project,
+		"contact": contact,
+		"conversation": conversation,
+		"direction": "out",
+		"status": "completed",
+		"text": text,
+		"external_message_id": external_message_id,
+		"timestamp": None,
+		"reply_to_message": None,
+		"agent_reply_id": None,  # Outbound messages don't have agent_reply_id
+		"is_reply": False,
+		"has_attachments": False,
+		"attachment_info": [],
+		"meta": meta,
+	}
+	
+	if id:
+		create_kwargs["id"] = id
+	
+	msg = Message.objects.create(**create_kwargs)
 	
 	logger.info(f"Outbound message created: id={msg.id}, text={text[:50] if text else 'N/A'}")
 	

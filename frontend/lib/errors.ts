@@ -7,7 +7,7 @@ import { ApiError } from "./api";
  */
 export function formatError(err: unknown): string {
 	if (err instanceof ApiError) {
-		return err.message;
+		// return err.message;
 		// Format validation errors from backend
 		if (err.details && typeof err.details === "object" && !Array.isArray(err.details)) {
 			const fieldErrors = Object.entries(err.details)

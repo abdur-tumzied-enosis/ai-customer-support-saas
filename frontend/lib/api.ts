@@ -290,3 +290,140 @@ export const channelApi = {
 		}>(`/api/channels/credentials?project_slug=${encodeURIComponent(projectSlug)}`);
 	},
 };
+
+// Conversation API functions
+export const conversationApi = {
+	list: async (projectSlug: string) => {
+		return apiFetch<{
+			conversations: Array<{
+				id: string;
+				name: string;
+				knowledge_base_id: string;
+				knowledge_base_name: string;
+				message_count: number;
+				last_message: {
+					id: string;
+					text: string;
+					created_at: string;
+				} | null;
+				created_at: string;
+				updated_at: string;
+			}>;
+		}>(`/api/channels/conversations?project_slug=${encodeURIComponent(projectSlug)}`);
+	},
+
+	get: async (conversationId: string) => {
+		return apiFetch<{
+			conversation: {
+				id: string;
+				name: string;
+				knowledge_base_id: string;
+				knowledge_base_name: string;
+				created_at: string;
+				updated_at: string;
+			};
+		}>(`/api/channels/conversations/${conversationId}`);
+	},
+
+	create: async (data: {
+		project_slug: string;
+		name?: string;
+		knowledge_base_id?: string;
+	}) => {
+		return apiFetch<{
+			conversation: {
+				id: string;
+				name: string;
+				knowledge_base_id: string;
+				knowledge_base_name: string;
+				created_at: string;
+				updated_at: string;
+			};
+		}>("/api/channels/conversations", {
+			method: "POST",
+			json: data,
+		});
+	},
+
+	update: async (conversationId: string, data: { name?: string }) => {
+		return apiFetch<{
+			conversation: {
+				id: string;
+				name: string;
+				knowledge_base_id: string;
+				knowledge_base_name: string;
+				created_at: string;
+				updated_at: string;
+			};
+		}>(`/api/channels/conversations/${conversationId}`, {
+			method: "PATCH",
+			json: data,
+		});
+	},
+
+	delete: async (conversationId: string) => {
+		return apiFetch(`/api/channels/conversations/${conversationId}`, {
+			method: "DELETE",
+		});
+	},
+
+	getMessages: async (conversationId: string, limit: number = 20, offset?: number) => {
+		const params = new URLSearchParams();
+		params.append("limit", limit.toString());
+		if (offset !== undefined) {
+			params.append("offset", offset.toString());
+		}
+		
+		return apiFetch<{
+			messages: Array<{
+				id: string;
+				direction: "in" | "out";
+				status: "pending" | "processing" | "completed" | "failed";
+				text: string;
+				created_at: string;
+				agent_reply_id: string | null;
+			}>;
+			pagination: {
+				count: number;
+				limit: number;
+				offset: number;
+				has_next: boolean;
+				has_previous: boolean;
+				next_offset: number | null;
+				previous_offset: number | null;
+			};
+		}>(`/api/channels/conversations/${conversationId}/messages?${params.toString()}`);
+	},
+
+	sendMessage: async (conversationId: string, text: string) => {
+		return apiFetch<{
+			message: {
+				id: string;
+				direction: "in" | "out";
+				status: "pending" | "processing" | "completed" | "failed";
+				text: string;
+				created_at: string;
+			};
+		}>(`/api/channels/conversations/${conversationId}/messages`, {
+			method: "POST",
+			json: { text },
+		});
+	},
+
+	getMessageStatus: async (messageId: string) => {
+		return apiFetch<{
+			message: {
+				id: string;
+				status: "pending" | "processing" | "completed" | "failed";
+				text: string;
+				created_at: string;
+				agent_reply_id: string | null;
+				agent_reply: {
+					id: string;
+					text: string;
+					created_at: string;
+				} | null;
+			};
+		}>(`/api/channels/messages/${messageId}/status`);
+	},
+};

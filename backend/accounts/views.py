@@ -8,6 +8,9 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
 from .serializers import SignUpSerializer, LoginSerializer, UserSerializer
 from .models import Project, ProjectUser
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -44,6 +47,7 @@ class LoginView(APIView):
 	permission_classes = [AllowAny]
 
 	def post(self, request):
+		print(f'[DEBUG] LoginView - request.data.........{request.data}') # Temporary debug
 		serializer = LoginSerializer(data=request.data)
 		if serializer.is_valid():
 			user = serializer.validated_data["user"]
@@ -74,6 +78,7 @@ class LoginView(APIView):
 			)
 		
 		# Raise ValidationError to use custom exception handler
+		print(f'[DEBUG] LoginView - serializer.errors.........{serializer.errors}') # Temporary debug
 		raise ValidationError(serializer.errors)
 
 

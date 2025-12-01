@@ -1,5 +1,6 @@
 from celery import shared_task
 from django.db import transaction
+import uuid
 
 from knowledge.models import KnowledgeBase
 from .models import Message, ChannelCredential
@@ -42,19 +43,29 @@ def format_message_with_context(message: Message) -> str:
 
 
 @shared_task
-def handle_incoming_message(message_id: int, knowledge_base_id: str) -> None:
+def handle_incoming_message(message_id: str, knowledge_base_id: str) -> None:
+	"""Handle incoming message from external channel (e.g., Facebook)."""
 	with transaction.atomic():
-		msg = Message.objects.select_related("project", "contact", "reply_to_message").get(id=message_id)
+		msg = Message.objects.select_related("project", "contact", "reply_to_message", "conversation").get(id=message_id)
 		knowledge_base = KnowledgeBase.objects.get(id=knowledge_base_id)
 		project = msg.project
 		contact = msg.contact
-		# Build short conversation history (role-mapped) excluding current message (limit last 20)
-		# Include metadata for better context understanding
-		prev_qs = (
-			Message.objects.filter(contact=contact)
-			.select_related("reply_to_message")
-			.order_by("-created_at")
-		)
+		conversation = msg.conversation
+		
+		# Build conversation history from conversation messages if available, otherwise from contact messages
+		if conversation:
+			prev_qs = (
+				Message.objects.filter(conversation=conversation)
+				.select_related("reply_to_message")
+				.order_by("-created_at")
+			)
+		else:
+			prev_qs = (
+				Message.objects.filter(contact=contact)
+				.select_related("reply_to_message")
+				.order_by("-created_at")
+			)
+		
 		# Convert the queryset to a list and reverse it so that the oldest message comes first (chronological order)
 		prev = list(prev_qs)
 		
@@ -79,13 +90,16 @@ def handle_incoming_message(message_id: int, knowledge_base_id: str) -> None:
 
 		reply_text = generate_reply(current_message_text, context, deps, history=history[:5])
 		logger.info(f"Reply text: {reply_text}")
+		agent_reply_uuid = msg.agent_reply_id
 		# Persist outbound message record using service
 		out_msg = create_outbound_message(
 			project=project,
 			contact=contact,
 			text=reply_text,
 			external_message_id="",  # Will be updated after sending
-			meta={}
+			meta={},
+			conversation=conversation,
+			id= agent_reply_uuid or None
 		)
 
 	# Send via Facebook
@@ -104,5 +118,95 @@ def handle_incoming_message(message_id: int, knowledge_base_id: str) -> None:
 		logger.info(f"Updated outbound message {out_msg.id} with Facebook message_id: {response['message_id']}")
 	else:
 		logger.warning(f"Failed to get message_id from Facebook API response for message {out_msg.id}")
+
+
+@shared_task
+def handle_ui_message(message_id: str) -> None:
+	"""Handle UI message and generate agent reply."""
+	try:
+		with transaction.atomic():
+			msg = Message.objects.select_related(
+				"project", "contact", "conversation", "conversation__knowledge_base"
+			).get(id=message_id)
+			
+			# Update status to processing
+			msg.status = "processing"
+			msg.save(update_fields=["status"])
+			
+			conversation = msg.conversation
+			if not conversation:
+				raise ValueError(f"Message {message_id} has no conversation")
+			
+			project = msg.project
+			contact = msg.contact
+			knowledge_base = conversation.knowledge_base
+			
+			# Build conversation history from conversation messages
+			prev_qs = (
+				Message.objects.filter(conversation=conversation)
+				.exclude(id=msg.id)  # Exclude current message
+				.select_related("reply_to_message")
+				.order_by("-created_at")
+			)
+			
+			# Convert to list and reverse for chronological order
+			prev = list(prev_qs)
+			prev.reverse()
+			
+			# Build history with enhanced context
+			history = []
+			for m in prev:
+				content = format_message_with_context(m)
+				history.append(ChatMessage(
+					role=("user" if m.direction == "in" else "assistant"),
+					content=content
+				))
+			
+			# Prepare current message text with context
+			current_message_text = format_message_with_context(msg)
+			
+			# Generate reply via RAG
+			context = Context(vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name))
+			deps = ToolDeps(retriever_factory=get_retriever)
+
+			logger.info(f"Generating reply for UI message {msg.id} with text: {current_message_text}")
+			logger.info(f"History: {history[:5]}")
+
+			reply_text = generate_reply(current_message_text, context, deps, history=history[:5])
+			logger.info(f"Reply text: {reply_text}")
+			
+			# Get the pre-generated agent_reply_id from user message
+			agent_reply_uuid = msg.agent_reply_id
+			if not agent_reply_uuid:
+				raise ValueError(f"User message {msg.id} does not have agent_reply_id set")
+			
+			# Persist outbound message record using service with the pre-generated UUID
+			out_msg = create_outbound_message(
+				project=project,
+				contact=contact,
+				text=reply_text,
+				external_message_id="",
+				meta={},
+				conversation=conversation,
+				id=agent_reply_uuid
+			)
+			
+			# Update user message status to completed
+			msg.status = "completed"
+			msg.save(update_fields=["status"])
+			
+			logger.info(f"UI message {msg.id} completed, agent reply {out_msg.id} created")
+			
+	except Exception as e:
+		logger.error(f"Error processing UI message {message_id}: {e}", exc_info=True)
+		# Update message status to failed
+		try:
+			with transaction.atomic():
+				msg = Message.objects.get(id=message_id)
+				msg.status = "failed"
+				msg.save(update_fields=["status"])
+		except Exception:
+			pass
+		raise
 
 

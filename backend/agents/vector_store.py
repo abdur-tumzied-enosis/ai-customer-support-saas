@@ -10,6 +10,13 @@ except Exception:  # pragma: no cover
 
 
 def get_qdrant_client() -> QdrantClient:
+	"""
+	Get a Qdrant client instance with optional API key authentication.
+	Supports both development (no auth) and production (with API key) setups.
+	"""
+	api_key = getattr(settings, 'QDRANT_API_KEY', None)
+	if api_key:
+		return QdrantClient(url=settings.QDRANT_URL, api_key=api_key)
 	return QdrantClient(url=settings.QDRANT_URL)
 
 
@@ -47,13 +54,15 @@ def add_texts_to_collection(collection_name: str, texts: list[str], metadatas: O
 		ids = []
 
 	if not _collection_exists(client, collection_name):
-		# Create collection on first insert (let VectorStore create QdrantClient internally)
+		# Create collection on first insert
+		api_key = getattr(settings, 'QDRANT_API_KEY', None)
 		Qdrant.from_texts(
 			texts=texts,
 			embedding=embeddings,
 			metadatas=metadatas,
 			ids=ids if ids else None,
 			url=settings.QDRANT_URL,
+			api_key=api_key,  # Pass API key if available
 			collection_name=collection_name,
 		)
 		return ids if ids else []

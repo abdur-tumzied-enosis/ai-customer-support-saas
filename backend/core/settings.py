@@ -42,7 +42,7 @@ MIDDLEWARE = [
 	"django.contrib.auth.middleware.AuthenticationMiddleware",
 	"django.contrib.messages.middleware.MessageMiddleware",
 	"django.middleware.clickjacking.XFrameOptionsMiddleware",
-	# "core.middleware.RequestLoggingMiddleware",
+	"core.middleware.RequestLoggingMiddleware",
 	"core.middleware.ExceptionHandlingMiddleware",
 ]
 
@@ -105,6 +105,7 @@ CELERY_RESULT_BACKEND = REDIS_URL
 
 # Qdrant
 QDRANT_URL = env("QDRANT_URL", default="http://localhost:6333")
+QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production authentication
 
 # Meta / Facebook
 META_APP_ID = env("META_APP_ID", default="")
@@ -147,12 +148,12 @@ LOGGING = {
 	"disable_existing_loggers": False,
 	"formatters": {
 		"verbose": {
-			"format": "[{asctime}] [{levelname}] {name} {message}",
+			"format": "[{asctime}] [{levelname}] {name} {filename}:{lineno} {message}",
 			"style": "{",
 			"datefmt": "%Y-%m-%d %H:%M:%S",
 		},
 		"simple": {
-			"format": "[{asctime}] [{levelname}] {message}",
+			"format": "[{asctime}] [{levelname}] {filename}:{lineno} {message}",
 			"style": "{",
 			"datefmt": "%Y-%m-%d %H:%M:%S",
 		},
@@ -179,6 +180,16 @@ LOGGING = {
 			"propagate": False,
 		},
 		"core": {
+			"handlers": ["console"],
+			"level": "INFO",
+			"propagate": False,
+		},
+		"accounts": {
+			"handlers": ["console"],
+			"level": "INFO",
+			"propagate": True,
+		},
+		"accounts.views": {
 			"handlers": ["console"],
 			"level": "INFO",
 			"propagate": False,

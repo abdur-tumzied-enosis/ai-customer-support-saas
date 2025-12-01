@@ -4,10 +4,11 @@ from django.contrib.auth import authenticate
 from .models import Project, ProjectUser
 from django.utils.text import slugify
 from uuid import uuid4
+import logging
 
 User = get_user_model()
 
-
+logger = logging.getLogger(__name__)
 class UserSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = User
@@ -24,6 +25,7 @@ class SignUpSerializer(serializers.Serializer):
 
 	def validate_email(self, value):
 		if User.objects.filter(email=value).exists():
+			logger.info(f'A user with this email already exists.')
 			raise serializers.ValidationError("A user with this email already exists.")
 		return value
 

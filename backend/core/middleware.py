@@ -3,6 +3,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.exceptions import ValidationError as DRFValidationError, APIException
+from rest_framework import serializers
 from django.http import JsonResponse
 import traceback
 import logging
@@ -64,19 +65,135 @@ class ExceptionHandlingMiddleware:
 		self.get_response = get_response
 	
 	def __call__(self, request):
-		response = self.get_response(request)
-		return response
+		# Check if this is an API request (starts with /api/)
+		is_api_request = request.path.startswith('/api/')
+		
+		try:
+			response = self.get_response(request)
+			
+			# DRF catches exceptions internally and converts them to responses
+			# So we need to check if the response is an error response and reformat it
+			if is_api_request and hasattr(response, 'status_code') and response.status_code >= 400:
+				# Check if this is a DRF error response that needs reformatting
+				if hasattr(response, 'data') and isinstance(response.data, dict):
+					# Check if it's already in our format
+					if 'success' not in response.data:
+						# This is a DRF error response, reformat it
+						return self._reformat_drf_error_response(response, request)
+			
+			return response
+		except Exception as exception:
+			# Catch exceptions that weren't handled by DRF
+			# This allows us to handle ValidationError and other exceptions
+			handled_response = self.process_exception(request, exception)
+			if handled_response is not None:
+				return handled_response
+			# If process_exception returns None, re-raise the exception
+			raise
+	
+	def _reformat_drf_error_response(self, response, request):
+		"""
+		Reformat DRF error responses to our standard format.
+		DRF catches exceptions and converts them to Response objects,
+		so we need to intercept those responses and reformat them.
+		"""
+		logger.info(f'[DEBUG] ExceptionHandlingMiddleware - reformatting DRF error response.........{response.data}') # Temporary debug
+		
+		# Extract error data from DRF response
+		error_data = response.data
+		
+		# Determine error code and message
+		error_code = "error"
+		error_message = "An error occurred"
+		error_details = None
+		
+		# Check if this looks like a validation error (dict with field names)
+		if isinstance(error_data, dict):
+			# Check if it's a validation error format (field: [errors])
+			if any(isinstance(v, list) for v in error_data.values()):
+				error_code = "validation_error"
+				error_message = self._get_validation_error_message_from_data(error_data)
+				error_details = self._format_error_details(error_data)
+			else:
+				# Generic error dict
+				error_code = self._get_error_code_from_status(response.status_code)
+				error_message = self._get_error_message_from_data(error_data)
+				error_details = error_data
+		elif isinstance(error_data, list):
+			# List of errors
+			error_code = "validation_error"
+			error_message = error_data[0] if error_data else "Validation error"
+			error_details = error_data
+		elif isinstance(error_data, str):
+			# String error
+			error_code = self._get_error_code_from_status(response.status_code)
+			error_message = error_data
+			error_details = error_data
+		
+		# Return reformatted response
+		return JsonResponse(
+			{
+				"success": False,
+				"error": {
+					"code": error_code,
+					"message": error_message,
+					"details": error_details,
+				},
+			},
+			status=response.status_code,
+		)
+	
+	def _get_validation_error_message_from_data(self, data):
+		"""Extract validation error message from DRF error data."""
+		if isinstance(data, dict):
+			# Get first error message from dict
+			first_key = next(iter(data))
+			first_value = data[first_key]
+			if isinstance(first_value, list):
+				return first_value[0] if first_value else "Validation error"
+			return str(first_value)
+		elif isinstance(data, list):
+			return data[0] if data else "Validation error"
+		return str(data)
+	
+	def _get_error_message_from_data(self, data):
+		"""Extract error message from DRF error data."""
+		if isinstance(data, dict):
+			# Try to get a message field
+			if 'message' in data:
+				return data['message']
+			if 'detail' in data:
+				return data['detail']
+			# Get first value
+			first_key = next(iter(data))
+			first_value = data[first_key]
+			if isinstance(first_value, list):
+				return first_value[0] if first_value else "An error occurred"
+			return str(first_value)
+		elif isinstance(data, list):
+			return data[0] if data else "An error occurred"
+		return str(data) if data else "An error occurred"
+	
+	def _get_error_code_from_status(self, status_code):
+		"""Get error code from HTTP status code."""
+		if status_code == 400:
+			return "bad_request"
+		elif status_code == 401:
+			return "authentication_error"
+		elif status_code == 403:
+			return "permission_error"
+		elif status_code == 404:
+			return "not_found"
+		elif status_code == 500:
+			return "server_error"
+		return "error"
 	
 	def process_exception(self, request, exception):
 		"""
 		Process exceptions and return formatted JSON responses.
 		"""
-		# Check if this is an API request (starts with /api/)
-		is_api_request = request.path.startswith('/api/')
-		
-		# Only handle exceptions for API requests
-		if not is_api_request:
-			return None
+		logger.info(f'[DEBUG] ExceptionHandlingMiddleware - exception.........{exception}') # Temporary debug
+
 		
 		# Get view instance for DRF exception handler context
 		view_instance = None
@@ -89,6 +206,39 @@ class ExceptionHandlingMiddleware:
 				# Check if it's a function-based view wrapped by DRF
 				elif hasattr(func, 'view_class'):
 					view_instance = func.view_class
+		
+		# Handle serializer ValidationError explicitly for consistent formatting
+		if isinstance(exception, (serializers.ValidationError, DRFValidationError)):
+			# Log the exception
+			logger.warning(
+				f"Validation Error in {request.path}: {type(exception).__name__} - {str(exception)}",
+				extra={
+					'request_path': request.path,
+					'request_method': request.method,
+					'exception_type': type(exception).__name__,
+				}
+			)
+			
+			# Extract error details from the exception
+			# DRF ValidationError uses 'detail' attribute
+			error_details = None
+			if hasattr(exception, 'detail'):
+				error_details = exception.detail
+			else:
+				error_details = str(exception)
+			
+			# Format the response with standard structure
+			return JsonResponse(
+				{
+					"success": False,
+					"error": {
+						"code": "validation_error",
+						"message": self._get_validation_error_message(exception),
+						"details": self._format_error_details(error_details),
+					},
+				},
+				status=status.HTTP_400_BAD_REQUEST,
+			)
 		
 		# Handle DRF APIException
 		if isinstance(exception, APIException):
@@ -195,6 +345,28 @@ class ExceptionHandlingMiddleware:
 				return "bad_request"
 		
 		return "error"
+	
+	def _get_validation_error_message(self, exc):
+		"""Get user-friendly validation error message."""
+		# Try to get a message from the exception
+		if hasattr(exc, "detail"):
+			if isinstance(exc.detail, str):
+				return exc.detail
+			elif isinstance(exc.detail, list) and len(exc.detail) > 0:
+				return exc.detail[0]
+			elif isinstance(exc.detail, dict):
+				# Get first error message from dict
+				first_key = next(iter(exc.detail))
+				first_value = exc.detail[first_key]
+				if isinstance(first_value, list):
+					return first_value[0] if first_value else "Validation error"
+				return str(first_value)
+		
+		# Fallback to string representation
+		if str(exc):
+			return str(exc)
+		
+		return "Validation error"
 	
 	def _get_error_message(self, exc, response):
 		"""Get user-friendly error message."""

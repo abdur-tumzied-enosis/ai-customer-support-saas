@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.9.1
+    container_name: qdrant-prod
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # HTTP API
+      - "6334:6334"  # gRPC API (optional, for better performance)
+    volumes:
+      - qdrant_storage:/qdrant/storage
+      - ./qdrant/config:/qdrant/config  # Optional: custom config
+    environment:
+      # Enable API key authentication (recommended for production)
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      # Performance tuning
+      QDRANT__LOG_LEVEL: INFO
+      # Optional: Set max request size (default: 32MB)
+      QDRANT__SERVICE__MAX_REQUEST_SIZE_MB: 32
+      # Optional: Enable telemetry (set to false to disable)
+      QDRANT__TELEMETRY_DISABLED: "false"
+    # Resource limits (adjust based on your needs)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Network isolation (recommended)
+    networks:
+      - qdrant_network
+
+volumes:
+  qdrant_storage:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/qdrant  # Use a persistent path on host
+
+networks:
+  qdrant_network:
+    driver: bridge
+
+
