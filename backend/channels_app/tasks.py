@@ -126,7 +126,7 @@ def handle_incoming_message(message_id: str, knowledge_base_id: str) -> None:
 		logger.info(f"Generating reply for message {msg.id} with text: {current_message_text}")
 		logger.info(f"History: {history[:5]}")
 
-		reply_text = generate_reply(current_message_text, context, deps, history=history[:5])
+		reply_text = generate_reply(current_message_text, context, deps, history=history[:5], project_id=str(project.id))
 		logger.info(f"Reply text: {reply_text}")
 		agent_reply_uuid = msg.agent_reply_id
 		# Persist outbound message record using service
@@ -217,7 +217,7 @@ def handle_ui_message(message_id: str) -> None:
 			logger.info(f"Generating reply for UI message {msg.id} with text: {current_message_text}")
 			logger.info(f"History: {history[:5]}")
 
-			reply_text = generate_reply(current_message_text, context, deps, history=history[:5])
+			reply_text = generate_reply(current_message_text, context, deps, history=history[:5], project_id=str(project.id))
 			logger.info(f"Reply text: {reply_text}")
 			
 			# Get the pre-generated agent_reply_id from user message

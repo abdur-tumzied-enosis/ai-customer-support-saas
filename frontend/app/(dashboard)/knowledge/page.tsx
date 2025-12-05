@@ -8,10 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Upload, FileText, Plus, Trash2, File, Loader2 } from "lucide-react";
+import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil } from "lucide-react";
 import { documentApi, customInstructionApi, type CustomInstruction } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
@@ -44,7 +44,15 @@ export default function KnowledgePage() {
 	const [savingInstruction, setSavingInstruction] = useState(false);
 	const [deletingInstructionId, setDeletingInstructionId] = useState<string | null>(null);
 	const [instructionDialogOpen, setInstructionDialogOpen] = useState(false);
+	const [editingInstruction, setEditingInstruction] = useState<CustomInstruction | null>(null);
+	const [editDialogOpen, setEditDialogOpen] = useState(false);
 	const [newInstruction, setNewInstruction] = useState({ label: "", message: "" });
+	const [editInstruction, setEditInstruction] = useState({ label: "", message: "" });
+	const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+	const [instructionToDelete, setInstructionToDelete] = useState<CustomInstruction | null>(null);
+	const [deleteDocConfirmOpen, setDeleteDocConfirmOpen] = useState(false);
+	const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
+	const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
 	const [alert, setAlert] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
 	// Get the first project (for now, we'll use the first one)
@@ -150,13 +158,26 @@ export default function KnowledgePage() {
 		}
 	}
 
-	async function handleDeleteDocument(id: string) {
+	function handleDeleteDocumentClick(doc: Document) {
+		setDocumentToDelete(doc);
+		setDeleteDocConfirmOpen(true);
+	}
+
+	async function handleConfirmDeleteDocument() {
+		if (!documentToDelete) return;
+		
+		setDeletingDocumentId(documentToDelete.id);
+		setDeleteDocConfirmOpen(false);
+		
 		try {
-			await documentApi.delete(id);
-			setDocuments((prev) => prev.filter((doc) => doc.id !== id));
+			await documentApi.delete(documentToDelete.id);
+			setDocuments((prev) => prev.filter((doc) => doc.id !== documentToDelete.id));
 			setAlert({ type: "success", message: "Document deleted successfully" });
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
+		} finally {
+			setDeletingDocumentId(null);
+			setDocumentToDelete(null);
 		}
 	}
 
@@ -218,9 +239,14 @@ export default function KnowledgePage() {
 									<Button
 										variant="ghost"
 										size="icon"
-										onClick={() => handleDeleteDocument(doc.id)}
+										onClick={() => handleDeleteDocumentClick(doc)}
+										disabled={deletingDocumentId === doc.id}
 									>
-										<Trash2 className="h-4 w-4" />
+										{deletingDocumentId === doc.id ? (
+											<Loader2 className="h-4 w-4 animate-spin" />
+										) : (
+											<Trash2 className="h-4 w-4" />
+										)}
 									</Button>
 								</TableCell>
 							</TableRow>
@@ -262,16 +288,63 @@ export default function KnowledgePage() {
 		}
 	}
 
-	async function handleDeleteInstruction(id: string) {
-		setDeletingInstructionId(id);
+	function handleDeleteClick(instruction: CustomInstruction) {
+		setInstructionToDelete(instruction);
+		setDeleteConfirmOpen(true);
+	}
+
+	async function handleConfirmDelete() {
+		if (!instructionToDelete) return;
+		
+		setDeletingInstructionId(instructionToDelete.id);
+		setDeleteConfirmOpen(false);
+		
 		try {
-			await customInstructionApi.delete(id);
-			setInstructions((prev) => prev.filter((inst) => inst.id !== id));
+			await customInstructionApi.delete(instructionToDelete.id);
+			setInstructions((prev) => prev.filter((inst) => inst.id !== instructionToDelete.id));
 			setAlert({ type: "success", message: "Custom instruction deleted successfully" });
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
 		} finally {
 			setDeletingInstructionId(null);
+			setInstructionToDelete(null);
+		}
+	}
+
+	function handleEditClick(instruction: CustomInstruction) {
+		setEditingInstruction(instruction);
+		setEditInstruction({ label: instruction.label, message: instruction.message });
+		setEditDialogOpen(true);
+	}
+
+	async function handleUpdateInstruction() {
+		if (!editingInstruction) return;
+		
+		if (!editInstruction.label.trim() || !editInstruction.message.trim()) {
+			setAlert({ type: "error", message: "Please fill in both label and message fields" });
+			return;
+		}
+
+		setSavingInstruction(true);
+		try {
+			const response = await customInstructionApi.update(editingInstruction.id, {
+				label: editInstruction.label.trim(),
+				message: editInstruction.message.trim(),
+			});
+
+			setInstructions((prev) =>
+				prev.map((inst) =>
+					inst.id === editingInstruction.id ? response.data.instruction : inst
+				)
+			);
+			setEditDialogOpen(false);
+			setEditingInstruction(null);
+			setEditInstruction({ label: "", message: "" });
+			setAlert({ type: "success", message: "Custom instruction updated successfully" });
+		} catch (error) {
+			setAlert({ type: "error", message: formatError(error) });
+		} finally {
+			setSavingInstruction(false);
 		}
 	}
 
@@ -362,6 +435,53 @@ export default function KnowledgePage() {
 							{renderDocumentTable(documents)}
 						</TabsContent>
 					</Tabs>
+
+					{/* Delete Document Confirmation Dialog */}
+					<Dialog open={deleteDocConfirmOpen} onOpenChange={(open) => {
+						setDeleteDocConfirmOpen(open);
+						if (!open) {
+							setDocumentToDelete(null);
+						}
+					}}>
+						<DialogContent>
+							<DialogHeader>
+								<DialogTitle>Delete Document</DialogTitle>
+								<DialogDescription>
+									Are you sure you want to delete this document? This action cannot be undone.
+								</DialogDescription>
+							</DialogHeader>
+							{documentToDelete && (
+								<div className="py-4">
+									<div className="rounded-md border p-3 bg-muted/50">
+										<div className="flex items-center gap-2">
+											<File className="h-4 w-4 text-muted-foreground" />
+											<p className="text-sm font-medium">{documentToDelete.filename}</p>
+										</div>
+										<p className="text-xs text-muted-foreground mt-1">
+											{formatFileSize(documentToDelete.file_size)} • Uploaded {new Date(documentToDelete.created_at).toLocaleDateString()}
+										</p>
+									</div>
+								</div>
+							)}
+							<DialogFooter className="gap-2 sm:gap-0">
+								<Button
+									variant="outline"
+									onClick={() => {
+										setDeleteDocConfirmOpen(false);
+										setDocumentToDelete(null);
+									}}
+								>
+									Cancel
+								</Button>
+								<Button
+									variant="destructive"
+									onClick={handleConfirmDeleteDocument}
+								>
+									Delete
+								</Button>
+							</DialogFooter>
+						</DialogContent>
+					</Dialog>
 				</CardContent>
 			</Card>
 
@@ -441,6 +561,116 @@ export default function KnowledgePage() {
 								</div>
 							</DialogContent>
 						</Dialog>
+
+						{/* Edit Instruction Dialog */}
+						<Dialog open={editDialogOpen} onOpenChange={(open) => {
+							setEditDialogOpen(open);
+							if (!open) {
+								setEditingInstruction(null);
+								setEditInstruction({ label: "", message: "" });
+							}
+						}}>
+							<DialogContent>
+								<DialogHeader>
+									<DialogTitle>Edit Custom Instruction</DialogTitle>
+									<DialogDescription>
+										Update the instruction that guides your agent's behavior
+									</DialogDescription>
+								</DialogHeader>
+								<div className="space-y-4 py-4">
+									<div className="space-y-2">
+										<Label htmlFor="edit-instruction-label">Label</Label>
+										<Input
+											id="edit-instruction-label"
+											placeholder="e.g., Greeting Style, Response Tone, Escalation Rules"
+											value={editInstruction.label}
+											onChange={(e) =>
+												setEditInstruction((prev) => ({ ...prev, label: e.target.value }))
+											}
+										/>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="edit-instruction-message">Message</Label>
+										<Textarea
+											id="edit-instruction-message"
+											placeholder="Enter the instruction message that defines how the agent should act..."
+											rows={6}
+											value={editInstruction.message}
+											onChange={(e) =>
+												setEditInstruction((prev) => ({ ...prev, message: e.target.value }))
+											}
+										/>
+									</div>
+									<div className="flex justify-end gap-2">
+										<Button
+											variant="outline"
+											onClick={() => {
+												setEditDialogOpen(false);
+												setEditingInstruction(null);
+												setEditInstruction({ label: "", message: "" });
+											}}
+											disabled={savingInstruction}
+										>
+											Cancel
+										</Button>
+										<Button onClick={handleUpdateInstruction} disabled={savingInstruction}>
+											{savingInstruction ? (
+												<>
+													<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+													Saving...
+												</>
+											) : (
+												"Save Changes"
+											)}
+										</Button>
+									</div>
+								</div>
+							</DialogContent>
+						</Dialog>
+
+						{/* Delete Confirmation Dialog */}
+						<Dialog open={deleteConfirmOpen} onOpenChange={(open) => {
+							setDeleteConfirmOpen(open);
+							if (!open) {
+								setInstructionToDelete(null);
+							}
+						}}>
+							<DialogContent>
+								<DialogHeader>
+									<DialogTitle>Delete Instruction</DialogTitle>
+									<DialogDescription>
+										Are you sure you want to delete this instruction? This action cannot be undone.
+									</DialogDescription>
+								</DialogHeader>
+								{instructionToDelete && (
+									<div className="py-4">
+										<div className="rounded-md border p-3 bg-muted/50">
+											<p className="text-sm font-medium">{instructionToDelete.label}</p>
+											<p className="text-sm text-muted-foreground line-clamp-2 mt-1">
+												{instructionToDelete.message}
+											</p>
+										</div>
+									</div>
+								)}
+								<DialogFooter className="gap-2 sm:gap-0">
+									<Button
+										variant="outline"
+										onClick={() => {
+											setDeleteConfirmOpen(false);
+											setInstructionToDelete(null);
+										}}
+									>
+										Cancel
+									</Button>
+									<Button
+										variant="destructive"
+										onClick={handleConfirmDelete}
+									>
+										Delete
+									</Button>
+								</DialogFooter>
+							</DialogContent>
+						</Dialog>
 					</div>
 
 					{instructionsLoading ? (
@@ -460,22 +690,33 @@ export default function KnowledgePage() {
 													Added {new Date(inst.created_at).toLocaleDateString()}
 												</span>
 											</div>
-											<Button
-												variant="ghost"
-												size="icon"
-												onClick={() => handleDeleteInstruction(inst.id)}
-												disabled={deletingInstructionId === inst.id}
-											>
-												{deletingInstructionId === inst.id ? (
-													<Loader2 className="h-4 w-4 animate-spin" />
-												) : (
-													<Trash2 className="h-4 w-4" />
-												)}
-											</Button>
+											<div className="flex items-center gap-1">
+												<Button
+													variant="ghost"
+													size="icon"
+													onClick={() => handleEditClick(inst)}
+												>
+													<Pencil className="h-4 w-4" />
+												</Button>
+												<Button
+													variant="ghost"
+													size="icon"
+													onClick={() => handleDeleteClick(inst)}
+													disabled={deletingInstructionId === inst.id}
+												>
+													{deletingInstructionId === inst.id ? (
+														<Loader2 className="h-4 w-4 animate-spin" />
+													) : (
+														<Trash2 className="h-4 w-4" />
+													)}
+												</Button>
+											</div>
 										</div>
 									</CardHeader>
 									<CardContent>
-										<p className="text-sm whitespace-pre-wrap">{inst.message}</p>
+										<p className="text-sm text-muted-foreground line-clamp-2">
+											{inst.message}
+										</p>
 									</CardContent>
 								</Card>
 							))}

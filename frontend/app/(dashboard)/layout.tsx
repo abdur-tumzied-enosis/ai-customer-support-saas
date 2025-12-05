@@ -1,10 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useRequireAuth } from "@/hooks/useAuth";
 import Sidebar from "@/components/layout/Sidebar";
+import MobileSidebar from "@/components/layout/MobileSidebar";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
 	DropdownMenu,
@@ -14,12 +17,13 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogOut, User, Settings } from "lucide-react";
+import { LogOut, User, Settings, Menu } from "lucide-react";
 import { authApi } from "@/lib/api";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 	const router = useRouter();
 	const { user, loading } = useRequireAuth();
+	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
 	async function handleLogout() {
 		try {
@@ -51,14 +55,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 	return (
 		<div className="min-h-screen flex bg-background text-foreground">
 			<Sidebar />
-			<main className="flex-1">
-				<header className="border-b bg-background border-border">
-					<div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-						<div className="text-sm text-muted-foreground">Auto Magic Pro</div>
+			<MobileSidebar open={mobileMenuOpen} onOpenChange={setMobileMenuOpen} />
+			<main className="flex-1 min-w-0">
+				<header className="border-b bg-background border-border sticky top-0 z-40">
+					<div className="max-w-6xl mx-auto px-4 md:px-6 py-3 flex items-center justify-between">
+						<div className="flex items-center gap-3">
+							<Button
+								variant="ghost"
+								size="icon"
+								className="md:hidden"
+								onClick={() => setMobileMenuOpen(true)}
+								aria-label="Open menu"
+							>
+								<Menu className="h-5 w-5" />
+							</Button>
+							<span className="text-sm font-medium text-foreground md:hidden">Auto Magic Pro</span>
+						</div>
 						<div className="flex items-center gap-3">
 							<Input
 								placeholder="Search"
-								className="hidden md:block w-64"
+								className="hidden lg:block w-64"
 							/>
 							<ThemeToggle />
 							<DropdownMenu>

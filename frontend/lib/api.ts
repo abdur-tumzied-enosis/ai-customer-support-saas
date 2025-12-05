@@ -527,3 +527,84 @@ export const conversationApi = {
 		}>(`/api/channels/messages/${messageId}/status`);
 	},
 };
+
+// Analytics types
+export type AnalyticsData = {
+	date_range: {
+		start: string;
+		end: string;
+	};
+	conversations: {
+		total: number;
+		trend: Array<{
+			date: string;
+			count: number;
+		}>;
+	};
+	messages: {
+		total: number;
+		inbound: number;
+		outbound: number;
+		by_status: Record<string, number>;
+		by_platform: Array<{
+			contact__platform: string;
+			count: number;
+		}>;
+		trend: Array<{
+			date: string;
+			count: number;
+		}>;
+	};
+	knowledge: {
+		total_documents: number;
+		documents_by_status: Record<string, number>;
+		total_storage_bytes: number;
+		knowledge_bases: number;
+		ingestion_jobs: {
+			total: number;
+			by_status: Record<string, number>;
+		};
+	};
+	channels: {
+		total: number;
+		by_type: Record<string, number>;
+	};
+	users: {
+		active: number;
+		new_signups: number;
+		trend: Array<{
+			date: string;
+			count: number;
+		}>;
+	};
+	token_usage: {
+		total: number;
+		input_tokens: number;
+		output_tokens: number;
+		embedding_tokens: number;
+		by_kind: Record<string, number>;
+		trend: Array<{
+			date: string;
+			total_tokens: number;
+		}>;
+	};
+};
+
+// Analytics API functions
+export const analyticsApi = {
+	/**
+	 * Get analytics overview data
+	 * @param startDate - Optional start date (ISO format)
+	 * @param endDate - Optional end date (ISO format)
+	 */
+	getOverview: async (startDate?: string, endDate?: string) => {
+		const params = new URLSearchParams();
+		if (startDate) params.append("start_date", startDate);
+		if (endDate) params.append("end_date", endDate);
+
+		const queryString = params.toString();
+		const path = `/api/analytics/overview/${queryString ? `?${queryString}` : ""}`;
+
+		return apiFetch<AnalyticsData>(path);
+	},
+};

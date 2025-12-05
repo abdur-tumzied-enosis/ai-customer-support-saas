@@ -164,6 +164,26 @@ def run_ingestion_job(job_id: str) -> None:
             # Save the inserted chunk IDs to the document for easy deletion later
             document.vector_chunk_ids = inserted_ids
             document.save()
+            
+            # Track embedding token usage
+            try:
+                from usage.utils import track_token_usage, estimate_tokens
+                total_embedding_tokens = sum(estimate_tokens(chunk) for chunk in text_chunks)
+                track_token_usage(
+                    str(job.kb.project_id),
+                    "embed",
+                    total_embedding_tokens,
+                    {
+                        "document_id": str(document.id),
+                        "document_filename": document.filename,
+                        "num_chunks": len(text_chunks)
+                    }
+                )
+            except Exception as e:
+                # Don't fail ingestion if token tracking fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to track embedding token usage: {e}")
                 
         except Exception as e:
             raise ValueError(f"Failed to store embeddings in Qdrant: {str(e)}")

@@ -7,6 +7,7 @@ urlpatterns = [
 	path("webhooks/facebook/", include("channels_app.urls_facebook")),
 	path("api/kb/", include("knowledge.urls")),
 	path("api/channels/", include("channels_app.urls_api")),
+	path("api/analytics/", include("analytics.urls")),
 ]
 
 
