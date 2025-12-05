@@ -360,8 +360,127 @@ export const customInstructionApi = {
 	},
 };
 
+// Knowledge Base API functions
+export const knowledgeBaseApi = {
+	list: async (projectId: string) => {
+		return apiFetch<{
+			knowledge_bases: Array<{
+				id: string;
+				name: string;
+				created_at: string;
+			}>;
+			count: number;
+		}>(`/api/kb/knowledge-bases/?project_id=${projectId}`);
+	},
+};
+
+// Platform types
+export type CredentialField = {
+	name: string;
+	label: string;
+	type: string;
+	required: boolean;
+	description: string;
+	placeholder: string;
+};
+
+export type Platform = {
+	id: string;
+	name: string;
+	display_name: string;
+	description: string;
+	icon: string;
+	is_active: boolean;
+	webhook_path: string;
+	api_base_url: string;
+	documentation_url: string;
+	credential_schema: CredentialField[];
+};
+
+// Channel Credential types
+export type ChannelCredential = {
+	id: string;
+	name: string;
+	channel: string;
+	platform: {
+		id: string;
+		name: string;
+		display_name: string;
+		icon: string;
+	} | null;
+	knowledge_base: {
+		id: string;
+		name: string;
+	} | null;
+	credentials?: Record<string, string>;
+	is_active: boolean;
+	is_configured: boolean;
+	created_at: string;
+	updated_at: string;
+};
+
+// Platform API functions
+export const platformApi = {
+	list: async () => {
+		return apiFetch<{
+			platforms: Platform[];
+			count: number;
+		}>("/api/channels/platforms");
+	},
+};
+
 // Channel API functions
 export const channelApi = {
+	list: async (projectSlug: string) => {
+		return apiFetch<{
+			channels: ChannelCredential[];
+			count: number;
+		}>(`/api/channels/channels?project_slug=${encodeURIComponent(projectSlug)}`);
+	},
+
+	create: async (data: {
+		project_slug: string;
+		name: string;
+		channel: string;
+		credentials: Record<string, string>;
+		knowledge_base_id?: string | null;
+		is_active?: boolean;
+	}) => {
+		return apiFetch<{
+			channel: ChannelCredential;
+		}>("/api/channels/channels", {
+			method: "POST",
+			json: data,
+		});
+	},
+
+	get: async (channelId: string) => {
+		return apiFetch<{
+			channel: ChannelCredential;
+		}>(`/api/channels/channels/${channelId}`);
+	},
+
+	update: async (channelId: string, data: {
+		name?: string;
+		credentials?: Record<string, string>;
+		knowledge_base_id?: string | null;
+		is_active?: boolean;
+	}) => {
+		return apiFetch<{
+			channel: ChannelCredential;
+		}>(`/api/channels/channels/${channelId}`, {
+			method: "PATCH",
+			json: data,
+		});
+	},
+
+	delete: async (channelId: string) => {
+		return apiFetch(`/api/channels/channels/${channelId}`, {
+			method: "DELETE",
+		});
+	},
+
+	// Legacy endpoints
 	configureFacebook: async (data: {
 		project_slug: string;
 		page_id?: string;

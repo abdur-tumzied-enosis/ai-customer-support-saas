@@ -449,6 +449,10 @@ class ChannelCredential(models.Model):
 		related_name="credentials",
 		help_text="Reference to the platform configuration"
 	)
+	name = models.CharField(
+		max_length=255,
+		help_text="User-defined name for this channel connection"
+	)
 	knowledge_base = models.ForeignKey(
 		"knowledge.KnowledgeBase",
 		on_delete=models.SET_NULL,

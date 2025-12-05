@@ -5,10 +5,42 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
-from .models import ChannelCredential, Conversation, Message
+from .models import ChannelCredential, Conversation, Message, Platform
 from .service.conversation_service import create_conversation, get_default_knowledge_base
 from .service.message_service import create_ui_message
 from .tasks import handle_ui_message
+
+
+class PlatformListView(APIView):
+	"""List all available messaging platforms with their credential schemas."""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		"""Get all active platforms with credential field schemas."""
+		platforms = Platform.objects.filter(is_active=True).order_by('display_name')
+		
+		platforms_data = []
+		for platform in platforms:
+			platforms_data.append({
+				"id": str(platform.id),
+				"name": platform.name,
+				"display_name": platform.display_name,
+				"description": platform.description,
+				"icon": platform.icon,
+				"is_active": platform.is_active,
+				"webhook_path": platform.webhook_path,
+				"api_base_url": platform.api_base_url,
+				"documentation_url": platform.documentation_url,
+				"credential_schema": platform.credential_schema,
+			})
+
+		return Response({
+			"success": True,
+			"data": {
+				"platforms": platforms_data,
+				"count": len(platforms_data)
+			}
+		}, status=status.HTTP_200_OK)
 
 
 class FacebookConfigView(APIView):
@@ -500,6 +532,316 @@ class MessageStatusView(APIView):
 					"agent_reply": agent_reply,
 				}
 			}
+		}, status=status.HTTP_200_OK)
+
+
+class ChannelListCreateView(APIView):
+	"""List and create channel connections."""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		"""List all channel connections for a project."""
+		project_slug = request.query_params.get("project_slug")
+		if not project_slug:
+			raise ValidationError({"project_slug": "This field is required"})
+
+		project = _get_project(request.user, project_slug)
+
+		channels = ChannelCredential.objects.filter(project=project).select_related(
+			"platform", "knowledge_base"
+		).order_by("-created_at")
+
+		channels_data = []
+		for channel in channels:
+			kb_data = None
+			if channel.knowledge_base:
+				kb_data = {
+					"id": str(channel.knowledge_base.id),
+					"name": channel.knowledge_base.name,
+				}
+
+			platform_data = None
+			if channel.platform:
+				platform_data = {
+					"id": str(channel.platform.id),
+					"name": channel.platform.name,
+					"display_name": channel.platform.display_name,
+					"icon": channel.platform.icon,
+				}
+
+			channels_data.append({
+				"id": str(channel.id),
+				"name": channel.name,
+				"channel": channel.channel,
+				"platform": platform_data,
+				"knowledge_base": kb_data,
+				"is_active": channel.is_active,
+				"is_configured": channel.is_configured(),
+				"created_at": channel.created_at.isoformat(),
+				"updated_at": channel.updated_at.isoformat(),
+			})
+
+		return Response({
+			"success": True,
+			"data": {
+				"channels": channels_data,
+				"count": len(channels_data)
+			}
+		}, status=status.HTTP_200_OK)
+
+	def post(self, request):
+		"""Create a new channel connection."""
+		project_slug = request.data.get("project_slug")
+		if not project_slug:
+			raise ValidationError({"project_slug": "This field is required"})
+
+		project = _get_project(request.user, project_slug)
+
+		# Required fields
+		name = request.data.get("name")
+		channel = request.data.get("channel")
+		credentials = request.data.get("credentials", {})
+
+		if not name:
+			raise ValidationError({"name": "This field is required"})
+		if not channel:
+			raise ValidationError({"channel": "This field is required"})
+
+		# Optional fields
+		knowledge_base_id = request.data.get("knowledge_base_id")
+		knowledge_base = None
+		if knowledge_base_id:
+			try:
+				knowledge_base = KnowledgeBase.objects.get(id=knowledge_base_id, project=project)
+			except KnowledgeBase.DoesNotExist:
+				return Response({
+					"success": False,
+					"error": {
+						"code": "not_found",
+						"message": "Knowledge base not found"
+					}
+				}, status=status.HTTP_404_NOT_FOUND)
+
+		# Get platform
+		platform = Platform.objects.filter(name=channel).first()
+		if not platform:
+			return Response({
+				"success": False,
+				"error": {
+					"code": "not_found",
+					"message": f"Platform '{channel}' not found"
+				}
+			}, status=status.HTTP_404_NOT_FOUND)
+
+		# Create channel credential
+		channel_cred = ChannelCredential.objects.create(
+			project=project,
+			platform=platform,
+			name=name,
+			channel=channel,
+			knowledge_base=knowledge_base,
+			credentials=credentials,
+			is_active=request.data.get("is_active", True),
+		)
+
+		# Response data
+		kb_data = None
+		if channel_cred.knowledge_base:
+			kb_data = {
+				"id": str(channel_cred.knowledge_base.id),
+				"name": channel_cred.knowledge_base.name,
+			}
+
+		platform_data = {
+			"id": str(platform.id),
+			"name": platform.name,
+			"display_name": platform.display_name,
+			"icon": platform.icon,
+		}
+
+		return Response({
+			"success": True,
+			"data": {
+				"channel": {
+					"id": str(channel_cred.id),
+					"name": channel_cred.name,
+					"channel": channel_cred.channel,
+					"platform": platform_data,
+					"knowledge_base": kb_data,
+					"is_active": channel_cred.is_active,
+					"is_configured": channel_cred.is_configured(),
+					"created_at": channel_cred.created_at.isoformat(),
+					"updated_at": channel_cred.updated_at.isoformat(),
+				}
+			}
+		}, status=status.HTTP_201_CREATED)
+
+
+class ChannelDetailView(APIView):
+	"""Get, update, or delete a specific channel connection."""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request, channel_id):
+		"""Get channel details including credentials."""
+		channel = ChannelCredential.objects.filter(
+			id=channel_id
+		).select_related("project", "platform", "knowledge_base").first()
+
+		if not channel:
+			return Response({
+				"success": False,
+				"error": {
+					"code": "not_found",
+					"message": "Channel not found"
+				}
+			}, status=status.HTTP_404_NOT_FOUND)
+
+		_verify_project_access(request.user, channel.project)
+
+		kb_data = None
+		if channel.knowledge_base:
+			kb_data = {
+				"id": str(channel.knowledge_base.id),
+				"name": channel.knowledge_base.name,
+			}
+
+		platform_data = None
+		if channel.platform:
+			platform_data = {
+				"id": str(channel.platform.id),
+				"name": channel.platform.name,
+				"display_name": channel.platform.display_name,
+				"icon": channel.platform.icon,
+			}
+
+		return Response({
+			"success": True,
+			"data": {
+				"channel": {
+					"id": str(channel.id),
+					"name": channel.name,
+					"channel": channel.channel,
+					"platform": platform_data,
+					"knowledge_base": kb_data,
+					"credentials": channel.credentials,
+					"is_active": channel.is_active,
+					"is_configured": channel.is_configured(),
+					"created_at": channel.created_at.isoformat(),
+					"updated_at": channel.updated_at.isoformat(),
+				}
+			}
+		}, status=status.HTTP_200_OK)
+
+	def patch(self, request, channel_id):
+		"""Update a channel connection."""
+		channel = ChannelCredential.objects.filter(
+			id=channel_id
+		).select_related("project", "platform", "knowledge_base").first()
+
+		if not channel:
+			return Response({
+				"success": False,
+				"error": {
+					"code": "not_found",
+					"message": "Channel not found"
+				}
+			}, status=status.HTTP_404_NOT_FOUND)
+
+		_verify_project_access(request.user, channel.project)
+
+		# Update fields
+		update_fields = []
+		
+		if "name" in request.data:
+			channel.name = request.data["name"]
+			update_fields.append("name")
+
+		if "credentials" in request.data:
+			channel.credentials = request.data["credentials"]
+			update_fields.append("credentials")
+
+		if "is_active" in request.data:
+			channel.is_active = request.data["is_active"]
+			update_fields.append("is_active")
+
+		if "knowledge_base_id" in request.data:
+			kb_id = request.data["knowledge_base_id"]
+			if kb_id:
+				try:
+					kb = KnowledgeBase.objects.get(id=kb_id, project=channel.project)
+					channel.knowledge_base = kb
+				except KnowledgeBase.DoesNotExist:
+					return Response({
+						"success": False,
+						"error": {
+							"code": "not_found",
+							"message": "Knowledge base not found"
+						}
+					}, status=status.HTTP_404_NOT_FOUND)
+			else:
+				channel.knowledge_base = None
+			update_fields.append("knowledge_base")
+
+		if update_fields:
+			update_fields.append("updated_at")
+			channel.save(update_fields=update_fields)
+
+		# Response data
+		kb_data = None
+		if channel.knowledge_base:
+			kb_data = {
+				"id": str(channel.knowledge_base.id),
+				"name": channel.knowledge_base.name,
+			}
+
+		platform_data = None
+		if channel.platform:
+			platform_data = {
+				"id": str(channel.platform.id),
+				"name": channel.platform.name,
+				"display_name": channel.platform.display_name,
+				"icon": channel.platform.icon,
+			}
+
+		return Response({
+			"success": True,
+			"data": {
+				"channel": {
+					"id": str(channel.id),
+					"name": channel.name,
+					"channel": channel.channel,
+					"platform": platform_data,
+					"knowledge_base": kb_data,
+					"is_active": channel.is_active,
+					"is_configured": channel.is_configured(),
+					"created_at": channel.created_at.isoformat(),
+					"updated_at": channel.updated_at.isoformat(),
+				}
+			}
+		}, status=status.HTTP_200_OK)
+
+	def delete(self, request, channel_id):
+		"""Delete a channel connection."""
+		channel = ChannelCredential.objects.filter(
+			id=channel_id
+		).select_related("project").first()
+
+		if not channel:
+			return Response({
+				"success": False,
+				"error": {
+					"code": "not_found",
+					"message": "Channel not found"
+				}
+			}, status=status.HTTP_404_NOT_FOUND)
+
+		_verify_project_access(request.user, channel.project)
+
+		channel.delete()
+
+		return Response({
+			"success": True,
+			"message": "Channel deleted successfully"
 		}, status=status.HTTP_200_OK)
 
 

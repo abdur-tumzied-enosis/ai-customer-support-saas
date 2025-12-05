@@ -1,10 +1,14 @@
 from django.urls import path
 from .views import (
+	KnowledgeBaseListView,
 	DocumentUploadView, DocumentListView, DocumentDeleteView,
 	CustomInstructionListCreateView, CustomInstructionDetailView, CustomInstructionResolveView
 )
 
 urlpatterns = [
+	# Knowledge base endpoints
+	path("knowledge-bases/", KnowledgeBaseListView.as_view(), name="knowledge-base-list"),
+	
 	# Document endpoints
 	path("documents/upload/", DocumentUploadView.as_view(), name="document-upload"),
 	path("documents/", DocumentListView.as_view(), name="document-list"),

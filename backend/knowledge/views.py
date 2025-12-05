@@ -32,6 +32,38 @@ class CustomInstructionSerializer(serializers.ModelSerializer):
 User = get_user_model()
 
 
+class KnowledgeBaseListView(APIView):
+	"""List all knowledge bases for a project"""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project_id = request.query_params.get('project_id')
+		if not project_id:
+			return Response(
+				{"success": False, "error": {"code": "missing_project", "message": "project_id is required"}},
+				status=status.HTTP_400_BAD_REQUEST
+			)
+
+		# Get knowledge bases for this project
+		knowledge_bases = KnowledgeBase.objects.filter(project_id=project_id).order_by('name')
+		
+		kb_data = []
+		for kb in knowledge_bases:
+			kb_data.append({
+				"id": str(kb.id),
+				"name": kb.name,
+				"created_at": kb.created_at.isoformat(),
+			})
+
+		return Response({
+			"success": True,
+			"data": {
+				"knowledge_bases": kb_data,
+				"count": len(kb_data)
+			}
+		}, status=status.HTTP_200_OK)
+
+
 class DocumentUploadView(APIView):
     """
     API endpoint for uploading documents to knowledge base
