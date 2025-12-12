@@ -110,6 +110,15 @@ class Document(models.Model):
 
 	# For URL sources
 	uri = models.TextField(blank=True, default="")
+	
+	# Web crawling fields
+	markdown_content = models.TextField(blank=True, default="", help_text="Markdown content from crawled page")
+	images_metadata = models.JSONField(default=list, blank=True, help_text="Structured image data from crawled page")
+	links_metadata = models.JSONField(default=dict, blank=True, help_text="Internal and external links from crawled page")
+	parent_crawl_id = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='child_pages', help_text="Parent document for crawled child pages")
+	crawl_depth = models.IntegerField(default=0, help_text="Depth level in crawl tree (0 for parent)")
+	page_url = models.TextField(blank=True, default="", help_text="Display-friendly URL for crawled page")
+	page_title = models.CharField(max_length=500, blank=True, default="", help_text="Page title from crawled content")
 
 	status = models.CharField(max_length=32, default="pending")
 	checksum = models.CharField(max_length=128, blank=True, default="")
@@ -229,5 +238,34 @@ class CustomInstruction(models.Model):
 	def __str__(self) -> str:
 		scope = self.knowledge_base.name if self.knowledge_base else "Project"
 		return f"{self.label} ({scope})"
+
+
+class InstructionTemplate(models.Model):
+	"""
+	Predefined instruction templates that users can quickly add.
+	These are system-wide templates to help users get started.
+	"""
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	label = models.CharField(max_length=255, help_text="Template name/label")
+	message = models.TextField(help_text="Template instruction content")
+	description = models.TextField(blank=True, default="", help_text="Brief description of what this instruction does")
+	category = models.CharField(
+		max_length=50,
+		default="general",
+		help_text="Category for organizing templates (e.g., 'tone', 'behavior', 'formatting')"
+	)
+	is_active = models.BooleanField(default=True, help_text="Whether this template is available for use")
+	usage_count = models.IntegerField(default=0, help_text="Number of times this template has been used")
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		ordering = ['-usage_count', 'label']
+		indexes = [
+			models.Index(fields=['category', 'is_active']),
+		]
+
+	def __str__(self) -> str:
+		return f"{self.label} ({self.category})"
 
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,8 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil } from "lucide-react";
-import { documentApi, customInstructionApi, type CustomInstruction } from "@/lib/api";
+import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil, Sparkles, Tag, Globe, ChevronRight, ChevronDown, Eye } from "lucide-react";
+import { documentApi, customInstructionApi, instructionTemplateApi, type CustomInstruction, type InstructionTemplate } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
 
@@ -24,6 +24,12 @@ type Document = {
 	error_message: string | null;
 	checksum: string;
 	created_at: string;
+	source_type: string;
+	page_url: string;
+	page_title: string;
+	crawl_depth: number;
+	parent_crawl_id: string | null;
+	children_count: number;
 	ingestion_job: {
 		id: string | null;
 		status: string | null;
@@ -40,6 +46,9 @@ export default function KnowledgePage() {
 	const [loading, setLoading] = useState(false);
 	const [instructions, setInstructions] = useState<CustomInstruction[]>([]);
 	const [instructionsLoading, setInstructionsLoading] = useState(false);
+	const [templates, setTemplates] = useState<InstructionTemplate[]>([]);
+	const [templatesLoading, setTemplatesLoading] = useState(false);
+	const [showTemplates, setShowTemplates] = useState(false);
 	const [uploading, setUploading] = useState(false);
 	const [savingInstruction, setSavingInstruction] = useState(false);
 	const [deletingInstructionId, setDeletingInstructionId] = useState<string | null>(null);
@@ -54,6 +63,15 @@ export default function KnowledgePage() {
 	const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
 	const [deletingDocumentId, setDeletingDocumentId] = useState<string | null>(null);
 	const [alert, setAlert] = useState<{ type: "success" | "error"; message: string } | null>(null);
+	
+	// Web crawl state
+	const [crawlUrl, setCrawlUrl] = useState("");
+	const [crawlDepth, setCrawlDepth] = useState("1");
+	const [crawling, setCrawling] = useState(false);
+	const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
+	const [childrenCache, setChildrenCache] = useState<Record<string, any[]>>({});
+	const [viewingMarkdown, setViewingMarkdown] = useState<any | null>(null);
+	const [markdownDialogOpen, setMarkdownDialogOpen] = useState(false);
 
 	// Get the first project (for now, we'll use the first one)
 	const currentProjectId = projects && projects.length > 0 ? String(projects[0].id) : null;
@@ -87,13 +105,26 @@ export default function KnowledgePage() {
 		}
 	}, [currentProjectId]);
 
-	// Fetch documents and instructions on mount
+	const fetchTemplates = useCallback(async () => {
+		setTemplatesLoading(true);
+		try {
+			const response = await instructionTemplateApi.list();
+			setTemplates(response.data.templates);
+		} catch (error) {
+			console.error("Failed to fetch templates:", error);
+		} finally {
+			setTemplatesLoading(false);
+		}
+	}, []);
+
+	// Fetch documents, instructions, and templates on mount
 	useEffect(() => {
 		if (!authLoading && currentProjectId) {
 			fetchDocuments();
 			fetchInstructions();
+			fetchTemplates();
 		}
-	}, [authLoading, currentProjectId, fetchDocuments, fetchInstructions]);
+	}, [authLoading, currentProjectId, fetchDocuments, fetchInstructions, fetchTemplates]);
 
 	function formatFileSize(bytes: number): string {
 		if (bytes < 1024) return bytes + " B";
@@ -181,6 +212,77 @@ export default function KnowledgePage() {
 		}
 	}
 
+	async function handleCrawlSubmit(e: React.FormEvent) {
+		e.preventDefault();
+		
+		if (!crawlUrl.trim()) {
+			setAlert({ type: "error", message: "Please enter a URL" });
+			return;
+		}
+		
+		if (!currentProjectId) {
+			setAlert({ type: "error", message: "No project selected" });
+			return;
+		}
+		
+		// Validate URL
+		try {
+			new URL(crawlUrl);
+		} catch {
+			setAlert({ type: "error", message: "Please enter a valid URL (e.g., https://example.com)" });
+			return;
+		}
+		
+		setCrawling(true);
+		setAlert(null);
+		
+		try {
+			const depth = parseInt(crawlDepth);
+			await documentApi.crawl(crawlUrl, depth, currentProjectId);
+			setAlert({ type: "success", message: "Web crawl started successfully" });
+			setCrawlUrl("");
+			setCrawlDepth("1");
+			
+			// Refresh documents list
+			await fetchDocuments();
+		} catch (error) {
+			setAlert({ type: "error", message: formatError(error) });
+		} finally {
+			setCrawling(false);
+		}
+	}
+
+	function toggleParentExpand(parentId: string) {
+		const newExpanded = new Set(expandedParents);
+		
+		if (newExpanded.has(parentId)) {
+			newExpanded.delete(parentId);
+		} else {
+			newExpanded.add(parentId);
+			
+			// Filter children from existing documents if not cached
+			if (!childrenCache[parentId]) {
+				const children = documents.filter((doc) => doc.parent_crawl_id === parentId);
+				setChildrenCache((prev) => ({
+					...prev,
+					[parentId]: children,
+				}));
+			}
+		}
+		
+		setExpandedParents(newExpanded);
+	}
+
+	async function handleViewMarkdown(documentId: string) {
+		try {
+			const response = await documentApi.getMarkdown(documentId);
+			setViewingMarkdown(response.data.document);
+			setMarkdownDialogOpen(true);
+		} catch (error) {
+			setAlert({ type: "error", message: formatError(error) });
+		}
+	}
+
 	function renderDocumentTable(docs: Document[]) {
 		if (loading) {
 			return (
@@ -196,10 +298,15 @@ export default function KnowledgePage() {
 				<div className="text-center py-8 text-muted-foreground">
 					<File className="h-12 w-12 mx-auto mb-2 opacity-50" />
 					<p>No documents found</p>
-					<p className="text-sm">Upload PDF or text files to get started</p>
+					<p className="text-sm">Upload PDF or text files or crawl a website to get started</p>
 				</div>
 			);
 		}
+
+		// Separate parent crawls (URL sources with no parent) and regular documents
+		// Child documents (with parent_crawl_id) are not shown here - they appear when parent is expanded
+		const parentCrawls = docs.filter((doc) => doc.source_type === "url" && doc.parent_crawl_id === null);
+		const regularDocs = docs.filter((doc) => doc.source_type !== "url");
 
 		return (
 			<div className="border rounded-md">
@@ -210,12 +317,13 @@ export default function KnowledgePage() {
 							<TableHead>Type</TableHead>
 							<TableHead>Size</TableHead>
 							<TableHead>Status</TableHead>
-							<TableHead>Uploaded</TableHead>
+							<TableHead>Date</TableHead>
 							<TableHead className="text-right">Actions</TableHead>
 						</TableRow>
 					</TableHeader>
 					<TableBody>
-						{docs.map((doc) => (
+						{/* Regular uploaded documents */}
+						{regularDocs.map((doc) => (
 							<TableRow key={doc.id}>
 								<TableCell className="font-medium">{doc.filename}</TableCell>
 								<TableCell>
@@ -251,10 +359,154 @@ export default function KnowledgePage() {
 								</TableCell>
 							</TableRow>
 						))}
+
+						{/* Parent crawl documents with collapsible children */}
+						{parentCrawls.map((parent) => {
+							const isExpanded = expandedParents.has(parent.id);
+							const children = childrenCache[parent.id] || [];
+							
+							return (
+								<Fragment key={parent.id}>
+									{/* Parent row */}
+									<TableRow>
+										<TableCell className="font-medium">
+											<div className="flex items-center gap-2">
+												<button
+													onClick={() => toggleParentExpand(parent.id)}
+													className="hover:bg-accent p-1 rounded"
+													disabled={parent.children_count === 0}
+												>
+													{parent.children_count > 0 ? (
+														isExpanded ? (
+															<ChevronDown className="h-4 w-4" />
+														) : (
+															<ChevronRight className="h-4 w-4" />
+														)
+													) : (
+														<div className="w-4" />
+													)}
+												</button>
+												<Globe className="h-4 w-4 text-muted-foreground" />
+												<span className="truncate max-w-md" title={parent.page_url}>
+													{parent.page_title || parent.page_url}
+												</span>
+											</div>
+										</TableCell>
+										<TableCell>
+											<Badge variant="outline">URL</Badge>
+										</TableCell>
+										<TableCell>
+											{parent.children_count > 0 && (
+												<Badge variant="secondary">{parent.children_count} pages</Badge>
+											)}
+										</TableCell>
+										<TableCell>
+											<Badge variant={getStatusBadgeVariant(parent.status)}>
+												{parent.status}
+											</Badge>
+										</TableCell>
+										<TableCell>
+											{new Date(parent.created_at).toLocaleDateString()}
+										</TableCell>
+										<TableCell className="text-right">
+											<div className="flex justify-end gap-1">
+												{parent.status === "completed" && (
+													<Button
+														variant="ghost"
+														size="icon"
+														onClick={() => handleViewMarkdown(parent.id)}
+													>
+														<Eye className="h-4 w-4" />
+													</Button>
+												)}
+												<Button
+													variant="ghost"
+													size="icon"
+													onClick={() => handleDeleteDocumentClick(parent)}
+													disabled={deletingDocumentId === parent.id}
+												>
+													{deletingDocumentId === parent.id ? (
+														<Loader2 className="h-4 w-4 animate-spin" />
+													) : (
+														<Trash2 className="h-4 w-4" />
+													)}
+												</Button>
+											</div>
+										</TableCell>
+									</TableRow>
+
+									{/* Child rows (when expanded) */}
+									{isExpanded && children.map((child) => (
+										<TableRow key={child.id} className="bg-muted/30">
+											<TableCell className="font-medium">
+												<div className="flex items-center gap-2 pl-12">
+													<FileText className="h-3 w-3 text-muted-foreground" />
+													<span className="text-sm truncate max-w-md" title={child.page_url}>
+														{child.page_title || child.page_url}
+													</span>
+												</div>
+											</TableCell>
+											<TableCell>
+												<Badge variant="outline" className="text-xs">Page</Badge>
+											</TableCell>
+											<TableCell>-</TableCell>
+											<TableCell>
+												<Badge variant={getStatusBadgeVariant(child.status)} className="text-xs">
+													{child.status}
+												</Badge>
+											</TableCell>
+											<TableCell className="text-sm">
+												{new Date(child.created_at).toLocaleDateString()}
+											</TableCell>
+											<TableCell className="text-right">
+												<div className="flex justify-end gap-1">
+													{child.status === "completed" && (
+														<Button
+															variant="ghost"
+															size="icon"
+															onClick={() => handleViewMarkdown(child.id)}
+														>
+															<Eye className="h-4 w-4" />
+														</Button>
+													)}
+													<Button
+														variant="ghost"
+														size="icon"
+														onClick={() => handleDeleteDocumentClick(child)}
+														disabled={deletingDocumentId === child.id}
+													>
+														{deletingDocumentId === child.id ? (
+															<Loader2 className="h-4 w-4 animate-spin" />
+														) : (
+															<Trash2 className="h-4 w-4" />
+														)}
+													</Button>
+												</div>
+											</TableCell>
+										</TableRow>
+									))}
+								</Fragment>
+							);
+						})}
 					</TableBody>
 				</Table>
 			</div>
 		);
+	}
+
+	async function handleUseTemplate(template: InstructionTemplate) {
+		setNewInstruction({
+			label: template.label,
+			message: template.message,
+		});
+		setShowTemplates(false);
+		
+		// Record template usage
+		try {
+			await instructionTemplateApi.recordUse(template.id);
+		} catch (error) {
+			console.error("Failed to record template usage:", error);
+		}
 	}
 
 	async function handleAddInstruction() {
@@ -280,6 +532,7 @@ export default function KnowledgePage() {
 			setInstructions((prev) => [response.data.instruction, ...prev]);
 			setNewInstruction({ label: "", message: "" });
 			setInstructionDialogOpen(false);
+			setShowTemplates(false);
 			setAlert({ type: "success", message: "Custom instruction added successfully" });
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
@@ -389,99 +642,65 @@ export default function KnowledgePage() {
 				</Alert>
 			)}
 
-			{/* Documents Section */}
+			{/* Web Crawl Section */}
 			<Card>
 				<CardHeader>
 					<CardTitle className="flex items-center gap-2">
-						<FileText className="h-5 w-5" />
-						Documents
+						<Globe className="h-5 w-5" />
+						Crawl Website
 					</CardTitle>
 					<CardDescription>
-						Upload PDF and text files to enhance your agent's knowledge base
+						Submit a URL to crawl and extract content. Specify depth to crawl linked pages.
 					</CardDescription>
 				</CardHeader>
-				<CardContent className="space-y-4">
-					<div className="flex items-center gap-4">
-						<Label htmlFor="file-upload" className="cursor-pointer">
-							<Button type="button" variant="outline" asChild disabled={uploading}>
-								<span>
-									<Upload className="mr-2 h-4 w-4" />
-									{uploading ? "Uploading..." : "Upload Files"}
-								</span>
-							</Button>
-						</Label>
-						<Input
-							id="file-upload"
-							type="file"
-							accept=".pdf,.txt,.md,text/*,application/pdf"
-							multiple
-							className="hidden"
-							onChange={handleFileUpload}
-							disabled={uploading}
-						/>
-						<span className="text-sm text-muted-foreground">
-							Accepted formats: PDF, TXT, MD (Max 10MB)
-						</span>
-					</div>
-
-					<Tabs defaultValue="documents" className="w-full">
-						<TabsList>
-							<TabsTrigger value="documents">
-								<FileText className="mr-2 h-4 w-4" />
-								Documents ({documents.length})
-							</TabsTrigger>
-						</TabsList>
-						<TabsContent value="documents" className="mt-4">
-							{renderDocumentTable(documents)}
-						</TabsContent>
-					</Tabs>
-
-					{/* Delete Document Confirmation Dialog */}
-					<Dialog open={deleteDocConfirmOpen} onOpenChange={(open) => {
-						setDeleteDocConfirmOpen(open);
-						if (!open) {
-							setDocumentToDelete(null);
-						}
-					}}>
-						<DialogContent>
-							<DialogHeader>
-								<DialogTitle>Delete Document</DialogTitle>
-								<DialogDescription>
-									Are you sure you want to delete this document? This action cannot be undone.
-								</DialogDescription>
-							</DialogHeader>
-							{documentToDelete && (
-								<div className="py-4">
-									<div className="rounded-md border p-3 bg-muted/50">
-										<div className="flex items-center gap-2">
-											<File className="h-4 w-4 text-muted-foreground" />
-											<p className="text-sm font-medium">{documentToDelete.filename}</p>
-										</div>
-										<p className="text-xs text-muted-foreground mt-1">
-											{formatFileSize(documentToDelete.file_size)} • Uploaded {new Date(documentToDelete.created_at).toLocaleDateString()}
-										</p>
-									</div>
-								</div>
-							)}
-							<DialogFooter className="gap-2 sm:gap-0">
-								<Button
-									variant="outline"
-									onClick={() => {
-										setDeleteDocConfirmOpen(false);
-										setDocumentToDelete(null);
-									}}
+				<CardContent>
+					<form onSubmit={handleCrawlSubmit} className="space-y-4">
+						<div className="flex gap-4">
+							<div className="flex-1">
+								<Label htmlFor="crawl-url">Website URL</Label>
+								<Input
+									id="crawl-url"
+									type="url"
+									placeholder="https://example.com"
+									value={crawlUrl}
+									onChange={(e) => setCrawlUrl(e.target.value)}
+									disabled={crawling}
+								/>
+							</div>
+							<div className="w-32">
+								<Label htmlFor="crawl-depth">Depth</Label>
+								<select
+									id="crawl-depth"
+									className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+									value={crawlDepth}
+									onChange={(e) => setCrawlDepth(e.target.value)}
+									disabled={crawling}
 								>
-									Cancel
+									<option value="1">1</option>
+									<option value="2">2</option>
+									<option value="3">3</option>
+								</select>
+								<p className="text-xs text-muted-foreground mt-1">
+									Pages deep
+								</p>
+							</div>
+							<div className="flex items-end">
+								<Button type="submit" disabled={crawling}>
+									{crawling ? (
+										<>
+											<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+											Crawling...
+										</>
+									) : (
+										<>
+											<Globe className="mr-2 h-4 w-4" />
+											Start Crawl
+										</>
+									)}
 								</Button>
-								<Button
-									variant="destructive"
-									onClick={handleConfirmDeleteDocument}
-								>
-									Delete
-								</Button>
-							</DialogFooter>
-						</DialogContent>
-					</Dialog>
+							</div>
+						</div>
+					</form>
 				</CardContent>
 			</Card>
 
@@ -505,7 +724,7 @@ export default function KnowledgePage() {
 									Add Instruction
 								</Button>
 							</DialogTrigger>
-							<DialogContent>
+							<DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
 								<DialogHeader>
 									<DialogTitle>Add Custom Instruction</DialogTitle>
 									<DialogDescription>
@@ -513,6 +732,68 @@ export default function KnowledgePage() {
 									</DialogDescription>
 								</DialogHeader>
 								<div className="space-y-4 py-4">
+									{/* Template Toggle Button */}
+									<div className="flex justify-between items-center pb-2 border-b">
+										<Button
+											variant={showTemplates ? "default" : "outline"}
+											size="sm"
+											onClick={() => setShowTemplates(!showTemplates)}
+											className="gap-2"
+										>
+											<Sparkles className="h-4 w-4" />
+											{showTemplates ? "Hide Templates" : "Use Template"}
+										</Button>
+										{showTemplates && (
+											<span className="text-xs text-muted-foreground">
+												Click a template to use it
+											</span>
+										)}
+									</div>
+
+									{/* Templates Grid */}
+									{showTemplates && (
+										<div className="space-y-3">
+											{templatesLoading ? (
+												<div className="text-center py-4">
+													<Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
+												</div>
+											) : (
+												<div className="grid gap-2 max-h-64 overflow-y-auto">
+													{templates.map((template) => (
+														<Card
+															key={template.id}
+															className="cursor-pointer hover:border-primary transition-colors"
+															onClick={() => handleUseTemplate(template)}
+														>
+															<CardContent className="p-3">
+																<div className="flex items-start justify-between gap-2">
+																	<div className="flex-1">
+																		<div className="flex items-center gap-2 mb-1">
+																			<p className="font-medium text-sm">{template.label}</p>
+																			<Badge variant="secondary" className="text-xs">
+																				<Tag className="h-3 w-3 mr-1" />
+																				{template.category}
+																			</Badge>
+																		</div>
+																		<p className="text-xs text-muted-foreground line-clamp-2">
+																			{template.description}
+																		</p>
+																	</div>
+																	{template.usage_count > 0 && (
+																		<Badge variant="outline" className="text-xs shrink-0">
+																			{template.usage_count} uses
+																		</Badge>
+																	)}
+																</div>
+															</CardContent>
+														</Card>
+													))}
+												</div>
+											)}
+										</div>
+									)}
+
+									{/* Form Fields */}
 									<div className="space-y-2">
 										<Label htmlFor="instruction-label">Label</Label>
 										<Input
@@ -542,6 +823,7 @@ export default function KnowledgePage() {
 											onClick={() => {
 												setInstructionDialogOpen(false);
 												setNewInstruction({ label: "", message: "" });
+												setShowTemplates(false);
 											}}
 											disabled={savingInstruction}
 										>
@@ -730,6 +1012,185 @@ export default function KnowledgePage() {
 					)}
 				</CardContent>
 			</Card>
+
+
+			{/* Documents Section */}
+			<Card>
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2">
+						<FileText className="h-5 w-5" />
+						Documents
+					</CardTitle>
+					<CardDescription>
+						Upload PDF and text files to enhance your agent's knowledge base
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					<div className="flex items-center gap-4">
+						<Label htmlFor="file-upload" className="cursor-pointer">
+							<Button type="button" variant="outline" asChild disabled={uploading}>
+								<span>
+									<Upload className="mr-2 h-4 w-4" />
+									{uploading ? "Uploading..." : "Upload Files"}
+								</span>
+							</Button>
+						</Label>
+						<Input
+							id="file-upload"
+							type="file"
+							accept=".pdf,.txt,.md,text/*,application/pdf"
+							multiple
+							className="hidden"
+							onChange={handleFileUpload}
+							disabled={uploading}
+						/>
+						<span className="text-sm text-muted-foreground">
+							Accepted formats: PDF, TXT, MD (Max 10MB)
+						</span>
+					</div>
+
+					<Tabs defaultValue="documents" className="w-full">
+						<TabsList>
+							<TabsTrigger value="documents">
+								<FileText className="mr-2 h-4 w-4" />
+								Documents ({documents.length})
+							</TabsTrigger>
+						</TabsList>
+						<TabsContent value="documents" className="mt-4">
+							{renderDocumentTable(documents)}
+						</TabsContent>
+					</Tabs>
+
+					{/* Delete Document Confirmation Dialog */}
+					<Dialog open={deleteDocConfirmOpen} onOpenChange={(open) => {
+						setDeleteDocConfirmOpen(open);
+						if (!open) {
+							setDocumentToDelete(null);
+						}
+					}}>
+						<DialogContent>
+							<DialogHeader>
+								<DialogTitle>Delete Document</DialogTitle>
+								<DialogDescription>
+									Are you sure you want to delete this document? This action cannot be undone.
+								</DialogDescription>
+							</DialogHeader>
+							{documentToDelete && (
+								<div className="py-4">
+									<div className="rounded-md border p-3 bg-muted/50">
+										<div className="flex items-center gap-2">
+											<File className="h-4 w-4 text-muted-foreground" />
+											<p className="text-sm font-medium">{documentToDelete.filename}</p>
+										</div>
+										<p className="text-xs text-muted-foreground mt-1">
+											{formatFileSize(documentToDelete.file_size)} • Uploaded {new Date(documentToDelete.created_at).toLocaleDateString()}
+										</p>
+									</div>
+								</div>
+							)}
+							<DialogFooter className="gap-2 sm:gap-0">
+								<Button
+									variant="outline"
+									onClick={() => {
+										setDeleteDocConfirmOpen(false);
+										setDocumentToDelete(null);
+									}}
+								>
+									Cancel
+								</Button>
+								<Button
+									variant="destructive"
+									onClick={handleConfirmDeleteDocument}
+								>
+									Delete
+								</Button>
+							</DialogFooter>
+						</DialogContent>
+					</Dialog>
+				</CardContent>
+			</Card>
+
+			{/* Markdown Viewer Modal */}
+			<Dialog open={markdownDialogOpen} onOpenChange={setMarkdownDialogOpen}>
+				<DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+					<DialogHeader>
+						<DialogTitle>
+							{viewingMarkdown?.page_title || "Page Content"}
+						</DialogTitle>
+						<DialogDescription>
+							{viewingMarkdown?.page_url && (
+								<a 
+									href={viewingMarkdown.page_url} 
+									target="_blank" 
+									rel="noopener noreferrer"
+									className="text-blue-600 hover:underline"
+								>
+									{viewingMarkdown.page_url}
+								</a>
+							)}
+							{viewingMarkdown?.created_at && (
+								<span className="text-muted-foreground ml-2">
+									• Crawled {new Date(viewingMarkdown.created_at).toLocaleDateString()}
+								</span>
+							)}
+						</DialogDescription>
+					</DialogHeader>
+					<div className="space-y-6 py-4">
+						{/* Markdown Content */}
+						{viewingMarkdown?.markdown_content && (
+							<div className="prose prose-sm max-w-none">
+								<div className="whitespace-pre-wrap bg-muted/30 p-4 rounded-lg">
+									{viewingMarkdown.markdown_content}
+								</div>
+							</div>
+						)}
+
+						{/* Image Gallery */}
+						{viewingMarkdown?.images_metadata && viewingMarkdown.images_metadata.length > 0 && (
+							<div className="space-y-3">
+								<h3 className="font-semibold text-sm flex items-center gap-2">
+									<FileText className="h-4 w-4" />
+									Images ({viewingMarkdown.images_metadata.length})
+								</h3>
+								<div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+									{viewingMarkdown.images_metadata.map((img: any, idx: number) => (
+										<div key={idx} className="border rounded-lg p-2 space-y-2">
+											<div className="aspect-video bg-muted rounded flex items-center justify-center overflow-hidden">
+												<img 
+													src={img.src} 
+													alt={img.alt || `Image ${idx + 1}`}
+													className="max-w-full max-h-full object-contain"
+													onError={(e) => {
+														(e.target as HTMLImageElement).style.display = 'none';
+													}}
+												/>
+											</div>
+											{img.alt && (
+												<p className="text-xs text-muted-foreground line-clamp-2">
+													{img.alt}
+												</p>
+											)}
+											<a 
+												href={img.src} 
+												target="_blank" 
+												rel="noopener noreferrer"
+												className="text-xs text-blue-600 hover:underline block truncate"
+											>
+												View full size
+											</a>
+										</div>
+									))}
+								</div>
+							</div>
+						)}
+					</div>
+					<DialogFooter>
+						<Button onClick={() => setMarkdownDialogOpen(false)}>
+							Close
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }

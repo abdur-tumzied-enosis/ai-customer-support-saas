@@ -2,6 +2,8 @@ from django.urls import path
 from .views import (
 	KnowledgeBaseListView,
 	DocumentUploadView, DocumentListView, DocumentDeleteView,
+	WebCrawlSubmitView, DocumentMarkdownView, DocumentChildrenView,
+	InstructionTemplateListView, InstructionTemplateUseView,
 	CustomInstructionListCreateView, CustomInstructionDetailView, CustomInstructionResolveView
 )
 
@@ -13,6 +15,15 @@ urlpatterns = [
 	path("documents/upload/", DocumentUploadView.as_view(), name="document-upload"),
 	path("documents/", DocumentListView.as_view(), name="document-list"),
 	path("documents/<uuid:document_id>/", DocumentDeleteView.as_view(), name="document-delete"),
+	path("documents/<uuid:document_id>/markdown/", DocumentMarkdownView.as_view(), name="document-markdown"),
+	path("documents/<uuid:parent_id>/children/", DocumentChildrenView.as_view(), name="document-children"),
+	
+	# Web crawl endpoints
+	path("crawl/", WebCrawlSubmitView.as_view(), name="web-crawl-submit"),
+	
+	# Instruction template endpoints
+	path("instruction-templates/", InstructionTemplateListView.as_view(), name="instruction-template-list"),
+	path("instruction-templates/<uuid:template_id>/use/", InstructionTemplateUseView.as_view(), name="instruction-template-use"),
 	
 	# Custom instruction endpoints
 	path("instructions/", CustomInstructionListCreateView.as_view(), name="instruction-list-create"),

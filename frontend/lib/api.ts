@@ -240,6 +240,12 @@ export const documentApi = {
 				error_message: string | null;
 				checksum: string;
 				created_at: string;
+				source_type: string;
+				page_url: string;
+				page_title: string;
+				crawl_depth: number;
+				parent_crawl_id: string | null;
+				children_count: number;
 				ingestion_job: {
 					id: string | null;
 					status: string | null;
@@ -257,6 +263,51 @@ export const documentApi = {
 		return apiFetch(`/api/kb/documents/${documentId}/`, {
 			method: "DELETE",
 		});
+	},
+
+	crawl: async (url: string, depth: number, projectId: string, kbName: string = "default") => {
+		return apiFetch<{
+			document: {
+				id: string;
+				uri: string;
+				page_url: string;
+				status: string;
+			};
+			kb: {
+				id: string;
+				name: string;
+				project_id: string;
+			};
+			ingestion_job: {
+				id: string;
+				status: string;
+			};
+		}>("/api/kb/crawl/", {
+			method: "POST",
+			json: {
+				url,
+				depth,
+				project_id: projectId,
+				kb_name: kbName,
+			},
+		});
+	},
+
+	getMarkdown: async (documentId: string) => {
+		return apiFetch<{
+			document: {
+				id: string;
+				page_url: string;
+				page_title: string;
+				markdown_content: string;
+				images_metadata: Array<{
+					src: string;
+					alt?: string;
+					title?: string;
+				}>;
+				created_at: string;
+			};
+		}>(`/api/kb/documents/${documentId}/markdown/`);
 	},
 };
 
@@ -371,6 +422,32 @@ export const knowledgeBaseApi = {
 			}>;
 			count: number;
 		}>(`/api/kb/knowledge-bases/?project_id=${projectId}`);
+	},
+};
+
+// Instruction Template types and API
+export type InstructionTemplate = {
+	id: string;
+	label: string;
+	message: string;
+	description: string;
+	category: string;
+	usage_count: number;
+};
+
+export const instructionTemplateApi = {
+	list: async (category?: string) => {
+		const params = category ? `?category=${encodeURIComponent(category)}` : '';
+		return apiFetch<{
+			templates: InstructionTemplate[];
+			count: number;
+		}>(`/api/kb/instruction-templates/${params}`);
+	},
+
+	recordUse: async (templateId: string) => {
+		return apiFetch(`/api/kb/instruction-templates/${templateId}/use/`, {
+			method: "POST",
+		});
 	},
 };
 

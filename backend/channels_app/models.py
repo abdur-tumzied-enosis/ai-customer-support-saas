@@ -234,10 +234,109 @@ class WhatsAppCredentials(BaseCredentials):
 		]
 
 
+@dataclass
+class InstagramCredentials(BaseCredentials):
+	"""
+	Credentials required for Instagram Messaging integration.
+	
+	Fields:
+	    instagram_account_id: The Instagram Business Account ID
+	    page_id: Connected Facebook Page ID
+	    page_access_token: Long-lived Page Access Token from Facebook Developer Console
+	    meta_app_id: The Facebook App ID from Meta Developer Dashboard
+	    meta_app_secret: The App Secret for webhook signature verification
+	    verify_token: Custom token for webhook URL verification (you create this)
+	
+	How to obtain:
+	    1. Convert your Instagram account to a Business or Creator account
+	    2. Connect it to a Facebook Page
+	    3. Create a Facebook App at developers.facebook.com
+	    4. Add Instagram product to your app
+	    5. Generate a Page Access Token and grant Instagram permissions
+	    6. Get Instagram Account ID from the Graph API or Instagram settings
+	    7. Copy App ID and App Secret from App Settings
+	    8. Create a custom verify_token for webhook setup
+	
+	Note: Instagram messaging uses the same infrastructure as Facebook Messenger,
+	      so the credentials are similar.
+	"""
+	instagram_account_id: str = ""
+	page_id: str = ""
+	page_access_token: str = ""
+	meta_app_id: str = ""
+	meta_app_secret: str = ""
+	verify_token: str = ""
+	
+	def is_configured(self) -> bool:
+		"""Check if all required Instagram credentials are provided."""
+		return bool(
+			self.instagram_account_id and 
+			self.page_id and 
+			self.page_access_token and 
+			self.meta_app_id and 
+			self.meta_app_secret and 
+			self.verify_token
+		)
+	
+	@classmethod
+	def get_required_fields(cls) -> list[dict]:
+		return [
+			{
+				"name": "instagram_account_id",
+				"label": "Instagram Account ID",
+				"type": "text",
+				"required": True,
+				"description": "Your Instagram Business Account ID (found in Instagram settings or Graph API)",
+				"placeholder": "17841400000000000"
+			},
+			{
+				"name": "page_id",
+				"label": "Facebook Page ID",
+				"type": "text",
+				"required": True,
+				"description": "Connected Facebook Page ID",
+				"placeholder": "123456789012345"
+			},
+			{
+				"name": "page_access_token",
+				"label": "Page Access Token",
+				"type": "password",
+				"required": True,
+				"description": "Long-lived Page Access Token with Instagram permissions",
+				"placeholder": "EAAxxxxxxx..."
+			},
+			{
+				"name": "meta_app_id",
+				"label": "App ID",
+				"type": "text",
+				"required": True,
+				"description": "Facebook App ID from Meta Developer Dashboard",
+				"placeholder": "1234567890123456"
+			},
+			{
+				"name": "meta_app_secret",
+				"label": "App Secret",
+				"type": "password",
+				"required": True,
+				"description": "App Secret for webhook signature verification",
+				"placeholder": "abcdef123456..."
+			},
+			{
+				"name": "verify_token",
+				"label": "Verify Token",
+				"type": "text",
+				"required": True,
+				"description": "Custom token for webhook verification (create your own)",
+				"placeholder": "my_instagram_verify_token_123"
+			},
+		]
+
+
 # Registry mapping platform names to their credential classes
 PLATFORM_CREDENTIALS: Dict[str, Type[BaseCredentials]] = {
 	"facebook": FacebookCredentials,
 	"whatsapp": WhatsAppCredentials,
+	"instagram": InstagramCredentials,
 }
 
 
@@ -760,5 +859,265 @@ class Message(models.Model):
 		direction_label = "→" if self.direction == "out" else "←"
 		text_str = str(self.text) if self.text else ""
 		return f"{direction_label} {text_str[:50]}..." if len(text_str) > 50 else f"{direction_label} {text_str}"
+
+
+class WebhookEvent(models.Model):
+	"""
+	Tracks all incoming webhook requests from messaging platforms.
+	
+	Purpose:
+	    - Complete audit trail of all webhook deliveries
+	    - Debugging webhook issues and payload inspection
+	    - Monitoring platform health and delivery patterns
+	    - Security auditing (IP addresses, signature validation)
+	    - Analytics on event types and processing performance
+	    - Replay failed webhooks for error recovery
+	
+	Data Stored:
+	    - channel: Which channel/platform this webhook was for
+	    - event_type: Type of webhook event (message, delivery, read, etc.)
+	    - method: HTTP method (usually POST)
+	    - path: Webhook endpoint path that received the request
+	    - headers: HTTP request headers (for signature verification debugging)
+	    - payload: Full webhook payload from platform
+	    - query_params: URL query parameters if any
+	    - remote_ip: IP address of the webhook sender
+	    - user_agent: User agent string from the request
+	    - status: Processing status (received, processing, success, failed, ignored)
+	    - status_code: HTTP response code returned to platform
+	    - response_body: Response body sent back to platform
+	    - error_message: Error details if processing failed
+	    - processing_time_ms: Time taken to process the webhook (in milliseconds)
+	    - signature_valid: Whether webhook signature was valid (security)
+	    - message: Link to created Message if this webhook created one
+	    - is_duplicate: Whether this appears to be a duplicate delivery
+	
+	Event Types by Platform:
+	    Facebook:
+	        - "messages": New message from customer
+	        - "messaging_postbacks": User clicked button/quick reply
+	        - "message_deliveries": Message delivered confirmation
+	        - "message_reads": Message read confirmation
+	        - "messaging_handovers": Handover protocol events
+	    
+	    WhatsApp:
+	        - "message": New message from customer
+	        - "message_status": Status updates (sent, delivered, read, failed)
+	        - "message_template_status": Template approval status
+	
+	Status Values:
+	    - "received": Webhook received, queued for processing
+	    - "processing": Currently being processed by worker
+	    - "success": Successfully processed
+	    - "failed": Processing failed with error
+	    - "ignored": Intentionally ignored (e.g., delivery receipts if not tracking)
+	    - "duplicate": Detected as duplicate, skipped processing
+	
+	Usage:
+	    # Record incoming webhook
+	    webhook_event = WebhookEvent.objects.create(
+	        channel=channel_credential,
+	        event_type="messages",
+	        method="POST",
+	        path="/webhooks/facebook/abc-123",
+	        headers=dict(request.headers),
+	        payload=request.json(),
+	        remote_ip=get_client_ip(request),
+	        user_agent=request.headers.get("User-Agent"),
+	        status="received",
+	        signature_valid=True
+	    )
+	    
+	    try:
+	        # Process webhook...
+	        start_time = time.time()
+	        message = process_webhook(webhook_event)
+	        processing_time = (time.time() - start_time) * 1000
+	        
+	        webhook_event.status = "success"
+	        webhook_event.message = message
+	        webhook_event.processing_time_ms = processing_time
+	        webhook_event.status_code = 200
+	        webhook_event.save()
+	    except Exception as e:
+	        webhook_event.status = "failed"
+	        webhook_event.error_message = str(e)
+	        webhook_event.status_code = 500
+	        webhook_event.save()
+	
+	Monitoring & Analytics:
+	    - Track webhook delivery latency from platforms
+	    - Identify patterns in failed webhooks
+	    - Detect duplicate deliveries from platform retries
+	    - Audit security events (invalid signatures)
+	    - Measure processing performance
+	
+	Retention:
+	    - Keep recent events (30-90 days) for debugging
+	    - Archive or aggregate older events
+	    - Consider separate table for failed events that need attention
+	"""
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	
+	# Relationship
+	channel = models.ForeignKey(
+		ChannelCredential,
+		on_delete=models.CASCADE,
+		related_name="webhook_events",
+		help_text="The channel this webhook was received for"
+	)
+	
+	# Event identification
+	event_type = models.CharField(
+		max_length=100,
+		default="",
+		blank=True,
+		help_text="Type of webhook event (e.g., 'messages', 'message_status')"
+	)
+	
+	# Request details
+	method = models.CharField(
+		max_length=10,
+		default="POST",
+		help_text="HTTP method (GET, POST, etc.)"
+	)
+	path = models.CharField(
+		max_length=500,
+		default="",
+		help_text="Webhook endpoint path"
+	)
+	headers = models.JSONField(
+		default=dict,
+		blank=True,
+		help_text="HTTP request headers"
+	)
+	payload = models.JSONField(
+		default=dict,
+		blank=True,
+		help_text="Full webhook payload from platform"
+	)
+	query_params = models.JSONField(
+		default=dict,
+		blank=True,
+		help_text="URL query parameters"
+	)
+	
+	# Request metadata
+	remote_ip = models.GenericIPAddressField(
+		null=True,
+		blank=True,
+		help_text="IP address of the webhook sender"
+	)
+	user_agent = models.CharField(
+		max_length=500,
+		default="",
+		blank=True,
+		help_text="User agent string from request"
+	)
+	
+	# Processing status
+	STATUS_CHOICES = [
+		("received", "Received"),
+		("processing", "Processing"),
+		("success", "Success"),
+		("failed", "Failed"),
+		("ignored", "Ignored"),
+		("duplicate", "Duplicate"),
+	]
+	status = models.CharField(
+		max_length=20,
+		choices=STATUS_CHOICES,
+		default="received",
+		db_index=True,
+		help_text="Processing status"
+	)
+	
+	# Response details
+	status_code = models.PositiveSmallIntegerField(
+		null=True,
+		blank=True,
+		help_text="HTTP response code returned to platform"
+	)
+	response_body = models.JSONField(
+		default=dict,
+		blank=True,
+		help_text="Response body sent back to platform"
+	)
+	
+	# Error tracking
+	error_message = models.TextField(
+		blank=True,
+		default="",
+		help_text="Error details if processing failed"
+	)
+	
+	# Performance metrics
+	processing_time_ms = models.PositiveIntegerField(
+		null=True,
+		blank=True,
+		help_text="Time taken to process webhook in milliseconds"
+	)
+	
+	# Security & validation
+	signature_valid = models.BooleanField(
+		null=True,
+		blank=True,
+		help_text="Whether webhook signature was valid"
+	)
+	
+	# Related data
+	message = models.ForeignKey(
+		Message,
+		on_delete=models.SET_NULL,
+		null=True,
+		blank=True,
+		related_name="webhook_events",
+		help_text="Message created from this webhook"
+	)
+	
+	# Duplicate detection
+	is_duplicate = models.BooleanField(
+		default=False,
+		help_text="Whether this is a duplicate delivery"
+	)
+	
+	# Timestamps
+	created_at = models.DateTimeField(
+		auto_now_add=True,
+		help_text="When webhook was received"
+	)
+	processed_at = models.DateTimeField(
+		null=True,
+		blank=True,
+		help_text="When processing completed"
+	)
+	
+	class Meta:
+		ordering = ['-created_at']
+		indexes = [
+			models.Index(fields=['channel', 'created_at']),
+			models.Index(fields=['channel', 'status', 'created_at']),
+			models.Index(fields=['event_type', 'created_at']),
+			models.Index(fields=['status', 'created_at']),
+			models.Index(fields=['signature_valid', 'status']),
+		]
+	
+	def __str__(self):
+		return f"{self.channel.name} - {self.event_type or 'webhook'} ({self.status})"
+	
+	@property
+	def is_processed(self) -> bool:
+		"""Check if webhook has been processed (success or failed)."""
+		return self.status in ["success", "failed", "ignored", "duplicate"]
+	
+	@property
+	def is_failed(self) -> bool:
+		"""Check if webhook processing failed."""
+		return self.status == "failed"
+	
+	@property
+	def platform_name(self) -> str:
+		"""Get the platform name from the related channel."""
+		return self.channel.platform.name if self.channel and self.channel.platform else "Unknown"
 
 

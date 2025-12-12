@@ -15,8 +15,8 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework import serializers
-from .models import KnowledgeBase, Document, IngestionJob, IngestionJobStatus, DocumentFileType, MAX_DOCUMENT_FILE_SIZE, CustomInstruction
-from .tasks import run_ingestion_job
+from .models import KnowledgeBase, Document, IngestionJob, IngestionJobStatus, DocumentFileType, MAX_DOCUMENT_FILE_SIZE, CustomInstruction, InstructionTemplate
+from .tasks import run_ingestion_job, crawl_website
 
 
 class CustomInstructionSerializer(serializers.ModelSerializer):
@@ -60,6 +60,40 @@ class KnowledgeBaseListView(APIView):
 			"data": {
 				"knowledge_bases": kb_data,
 				"count": len(kb_data)
+			}
+		}, status=status.HTTP_200_OK)
+
+
+class InstructionTemplateListView(APIView):
+	"""List all active instruction templates"""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		# Get active templates, optionally filter by category
+		category = request.query_params.get('category')
+		
+		templates = InstructionTemplate.objects.filter(is_active=True)
+		if category:
+			templates = templates.filter(category=category)
+		
+		templates = templates.order_by('-usage_count', 'label')
+		
+		templates_data = []
+		for template in templates:
+			templates_data.append({
+				"id": str(template.id),
+				"label": template.label,
+				"message": template.message,
+				"description": template.description,
+				"category": template.category,
+				"usage_count": template.usage_count,
+			})
+
+		return Response({
+			"success": True,
+			"data": {
+				"templates": templates_data,
+				"count": len(templates_data)
 			}
 		}, status=status.HTTP_200_OK)
 
@@ -292,6 +326,11 @@ class DocumentListView(APIView):
             for doc in qs.order_by("-created_at")[:100]:
                 # Get latest ingestion job
                 latest_job = doc.ingestion_jobs.order_by('-created_at').first()
+                
+                # Count child pages for URL sources
+                children_count = 0
+                if doc.source_type == 'url' and doc.crawl_depth == 0:
+                    children_count = doc.child_pages.count()
 
                 documents.append({
                     "id": str(doc.id),
@@ -301,6 +340,12 @@ class DocumentListView(APIView):
                     "error_message": doc.error_message,
                     "checksum": doc.checksum,
                     "created_at": doc.created_at.isoformat(),
+                    "source_type": doc.source_type,
+                    "page_url": doc.page_url,
+                    "page_title": doc.page_title,
+                    "crawl_depth": doc.crawl_depth,
+                    "parent_crawl_id": str(doc.parent_crawl_id.id) if doc.parent_crawl_id else None,
+                    "children_count": children_count,
                     "ingestion_job": {
                         "id": str(latest_job.id) if latest_job else None,
                         "status": latest_job.status if latest_job else None,
@@ -413,6 +458,27 @@ class DocumentsView(View):
         # This method is kept for backward compatibility
         # The new DocumentUploadView should be used instead
         return JsonResponse({"error": "Use the API endpoint for document uploads"}, status=400)
+
+
+class InstructionTemplateUseView(APIView):
+	"""Increment usage count for a template"""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, template_id):
+		try:
+			template = InstructionTemplate.objects.get(id=template_id)
+			template.usage_count += 1
+			template.save(update_fields=['usage_count'])
+			
+			return Response({
+				"success": True,
+				"message": "Template usage recorded"
+			}, status=status.HTTP_200_OK)
+		except InstructionTemplate.DoesNotExist:
+			return Response(
+				{"success": False, "error": {"code": "not_found", "message": "Template not found"}},
+				status=status.HTTP_404_NOT_FOUND
+			)
 
 
 class CustomInstructionListCreateView(APIView):
@@ -767,5 +833,255 @@ class CustomInstructionResolveView(APIView):
             import traceback
             return Response(
                 {"success": False, "error": {"code": "resolve_failed", "message": str(e), "details": traceback.format_exc()}},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class WebCrawlSubmitView(APIView):
+    """
+    API endpoint for submitting a URL to crawl
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            from urllib.parse import urlparse
+            from accounts.models import ProjectUser
+            
+            # Get parameters
+            url = request.data.get('url', '').strip()
+            depth = request.data.get('depth', 1)
+            project_id = request.data.get('project_id')
+            kb_name = request.data.get('kb_name', 'default')
+            
+            # Validate inputs
+            if not url:
+                return Response(
+                    {"success": False, "error": {"code": "missing_url", "message": "URL is required"}},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not project_id:
+                return Response(
+                    {"success": False, "error": {"code": "missing_project", "message": "project_id is required"}},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate URL format
+            try:
+                parsed_url = urlparse(url)
+                if not parsed_url.scheme or not parsed_url.netloc:
+                    raise ValueError("Invalid URL format")
+            except Exception:
+                return Response(
+                    {"success": False, "error": {"code": "invalid_url", "message": "Invalid URL format. Please provide a valid URL with http:// or https://"}},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate depth
+            try:
+                depth = int(depth)
+                if depth < 1 or depth > 3:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                return Response(
+                    {"success": False, "error": {"code": "invalid_depth", "message": "Depth must be between 1 and 3"}},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Verify user has admin access to this project
+            try:
+                project_user = ProjectUser.objects.get(
+                    project_id=project_id,
+                    user=request.user,
+                    role='admin'
+                )
+                project = project_user.project
+            except ProjectUser.DoesNotExist:
+                return Response(
+                    {"success": False, "error": {"code": "access_denied", "message": "No admin access to this project"}},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get or create knowledge base
+            kb, created = KnowledgeBase.objects.get_or_create(
+                project=project,
+                name=kb_name,
+                defaults={'vector_collection': KnowledgeBase.get_vector_collection_name(project, kb_name)}
+            )
+            
+            # Create parent document record
+            parent_doc = Document.objects.create(
+                kb=kb,
+                source_type='url',
+                uri=url,
+                page_url=url,
+                crawl_depth=0,
+                parent_crawl_id=None,
+                status='processing'
+            )
+            
+            # Create ingestion job for tracking
+            ingestion_job = IngestionJob.objects.create(
+                kb=kb,
+                document=parent_doc,
+                status=IngestionJobStatus.PENDING.value
+            )
+            
+            # Start background crawling
+            try:
+                crawl_website.delay(url, depth, str(kb.id), str(parent_doc.id), str(ingestion_job.id))
+            except Exception as e:
+                # If Celery is not running, mark as failed
+                ingestion_job.status = IngestionJobStatus.FAILED.value
+                ingestion_job.error = f"Could not start crawl: {str(e)}"
+                ingestion_job.save()
+                
+                parent_doc.status = 'failed'
+                parent_doc.error_message = str(e)
+                parent_doc.save()
+            
+            return Response({
+                "success": True,
+                "message": "Web crawl started successfully",
+                "data": {
+                    "document": {
+                        "id": str(parent_doc.id),
+                        "url": url,
+                        "depth": depth,
+                        "status": parent_doc.status,
+                        "created_at": parent_doc.created_at.isoformat()
+                    },
+                    "kb": {
+                        "id": str(kb.id),
+                        "name": kb.name,
+                        "project_id": str(project.id),
+                        "project_name": project.name
+                    },
+                    "ingestion_job": {
+                        "id": str(ingestion_job.id),
+                        "status": ingestion_job.status
+                    }
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            return Response(
+                {"success": False, "error": {"code": "crawl_submit_failed", "message": str(e), "details": error_details}},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class DocumentMarkdownView(APIView):
+    """
+    API endpoint to retrieve markdown content for a document
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, document_id):
+        try:
+            from accounts.models import ProjectUser
+            
+            # Get document and verify access
+            document = Document.objects.select_related('kb', 'kb__project').get(id=document_id)
+            
+            # Verify user has access to the project
+            try:
+                ProjectUser.objects.get(
+                    project=document.kb.project,
+                    user=request.user
+                )
+            except ProjectUser.DoesNotExist:
+                return Response(
+                    {"success": False, "error": {"code": "access_denied", "message": "No access to this document"}},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            return Response({
+                "success": True,
+                "data": {
+                    "document": {
+                        "id": str(document.id),
+                        "page_url": document.page_url,
+                        "page_title": document.page_title,
+                        "markdown_content": document.markdown_content,
+                        "images_metadata": document.images_metadata,
+                        "created_at": document.created_at.isoformat()
+                    }
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Document.DoesNotExist:
+            return Response(
+                {"success": False, "error": {"code": "not_found", "message": "Document not found"}},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            import traceback
+            return Response(
+                {"success": False, "error": {"code": "get_markdown_failed", "message": str(e), "details": traceback.format_exc()}},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class DocumentChildrenView(APIView):
+    """
+    API endpoint to retrieve child pages for a parent crawl document
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, parent_id):
+        try:
+            from accounts.models import ProjectUser
+            
+            # Get parent document and verify access
+            parent_doc = Document.objects.select_related('kb', 'kb__project').get(id=parent_id)
+            
+            # Verify user has access to the project
+            try:
+                ProjectUser.objects.get(
+                    project=parent_doc.kb.project,
+                    user=request.user
+                )
+            except ProjectUser.DoesNotExist:
+                return Response(
+                    {"success": False, "error": {"code": "access_denied", "message": "No access to this document"}},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get child pages
+            children = parent_doc.child_pages.all().order_by('page_url')
+            
+            children_data = []
+            for child in children:
+                children_data.append({
+                    "id": str(child.id),
+                    "page_url": child.page_url,
+                    "page_title": child.page_title,
+                    "status": child.status,
+                    "crawl_depth": child.crawl_depth,
+                    "created_at": child.created_at.isoformat()
+                })
+            
+            return Response({
+                "success": True,
+                "data": {
+                    "parent_id": str(parent_doc.id),
+                    "children": children_data,
+                    "count": len(children_data)
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Document.DoesNotExist:
+            return Response(
+                {"success": False, "error": {"code": "not_found", "message": "Parent document not found"}},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            import traceback
+            return Response(
+                {"success": False, "error": {"code": "get_children_failed", "message": str(e), "details": traceback.format_exc()}},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

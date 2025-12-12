@@ -2,7 +2,6 @@
 
 from typing import Any, Dict
 
-from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 
 from accounts.models import Project
@@ -16,15 +15,71 @@ logger = logging.getLogger(__name__)
 
 
 def handle_facebook_webhook_verification(request: HttpRequest) -> HttpResponse:
+	"""
+	Handle Facebook webhook verification by dynamically matching verify token.
+	
+	Facebook sends a GET request with:
+	    - hub.mode = "subscribe"
+	    - hub.verify_token = The token configured in your channel
+	    - hub.challenge = Random string to return back
+	
+	This function:
+	    1. Extracts the verify_token from the request
+	    2. Queries all Facebook channels to find one with matching verify_token
+	    3. Returns the challenge if found, 403 if not
+	
+	Args:
+	    request: Django HttpRequest with query parameters
+	
+	Returns:
+	    HttpResponse with challenge (200) or 403 Forbidden
+	"""
 	mode = request.GET.get("hub.mode")
 	verify_token = request.GET.get("hub.verify_token")
 	challenge = request.GET.get("hub.challenge") or ""
-	logger.info(f"Facebook webhook verification: {mode == 'subscribe' } and {verify_token == settings.FB_VERIFY_TOKEN}")
-	if mode == "subscribe" and verify_token == settings.FB_VERIFY_TOKEN:
+	
+	logger.info(f"Facebook webhook verification request: mode={mode}, has_verify_token={bool(verify_token)}")
+	
+	# Check basic requirements
+	if mode != "subscribe" or not verify_token:
+		logger.warning(f"Invalid webhook verification request: mode={mode}, verify_token={verify_token}")
+		return HttpResponse(status=403)
+	
+	# Query database directly for channel with matching verify_token in credentials JSON
+	# Using JSONField lookup: credentials__verify_token
+	channel = ChannelCredential.objects.filter(
+		channel="facebook",
+		is_active=True,
+		credentials__verify_token=verify_token
+	).select_related('platform', 'project').first()
+	
+	if channel:
+		logger.info(
+			f"Webhook verification successful for channel: {channel.name} "
+			f"(project: {channel.project.name})"
+		)
 		return HttpResponse(str(challenge).encode("utf-8"))
+	
+	# No matching verify token found
+	logger.warning(
+		f"Webhook verification failed: No channel found with verify_token={verify_token}"
+	)
 	return HttpResponse(status=403)
 
 def handle_facebook_message(payload: Dict[str, Any]) -> None:
+	"""
+	Process incoming Facebook Messenger messages from webhook payload.
+	
+	Args:
+	    payload: Webhook payload from Facebook containing message events
+	
+	Flow:
+	    1. Extract sender_id (customer) and recipient_id (page_id)
+	    2. Find matching ChannelCredential by page_id from credentials
+	    3. Get or create CustomerContact
+	    4. Create Message record
+	    5. Trigger async AI response if applicable
+	"""
 	entry_list = payload.get("entry", [])
 	for entry in entry_list:
 		messaging = entry.get("messaging", [])
@@ -36,8 +91,14 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 			if not (sender_id and recipient_id and message):
 				continue
 
-			# Resolve business by page_id (recipient_id)
-			cred = ChannelCredential.objects.filter(channel="facebook", page_id=recipient_id).first()
+			# Query database directly for channel with matching page_id in credentials JSON
+			# Using JSONField lookup: credentials__page_id
+			cred = ChannelCredential.objects.filter(
+				channel="facebook",
+				is_active=True,
+				credentials__page_id=recipient_id
+			).select_related('platform', 'project', 'knowledge_base').first()
+			
 			if not cred:
 				logger.warning(f"ChannelCredential not found for page_id: {recipient_id}")
 				continue
