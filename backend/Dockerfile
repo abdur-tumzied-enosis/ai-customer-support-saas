@@ -14,6 +14,7 @@ RUN crawl4ai-setup
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
+RUN playwright install chrome
 COPY backend/req_v2.txt /app/req_v2.txt
 RUN pip install --no-cache-dir -r /app/req_v2.txt
 COPY backend /app

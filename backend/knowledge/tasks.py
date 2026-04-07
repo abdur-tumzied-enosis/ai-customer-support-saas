@@ -111,6 +111,32 @@ def extract_text_from_file(document: Document) -> str:
         raise ValueError(f"Unsupported file type: {file_extension}. Only PDF, TXT, and MD files are supported.")
 
 
+def embed_crawled_document(document: Document, collection_name: str) -> None:
+    """Chunk and embed a single crawled document into the web vector collection."""
+    content = document.markdown_content or ""
+    if not content.strip():
+        logger.info(f"Skipping embedding for document {document.id} — no content")
+        return
+    chunks = chunk_text(content)
+    if not chunks:
+        return
+    metadatas = [
+        {
+            'document_id': str(document.id),
+            'page_url': document.page_url or '',
+            'page_title': document.page_title or '',
+            'source_type': 'url',
+            'crawl_depth': document.crawl_depth,
+        }
+        for _ in chunks
+    ]
+    ids = [str(uuid.uuid4()) for _ in chunks]
+    inserted = add_texts_to_collection(collection_name=collection_name, texts=chunks, metadatas=metadatas, ids=ids)
+    document.vector_chunk_ids = inserted
+    document.save(update_fields=['vector_chunk_ids'])
+    logger.info(f"Embedded {len(inserted)} chunks for document {document.id} into '{collection_name}'")
+
+
 def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
     """
     Split text into chunks for embedding.
@@ -360,7 +386,13 @@ def crawl_website(url: str, depth: int, kb_id: str, parent_doc_id: str, job_id: 
             markdown_len = len(result.get('markdown_content', ''))
             child_count = result.get('child_count', 0)
             logger.info(f"Crawl COMPLETED: {url} - {markdown_len} chars markdown, {child_count} child pages")
-            
+
+            # Embed parent + child pages into the web vector collection
+            web_collection = kb.vector_collection + "_web"
+            embed_crawled_document(parent_doc, web_collection)
+            for child in Document.objects.filter(parent_crawl_id=parent_doc, status='completed'):
+                embed_crawled_document(child, web_collection)
+
             # Mark job as completed
             if job:
                 job.status = IngestionJobStatus.COMPLETED.value
@@ -408,6 +440,7 @@ async def _crawl_website_async(url: str, depth: int, kb: KnowledgeBase, parent_d
     """
     try:
         from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+        from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
         from asgiref.sync import sync_to_async
         
         logger.debug(f"Async crawl: Initializing crawler for {url}")
@@ -425,7 +458,8 @@ async def _crawl_website_async(url: str, depth: int, kb: KnowledgeBase, parent_d
             wait_for_images=True,
             screenshot=False,
             pdf=False,
-            verbose=False
+            verbose=False,
+            markdown_generator=DefaultMarkdownGenerator()
         )
         
         crawled_urls = set()
@@ -444,7 +478,13 @@ async def _crawl_website_async(url: str, depth: int, kb: KnowledgeBase, parent_d
                 }
             
             # Extract data from parent page
-            markdown_content = result.markdown.fit_markdown if hasattr(result.markdown, 'fit_markdown') else str(result.markdown)
+            # fit_markdown requires a content filter; fall back to raw_markdown when empty
+            if hasattr(result.markdown, 'fit_markdown') and result.markdown.fit_markdown:
+                markdown_content = result.markdown.fit_markdown
+            elif hasattr(result.markdown, 'raw_markdown') and result.markdown.raw_markdown:
+                markdown_content = result.markdown.raw_markdown
+            else:
+                markdown_content = str(result.markdown)
             page_title = result.metadata.get('title', url) if result.metadata else url
             internal_links = result.links.get('internal', []) if result.links else []
             external_links = result.links.get('external', []) if result.links else []

@@ -1,12 +1,17 @@
-from typing import Optional
+from typing import Optional, List
 from django.conf import settings
 from qdrant_client import QdrantClient
 from langchain_community.vectorstores import Qdrant
+from langchain_core.documents import Document
 try:
 	from langchain_huggingface import HuggingFaceEmbeddings  # preferred in v1
 except Exception:  # pragma: no cover
-	# Fallback for environments without langchain-huggingface installed
 	from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore
+
+import logging
+logger = logging.getLogger(__name__)
+
+_reranker = None
 
 
 def get_qdrant_client() -> QdrantClient:
@@ -21,14 +26,45 @@ def get_qdrant_client() -> QdrantClient:
 
 
 def get_default_embeddings():
-	# Small, fast, permissive model suitable for PoC
-	return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+	# bge-base-en-v1.5 significantly outperforms MiniLM on retrieval benchmarks.
+	# normalize_embeddings=True is required for correct cosine similarity with BGE models.
+	# NOTE: changing this model requires re-indexing all existing Qdrant collections.
+	model_name = getattr(settings, 'EMBEDDING_MODEL', 'BAAI/bge-base-en-v1.5')
+	return HuggingFaceEmbeddings(
+		model_name=model_name,
+		encode_kwargs={"normalize_embeddings": True},
+	)
 
 
-def get_retriever(collection_name: str, k: int = 4):
+def rerank_docs(query: str, docs: List[Document], top_k: int = 4) -> List[Document]:
+	"""
+	Rerank retrieved documents using a cross-encoder for higher precision.
+	Falls back to the original order if the reranker is unavailable.
+	"""
+	global _reranker
+	if not docs:
+		return docs
+	try:
+		if _reranker is None:
+			from sentence_transformers import CrossEncoder
+			reranker_model = getattr(settings, 'RERANKER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2')
+			_reranker = CrossEncoder(reranker_model)
+		pairs = [(query, doc.page_content) for doc in docs]
+		scores = _reranker.predict(pairs)
+		ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
+		return [doc for _, doc in ranked[:top_k]]
+	except Exception as e:
+		logger.warning(f"Reranker failed, using original order: {e}")
+		return docs[:top_k]
+
+
+def get_retriever(collection_name: str, k: int = 10):
 	if not collection_name:
 		return None
 	client = get_qdrant_client()
+	if not _collection_exists(client, collection_name):
+		logger.debug(f"Collection '{collection_name}' does not exist, returning None retriever")
+		return None
 	embeddings = get_default_embeddings()
 	store = Qdrant(client=client, collection_name=collection_name, embeddings=embeddings)
 	return store.as_retriever(search_kwargs={"k": k})

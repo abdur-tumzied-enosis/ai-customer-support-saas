@@ -8,6 +8,7 @@ from .facebook_client import send_text_message
 from .service.message_service import create_outbound_message
 from agents.rag import generate_reply, Context, ToolDeps, ChatMessage
 from agents.vector_store import get_retriever
+from agents.web_crawl_retriever import get_web_crawl_retriever
 
 import logging
 logger = logging.getLogger(__name__)
@@ -118,15 +119,19 @@ def handle_incoming_message(message_id: str, knowledge_base_id: str) -> None:
 		
 		# Generate reply via RAG
 		context = Context(
+			knowledge_base_id=str(knowledge_base.id),
 			vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name),
 			custom_instructions=custom_instructions
 		)
-		deps = ToolDeps(retriever_factory=get_retriever)
+		deps = ToolDeps(
+			retriever_factory=get_retriever,
+			retrieved_factory_for_crawler_url_context=lambda: get_web_crawl_retriever(str(knowledge_base.id), k=5)
+		)
 
 		logger.info(f"Generating reply for message {msg.id} with text: {current_message_text}")
 		logger.info(f"History: {history[:5]}")
 
-		reply_text = generate_reply(current_message_text, context, deps, history=history[:5], project_id=str(project.id))
+		reply_text = generate_reply(current_message_text, context, deps, history=history[-10:], project_id=str(project.id))
 		logger.info(f"Reply text: {reply_text}")
 		agent_reply_uuid = msg.agent_reply_id
 		# Persist outbound message record using service
@@ -209,15 +214,19 @@ def handle_ui_message(message_id: str) -> None:
 			
 			# Generate reply via RAG
 			context = Context(
+				knowledge_base_id=str(knowledge_base.id),
 				vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name),
 				custom_instructions=custom_instructions
 			)
-			deps = ToolDeps(retriever_factory=get_retriever)
+			deps = ToolDeps(
+				retriever_factory=get_retriever,
+				retrieved_factory_for_crawler_url_context=lambda: get_web_crawl_retriever(str(knowledge_base.id), k=5)
+			)
 
 			logger.info(f"Generating reply for UI message {msg.id} with text: {current_message_text}")
 			logger.info(f"History: {history[:5]}")
 
-			reply_text = generate_reply(current_message_text, context, deps, history=history[:5], project_id=str(project.id))
+			reply_text = generate_reply(current_message_text, context, deps, history=history[-10:], project_id=str(project.id))
 			logger.info(f"Reply text: {reply_text}")
 			
 			# Get the pre-generated agent_reply_id from user message

@@ -2,11 +2,13 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Optional, List, Any, Dict, TypedDict, Literal, Sequence
 from .llm import create_basic_agent
+from .vector_store import rerank_docs
 import logging
 logger = logging.getLogger(__name__)
 
 @dataclass
 class Context:
+	knowledge_base_id: Optional[str] = None
 	vector_collection: Optional[str] = None
 	custom_instructions: Optional[List[dict]] = None  # List of {'label': str, 'message': str}
 
@@ -20,10 +22,29 @@ class ToolDeps:
 	"""
 	retriever_factory: Optional[Callable[[str], Any]] = None
 	upload_document: Optional[Callable[[str], str]] = None
+	retrieved_factory_for_crawler_url_context: Optional[Callable] = None
+
+
+def _format_docs(docs: list) -> str:
+	"""Format retrieved docs with source metadata for better agent attribution."""
+	if not docs:
+		return "No relevant information found."
+	parts = []
+	for doc in docs:
+		meta = doc.metadata or {}
+		source = meta.get("page_url") or meta.get("document_filename") or meta.get("document_id", "")
+		title = meta.get("page_title", "")
+		header = f"[Source: {title} — {source}]" if title else (f"[Source: {source}]" if source else "")
+		parts.append(f"{header}\n{doc.page_content}".strip())
+	return "\n\n---\n\n".join(parts)
 
 
 def _build_tools_from_context(context: Context, deps: ToolDeps):
+
+	tools: List[Callable[..., str]] = []
+
 	retriever = None
+
 	if context.vector_collection and deps.retriever_factory:
 		try:
 			retriever = deps.retriever_factory(context.vector_collection)
@@ -31,26 +52,44 @@ def _build_tools_from_context(context: Context, deps: ToolDeps):
 			retriever = None
 
 	def retrieve_business_context(query: str) -> str:
-		"""Retrieve relevant knowledge snippets for given a user query."""
+		"""Search the business knowledge base for information relevant to the query.
+		Use this tool to find answers about products, services, policies, FAQs, pricing,
+		and any other information the business has uploaded. Call this whenever the user
+		asks something that may be covered by business documents. Use a focused keyword
+		query, not the full user message."""
+		logger.info(f"[Tool: retrieve_business_context] query={query!r}")
 		if not retriever:
-			return ""
-		# LangChain v1 retrievers implement Runnable; use invoke()
+			return "No relevant information found."
 		docs = retriever.invoke(query)
-		return "\n\n".join(d.page_content for d in docs)
+		docs = rerank_docs(query, docs, top_k=4)
+		result = _format_docs(docs)
+		logger.info(f"[Tool: retrieve_business_context] returned {len(docs)} docs")
+		return result
 
-	tools: List[Callable[..., str]] = [retrieve_business_context]
+	tools.append(retrieve_business_context)
 
-	if deps.upload_document:
-		def upload_business_document(uri: str) -> str:
-			"""Upload a document URI to the business knowledge base and start ingestion."""
-			try:
-				if deps.upload_document:
-					return deps.upload_document(uri)
-				else:
-					return "error: upload_document is not set"
-			except Exception as exc:
-				return f"error: {exc}"
-		tools.append(upload_business_document)
+	if deps.retrieved_factory_for_crawler_url_context:
+		try:
+			web_retriever = deps.retrieved_factory_for_crawler_url_context()
+
+			def retrieve_crawler_context(query: str) -> str:
+				"""Search web pages that have been crawled and indexed from the business's URLs.
+				Use this tool to find information from the company's website, blog, landing pages,
+				or any other URLs that have been added as web sources. Useful for detailed product
+				info, documentation, or anything that may live on a webpage rather than an uploaded
+				file. Use a focused keyword query, not the full user message."""
+				logger.info(f"[Tool: retrieve_crawler_context] query={query!r}")
+				if not web_retriever:
+					return "No relevant information found."
+				docs = web_retriever.invoke(query)
+				docs = rerank_docs(query, docs, top_k=4)
+				result = _format_docs(docs)
+				logger.info(f"[Tool: retrieve_crawler_context] returned {len(docs)} docs")
+				return result
+
+			tools.append(retrieve_crawler_context)
+		except Exception:
+			pass
 
 	return tools
 

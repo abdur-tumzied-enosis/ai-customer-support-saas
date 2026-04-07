@@ -10,10 +10,12 @@ services:
       - .env
     environment:
       DJANGO_SETTINGS_MODULE: core.settings
+      OLLAMA_BASE_URL: http://ollama:11434
     depends_on:
       - postgres
       - redis
       - qdrant
+      # - ollama
     ports:
       - "8000:8000"
     volumes:
@@ -28,9 +30,11 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: core.settings
       C_FORCE_ROOT: "true"
+      OLLAMA_BASE_URL: http://ollama:11434
     depends_on:
       - redis
       - django
+      # - ollama
     command: celery -A core worker -l info
     volumes:
       - ./backend:/app
@@ -80,6 +84,34 @@ services:
     volumes:
       - qdrant_storage:/qdrant/storage
 
+  # Ollama - Local LLM Server
+  # ollama:
+  #   container_name: auto-magic-pro-ollama
+  #   build:
+  #     context: ./ollama
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "11434:11434"
+  #   environment:
+  #     - OLLAMA_MODEL=gemma3:1b-it-qat
+  #     - OLLAMA_HOST=0.0.0.0
+  #   volumes:
+  #     - ollama_models:/root/.ollama
+    # Uncomment below for NVIDIA GPU support
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 5
+    #   start_period: 60s
+
   # n8n (optional): enable by uncommenting below
   # n8n:
   #   image: n8nio/n8n:1.66.1
@@ -93,6 +125,7 @@ services:
 volumes:
   pgdata:
   qdrant_storage:
+  # ollama_models:
   # n8n_data:
 
 

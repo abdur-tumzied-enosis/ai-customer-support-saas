@@ -398,6 +398,16 @@ class DocumentDeleteView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
 
+            # For URL documents, delete vectors from the web collection
+            if document.source_type == 'url' and document.vector_chunk_ids:
+                try:
+                    from agents.vector_store import delete_vectors_from_collection
+                    web_collection = document.kb.vector_collection + "_web"
+                    delete_vectors_from_collection(web_collection, document.vector_chunk_ids)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"Failed to delete vectors for document {document.id}: {e}")
+
             # Delete the document (this will also delete the file via the model's delete method)
             document.delete()
 
