@@ -119,6 +119,7 @@ class Document(models.Model):
 	crawl_depth = models.IntegerField(default=0, help_text="Depth level in crawl tree (0 for parent)")
 	page_url = models.TextField(blank=True, default="", help_text="Display-friendly URL for crawled page")
 	page_title = models.CharField(max_length=500, blank=True, default="", help_text="Page title from crawled content")
+	search_query = models.CharField(max_length=500, blank=True, default="", help_text="Optional query used to filter and extract targeted content during crawl")
 
 	status = models.CharField(max_length=32, default="pending")
 	checksum = models.CharField(max_length=128, blank=True, default="")
@@ -199,7 +200,9 @@ class IngestionJob(models.Model):
 	error = models.TextField(blank=True, default="")
 	progress = models.PositiveIntegerField(default=0)  # 0-100
 	created_at = models.DateTimeField(auto_now_add=True)
+	started_at = models.DateTimeField(null=True, blank=True)
 	completed_at = models.DateTimeField(null=True, blank=True)
+	celery_task_kwargs = models.JSONField(default=dict, blank=True, help_text="Stored task kwargs for recovery re-dispatch")
 
 	class Meta:
 		ordering = ['-created_at']

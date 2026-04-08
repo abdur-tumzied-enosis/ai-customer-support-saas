@@ -1,3 +1,4 @@
+import threading
 from typing import Optional, List
 from django.conf import settings
 from qdrant_client import QdrantClient
@@ -12,6 +13,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 _reranker = None
+_embeddings = None
+_embeddings_lock = threading.Lock()
 
 
 def get_qdrant_client() -> QdrantClient:
@@ -29,11 +32,17 @@ def get_default_embeddings():
 	# bge-base-en-v1.5 significantly outperforms MiniLM on retrieval benchmarks.
 	# normalize_embeddings=True is required for correct cosine similarity with BGE models.
 	# NOTE: changing this model requires re-indexing all existing Qdrant collections.
-	model_name = getattr(settings, 'EMBEDDING_MODEL', 'BAAI/bge-base-en-v1.5')
-	return HuggingFaceEmbeddings(
-		model_name=model_name,
-		encode_kwargs={"normalize_embeddings": True},
-	)
+	global _embeddings
+	if _embeddings is None:
+		with _embeddings_lock:
+			if _embeddings is None:  # re-check after acquiring lock
+				model_name = getattr(settings, 'EMBEDDING_MODEL', 'BAAI/bge-base-en-v1.5')
+				logger.info(f"Load pretrained SentenceTransformer: {model_name}; it should only be load once when celery get start")
+				_embeddings = HuggingFaceEmbeddings(
+					model_name=model_name,
+					encode_kwargs={"normalize_embeddings": True},
+				)
+	return _embeddings
 
 
 def rerank_docs(query: str, docs: List[Document], top_k: int = 4) -> List[Document]:

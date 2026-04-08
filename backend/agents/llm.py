@@ -1,18 +1,45 @@
+import logging
 from typing import List, Optional
 from django.conf import settings
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openrouter import ChatOpenRouter
 from langchain.agents import create_agent
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel
 
+OPENROUTER_DEFAULT_MODEL = "stepfun/step-3.5-flash:free"
+
+logger = logging.getLogger(__name__)
 
 class TextResponse(BaseModel):
 	"""Response format for text-only output."""
 	text: str
 
 
-def get_llm():
-	return ChatGoogleGenerativeAI(model="gemini-2.5-flash", api_key=settings.GOOGLE_API_KEY)
+def get_llm(provider: str = "google", model: Optional[str] = None, **kwargs):
+	"""
+	Return an LLM instance.
+
+	Args:
+		provider: "google" (default) or "openrouter"
+		model: Model name override. Defaults per provider:
+			google     → "gemini-2.5-flash"
+			openrouter → "nvidia/nemotron-3-super-120b-a12b:free"
+		**kwargs: Extra kwargs forwarded to the underlying LLM class.
+	"""
+	if provider == "openrouter":
+		logger.warning("Using OpenRouter LLM - ensure your OPENROUTER_API_KEY is set and monitor usage to avoid unexpected costs.")
+		return ChatOpenRouter(
+			model=model or OPENROUTER_DEFAULT_MODEL,
+			api_key=settings.OPENROUTER_API_KEY,
+			**kwargs,
+		)
+	# default: google
+	return ChatGoogleGenerativeAI(
+		model=model or "gemini-2.5-flash",
+		api_key=settings.GOOGLE_API_KEY,
+		**kwargs,
+	)
 
 
 def build_system_prompt(custom_instructions: Optional[List[dict]] = None) -> str:
@@ -57,7 +84,7 @@ def build_system_prompt(custom_instructions: Optional[List[dict]] = None) -> str
 	return base_prompt
 
 
-def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = None) -> Runnable:
+def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = None, provider: str = "google", model: Optional[str] = None, **llm_kwargs) -> Runnable:
 	"""
 	Create an agent with tools and optional custom instructions.
 	
@@ -68,7 +95,7 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 	Returns:
 		Runnable agent.
 	"""
-	llm = get_llm()
+	llm = get_llm(provider=provider, model=model, **llm_kwargs)
 	system_prompt = build_system_prompt(custom_instructions)
 	agent = create_agent(
 		model=llm,

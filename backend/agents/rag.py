@@ -259,7 +259,7 @@ def generate_reply(
 	# Setup
 	deps = deps or ToolDeps()
 	tools = _build_tools_from_context(context, deps)
-	agent = create_basic_agent(tools, custom_instructions=context.custom_instructions)
+	agent = create_basic_agent(tools, custom_instructions=context.custom_instructions, provider="openrouter")
 	
 	# Prepare messages
 	messages = list(history or [])

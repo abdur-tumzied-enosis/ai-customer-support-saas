@@ -2,6 +2,7 @@ import os
 import uuid
 import asyncio
 import logging
+from datetime import timedelta
 from typing import List
 from io import BytesIO
 from urllib.parse import urlparse, urljoin
@@ -156,6 +157,131 @@ def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> L
     return chunks
 
 
+def extract_relevant_content_with_agent(
+    markdown_content: str,
+    search_query: str,
+    page_url: str = "",
+    page_title: str = "",
+) -> str | None:
+    """
+    Use a LangChain tool-calling agent to intelligently extract content relevant to search_query.
+
+    The agent has three tools that operate on the FULL page content with no character limit:
+      - get_page_outline(): returns all headings and total chunk count so the agent can plan
+      - read_chunk(index): reads any 4000-char chunk by index, giving full access to the page
+      - search_in_page(keyword): keyword search across the full content with 300-char context windows
+
+    The agent decides which sections to read, follows up on promising sections, and compiles
+    all relevant content — never missing anything due to a hard truncation limit.
+
+    Returns:
+        str: Compiled relevant content in markdown.
+        None: If the page contains no relevant content after thorough investigation.
+        On agent failure: returns original content so the page is still indexed (graceful degradation).
+    """
+    # All imports at the top of the function body — any ImportError here is caught
+    # by our own try/except below, NOT by the crawl4ai ImportError handler upstream.
+    try:
+        from agents.llm import get_llm
+        from langchain.agents import create_agent
+        from langchain_core.tools import tool
+        import re as _re
+    except ImportError as e:
+        logger.warning(f"Agent extraction imports failed: {e} — falling back to full content")
+        return markdown_content
+
+    CHUNK_SIZE = 4000
+    chunks = [markdown_content[i:i + CHUNK_SIZE] for i in range(0, len(markdown_content), CHUNK_SIZE)]
+    total_chunks = len(chunks)
+
+    # Build a heading outline the agent can use to plan its reading
+    headings = _re.findall(r'^#{1,6}\s+.+', markdown_content, _re.MULTILINE)
+    outline = "\n".join(headings[:60]) if headings else "(no headings — plain content)"
+
+    @tool
+    def get_page_outline() -> str:
+        """Get the page structure: all headings, total character count, and number of readable chunks."""
+        return (
+            f"Page title: {page_title}\n"
+            f"URL: {page_url}\n"
+            f"Total content: {len(markdown_content)} characters in {total_chunks} chunk(s)\n\n"
+            f"Headings:\n{outline}"
+        )
+
+    @tool
+    def read_chunk(chunk_index: int) -> str:
+        """Read a specific 4000-character chunk of the page content in full detail.
+        chunk_index is an integer from 0 to (total_chunks - 1).
+        Use this to read any part of the page without truncation."""
+        if chunk_index < 0 or chunk_index >= total_chunks:
+            return f"Invalid chunk_index {chunk_index}. Valid range: 0 to {total_chunks - 1}."
+        return f"[Chunk {chunk_index + 1} of {total_chunks}]\n\n{chunks[chunk_index]}"
+
+    @tool
+    def search_in_page(keyword: str) -> str:
+        """Search for a keyword anywhere across the full page content.
+        Returns up to 5 matching excerpts, each with 300 characters of surrounding context.
+        Use this to quickly locate sections about specific topics before reading them in full."""
+        results = []
+        content_lower = markdown_content.lower()
+        kw_lower = keyword.lower()
+        pos = 0
+        while len(results) < 5:
+            idx = content_lower.find(kw_lower, pos)
+            if idx == -1:
+                break
+            start = max(0, idx - 300)
+            end = min(len(markdown_content), idx + len(keyword) + 300)
+            chunk_num = idx // CHUNK_SIZE
+            results.append(f"[near chunk {chunk_num}] ...{markdown_content[start:end]}...")
+            pos = idx + 1
+        if not results:
+            return f"Keyword '{keyword}' not found anywhere in page content."
+        return f"Found {len(results)} occurrence(s) of '{keyword}':\n\n" + "\n\n---\n\n".join(results)
+
+    system_prompt = (
+        f"You are a precise content extraction agent. Extract ALL content from a web page that is relevant to a given search query.\n\n"
+        f"Search query: {search_query}\n\n"
+        f"Your process:\n"
+        f"1. Call get_page_outline() first to understand the page structure and total size\n"
+        f"2. Use search_in_page() with relevant keywords to quickly locate promising sections\n"
+        f"3. Use read_chunk() to read the full content of any section that may contain relevant information\n"
+        f"4. For pages with multiple chunks, be thorough — scan all areas that could contain relevant content\n"
+        f"5. Compile ALL relevant extracted content into clean, well-structured markdown\n\n"
+        f"Rules:\n"
+        f"- Never truncate or summarise — preserve the full relevant content verbatim where possible\n"
+        f"- When in doubt, include the full surrounding section rather than risk cutting off context\n"
+        f"- Only respond with the single word IRRELEVANT if after a thorough investigation there is truly nothing related to the search query\n"
+        f"- Your final response must be ONLY the extracted markdown content, or the word IRRELEVANT — no commentary"
+    )
+
+    agent_tools = [get_page_outline, read_chunk, search_in_page]
+    llm = get_llm(provider="openrouter")
+    agent = create_agent(model=llm, tools=agent_tools, system_prompt=system_prompt)
+
+    try:
+        result = agent.invoke({
+            "messages": [{"role": "user", "content": "Extract all content relevant to the search query from this page."}]
+        })
+        logger.info('result from agent: ' + str(result)[:500])  # Log the first 500 chars of the result for debugging
+        # Extract text from the last message in the result
+        output = ""
+        if isinstance(result, dict):
+            messages = result.get("messages", [])
+            if messages:
+                last = messages[-1]
+                content = getattr(last, "content", None) or (last.get("content") if isinstance(last, dict) else None)
+                output = str(content).strip() if content else ""
+        if not output or output.upper().startswith("IRRELEVANT"):
+            logger.info(f"Agent found no relevant content for query {search_query!r}: {page_url}")
+            return None
+        logger.info(f"Agent extracted {len(output)} chars from {page_url} for query {search_query!r}")
+        return output
+    except Exception as e:
+        logger.exception(f"Agent extraction failed for {page_url} — full traceback:")
+        return markdown_content
+
+
 @shared_task
 def run_ingestion_job(job_id: str) -> None:
     """
@@ -183,6 +309,7 @@ def run_ingestion_job(job_id: str) -> None:
 
         # Update job status to processing
         job.status = IngestionJobStatus.PROCESSING.value
+        job.started_at = timezone.now()
         job.progress = 10
         job.save()
         logger.debug(f"Job {job_id}: status set to PROCESSING")
@@ -334,6 +461,7 @@ def crawl_website(url: str, depth: int, kb_id: str, parent_doc_id: str, job_id: 
         # Get the parent document and knowledge base
         parent_doc = Document.objects.select_related('kb').get(id=parent_doc_id)
         kb = parent_doc.kb
+        search_query = parent_doc.search_query  # "" if not set
         logger.info(f"Crawl: Found parent document {parent_doc_id} in KB '{kb.name}'")
         
         # Get ingestion job if provided
@@ -341,6 +469,7 @@ def crawl_website(url: str, depth: int, kb_id: str, parent_doc_id: str, job_id: 
             try:
                 job = IngestionJob.objects.get(id=job_id)
                 job.status = IngestionJobStatus.PROCESSING.value
+                job.started_at = timezone.now()
                 job.progress = 10
                 job.save()
                 logger.debug(f"Crawl: Tracking progress via job {job_id}")
@@ -366,7 +495,7 @@ def crawl_website(url: str, depth: int, kb_id: str, parent_doc_id: str, job_id: 
             if job:
                 job.progress = 30
                 job.save()
-            result = loop.run_until_complete(_crawl_website_async(url, depth, kb, parent_doc))
+            result = loop.run_until_complete(_crawl_website_async(url, depth, kb, parent_doc, search_query))
         finally:
             loop.close()
         
@@ -387,11 +516,19 @@ def crawl_website(url: str, depth: int, kb_id: str, parent_doc_id: str, job_id: 
             child_count = result.get('child_count', 0)
             logger.info(f"Crawl COMPLETED: {url} - {markdown_len} chars markdown, {child_count} child pages")
 
-            # Embed parent + child pages into the web vector collection
+            # Embed parent + child pages into the web vector collection (in parallel)
             web_collection = kb.vector_collection + "_web"
-            embed_crawled_document(parent_doc, web_collection)
-            for child in Document.objects.filter(parent_crawl_id=parent_doc, status='completed'):
-                embed_crawled_document(child, web_collection)
+            docs_to_embed = [parent_doc] + list(
+                Document.objects.filter(parent_crawl_id=parent_doc, status='completed')
+            )
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor() as executor:
+                futures = {executor.submit(embed_crawled_document, doc, web_collection): doc for doc in docs_to_embed}
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.warning(f"Embedding failed for document {futures[future].id}: {e}")
 
             # Mark job as completed
             if job:
@@ -431,7 +568,7 @@ def crawl_website(url: str, depth: int, kb_id: str, parent_doc_id: str, job_id: 
                 logger.error(f"Crawl: Failed to save error state for job {job_id}: {str(save_error)}")
 
 
-async def _crawl_website_async(url: str, depth: int, kb: KnowledgeBase, parent_doc: Document) -> dict:
+async def _crawl_website_async(url: str, depth: int, kb: KnowledgeBase, parent_doc: Document, search_query: str = "") -> dict:
     """
     Async function to crawl website using crawl4ai.
     
@@ -494,7 +631,15 @@ async def _crawl_website_async(url: str, depth: int, kb: KnowledgeBase, parent_d
             images_metadata = make_absolute_image_urls(raw_images, url)
             
             logger.info(f"Async crawl: Parent page '{page_title}' - {len(markdown_content)} chars, {len(images_metadata)} images, {len(internal_links)} internal links, {len(external_links)} external links")
-            
+
+            # If a search query was specified, use agent to extract only relevant content
+            if search_query:
+                try:
+                    extracted = extract_relevant_content_with_agent(markdown_content, search_query, url, page_title)
+                    markdown_content = extracted if extracted is not None else ""
+                except Exception as agent_err:
+                    logger.warning(f"Async crawl: Agent extraction error for parent {url}: {agent_err} — using full content")
+
             parent_data = {
                 'success': True,
                 'page_title': page_title,
@@ -512,57 +657,66 @@ async def _crawl_website_async(url: str, depth: int, kb: KnowledgeBase, parent_d
             if depth > 1:
                 # Limit the number of child pages to crawl (prevent too many pages)
                 max_child_pages = 50
-                links_to_crawl = internal_links[:max_child_pages]
-                
-                logger.info(f"Async crawl: Crawling up to {len(links_to_crawl)} child pages (depth={depth})")
-                
-                for i, link_data in enumerate(links_to_crawl):
+                links_to_crawl = [
+                    ld for ld in internal_links[:max_child_pages]
+                    if ld.get('href', '') and ld.get('href', '') not in crawled_urls
+                ]
+
+                logger.info(f"Async crawl: Crawling {len(links_to_crawl)} child pages in parallel (depth={depth})")
+
+                async def crawl_child(link_data: dict) -> bool:
+                    """Crawl a single child page and persist it. Returns True on success."""
                     link_url = link_data.get('href', '')
-                    if not link_url or link_url in crawled_urls:
-                        continue
-                    
                     try:
-                        # Crawl child page
-                        logger.info(f"Async crawl: Crawling child {i+1}/{len(links_to_crawl)}: {link_url}")
                         child_result = await crawler.arun(url=link_url, config=crawler_config)
-                        
-                        if child_result.success:
-                            child_title = child_result.metadata.get('title', link_url) if child_result.metadata else link_url
-                            child_markdown = child_result.markdown.raw_markdown if hasattr(child_result.markdown, 'raw_markdown') else str(child_result.markdown)
-                            
-                            # Convert relative image URLs to absolute
-                            child_raw_images = child_result.media.get('images', []) if child_result.media else []
-                            child_images = make_absolute_image_urls(child_raw_images, link_url)
-                            
-                            # Create child document using sync_to_async wrapper
-                            child_doc = await sync_to_async(Document.objects.create)(
-                                kb=kb,
-                                source_type='url',
-                                uri=link_url,
-                                page_url=link_url,
-                                page_title=child_title,
-                                markdown_content=child_markdown,
-                                images_metadata=child_images,
-                                links_metadata={
-                                    'internal': child_result.links.get('internal', []) if child_result.links else [],
-                                    'external': child_result.links.get('external', []) if child_result.links else []
-                                },
-                                parent_crawl_id=parent_doc,
-                                crawl_depth=1,
-                                status='completed'
-                            )
-                            
-                            crawled_urls.add(link_url)
-                            child_count += 1
-                            logger.info(f"Async crawl: Child page saved - '{child_title}' ({len(child_markdown)} chars)")
-                        else:
+                        if not child_result.success:
                             logger.warning(f"Async crawl: Child page failed - {link_url}: {child_result.error_message}")
-                            
+                            return False
+
+                        child_title = child_result.metadata.get('title', link_url) if child_result.metadata else link_url
+                        child_markdown = child_result.markdown.raw_markdown if hasattr(child_result.markdown, 'raw_markdown') else str(child_result.markdown)
+
+                        # Convert relative image URLs to absolute
+                        child_raw_images = child_result.media.get('images', []) if child_result.media else []
+                        child_images = make_absolute_image_urls(child_raw_images, link_url)
+
+                        # If a search query was specified, use agent to extract only relevant content
+                        if search_query:
+                            try:
+                                child_extracted = extract_relevant_content_with_agent(
+                                    child_markdown, search_query, link_url, child_title
+                                )
+                                if child_extracted is None:
+                                    logger.info(f"Async crawl: Skipping irrelevant child page: {link_url}")
+                                    return False
+                                child_markdown = child_extracted
+                            except Exception as agent_err:
+                                logger.warning(f"Async crawl: Agent extraction error for child {link_url}: {agent_err} — using full content")
+
+                        await sync_to_async(Document.objects.create)(
+                            kb=kb,
+                            source_type='url',
+                            uri=link_url,
+                            page_url=link_url,
+                            page_title=child_title,
+                            markdown_content=child_markdown,
+                            images_metadata=child_images,
+                            links_metadata={
+                                'internal': child_result.links.get('internal', []) if child_result.links else [],
+                                'external': child_result.links.get('external', []) if child_result.links else []
+                            },
+                            parent_crawl_id=parent_doc,
+                            crawl_depth=1,
+                            status='completed'
+                        )
+                        logger.info(f"Async crawl: Child page saved - '{child_title}' ({len(child_markdown)} chars)")
+                        return True
                     except Exception as e:
-                        # Log error but continue with other pages
                         logger.warning(f"Async crawl: Exception crawling child page {link_url}: {str(e)}")
-                        continue
-                
+                        return False
+
+                results = await asyncio.gather(*[crawl_child(ld) for ld in links_to_crawl])
+                child_count = sum(results)
                 logger.info(f"Async crawl: Completed crawling {child_count} child pages")
             
             parent_data['child_count'] = child_count
@@ -580,3 +734,58 @@ async def _crawl_website_async(url: str, depth: int, kb: KnowledgeBase, parent_d
             'success': False,
             'error': f"Crawl failed: {str(e)}"
         }
+
+
+@shared_task
+def recover_stuck_jobs() -> None:
+    """
+    Find IngestionJobs stuck in 'processing' (i.e. the worker was killed mid-task)
+    and re-queue them. A job is considered stuck if it has been in 'processing' status
+    for more than STUCK_THRESHOLD_MINUTES without completing.
+    """
+    from django.conf import settings
+    threshold = timezone.now() - timedelta(minutes=settings.STUCK_JOB_THRESHOLD_MINUTES)
+
+    stuck_jobs = IngestionJob.objects.filter(
+        status=IngestionJobStatus.PROCESSING.value,
+        started_at__lt=threshold,
+    ).select_related('document', 'kb')
+
+    if not stuck_jobs.exists():
+        logger.debug("recover_stuck_jobs: no stuck jobs found")
+        return
+
+    logger.warning(f"recover_stuck_jobs: found {stuck_jobs.count()} stuck job(s) — re-queuing")
+
+    for job in stuck_jobs:
+        logger.warning(f"Recovering stuck job {job.id} (started_at={job.started_at})")
+
+        # Reset document back to pending so it shows correctly in the UI
+        if job.document:
+            job.document.status = 'pending'
+            job.document.error_message = ''
+            job.document.save(update_fields=['status', 'error_message'])
+
+        # Reset job state
+        job.status = IngestionJobStatus.PENDING.value
+        job.started_at = None
+        job.progress = 0
+        job.error = ''
+        job.save(update_fields=['status', 'started_at', 'progress', 'error'])
+
+        # Re-dispatch using stored kwargs when available
+        task_kwargs = job.celery_task_kwargs
+        try:
+            if task_kwargs.get('task') == 'crawl_website':
+                kwargs = task_kwargs.get('kwargs', {})
+                crawl_website.delay(**kwargs)
+                logger.info(f"Re-queued crawl_website for job {job.id}")
+            else:
+                # Default: file ingestion task
+                run_ingestion_job.delay(str(job.id))
+                logger.info(f"Re-queued run_ingestion_job for job {job.id}")
+        except Exception as e:
+            logger.error(f"Failed to re-queue job {job.id}: {e}")
+            job.status = IngestionJobStatus.FAILED.value
+            job.error = f"Recovery failed: {e}"
+            job.save(update_fields=['status', 'error'])

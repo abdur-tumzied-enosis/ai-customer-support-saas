@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(docker compose:*)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(python manage.py makemigrations knowledge --name document_search_query)"
     ]
   }
 }

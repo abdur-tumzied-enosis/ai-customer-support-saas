@@ -265,12 +265,13 @@ export const documentApi = {
 		});
 	},
 
-	crawl: async (url: string, depth: number, projectId: string, kbName: string = "default") => {
+	crawl: async (url: string, depth: number, projectId: string, kbName: string = "default", searchQuery?: string) => {
 		return apiFetch<{
 			document: {
 				id: string;
 				uri: string;
 				page_url: string;
+				search_query: string;
 				status: string;
 			};
 			kb: {
@@ -289,6 +290,7 @@ export const documentApi = {
 				depth,
 				project_id: projectId,
 				kb_name: kbName,
+				...(searchQuery ? { search_query: searchQuery } : {}),
 			},
 		});
 	},

@@ -67,6 +67,7 @@ export default function KnowledgePage() {
 	// Web crawl state
 	const [crawlUrl, setCrawlUrl] = useState("");
 	const [crawlDepth, setCrawlDepth] = useState("1");
+	const [crawlSearchQuery, setCrawlSearchQuery] = useState("");
 	const [crawling, setCrawling] = useState(false);
 	const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
 	const [childrenCache, setChildrenCache] = useState<Record<string, any[]>>({});
@@ -238,10 +239,11 @@ export default function KnowledgePage() {
 		
 		try {
 			const depth = parseInt(crawlDepth);
-			await documentApi.crawl(crawlUrl, depth, currentProjectId);
+			await documentApi.crawl(crawlUrl, depth, currentProjectId, "default", crawlSearchQuery.trim() || undefined);
 			setAlert({ type: "success", message: "Web crawl started successfully" });
 			setCrawlUrl("");
 			setCrawlDepth("1");
+			setCrawlSearchQuery("");
 			
 			// Refresh documents list
 			await fetchDocuments();
@@ -699,6 +701,23 @@ export default function KnowledgePage() {
 									)}
 								</Button>
 							</div>
+						</div>
+						<div>
+							<Label htmlFor="crawl-search-query">
+								What are you looking for?{" "}
+								<span className="text-muted-foreground font-normal">(optional)</span>
+							</Label>
+							<Input
+								id="crawl-search-query"
+								type="text"
+								placeholder="e.g., pricing plans, API documentation, contact information"
+								value={crawlSearchQuery}
+								onChange={(e) => setCrawlSearchQuery(e.target.value)}
+								disabled={crawling}
+							/>
+							<p className="text-xs text-muted-foreground mt-1">
+								Only content relevant to this query will be saved to the knowledge base.
+							</p>
 						</div>
 					</form>
 				</CardContent>

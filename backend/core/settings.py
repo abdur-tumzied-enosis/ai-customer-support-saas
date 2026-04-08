@@ -103,6 +103,13 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
+STUCK_JOB_THRESHOLD_MINUTES = env.int("STUCK_JOB_THRESHOLD_MINUTES", default=120)
+CELERY_BEAT_SCHEDULE = {
+    'recover-stuck-ingestion-jobs': {
+        'task': 'knowledge.tasks.recover_stuck_jobs',
+        'schedule': 600,  # every 10 minutes
+    },
+}
 
 # Qdrant
 QDRANT_URL = env("QDRANT_URL", default="http://localhost:6333")
@@ -115,6 +122,7 @@ FB_VERIFY_TOKEN = env("FB_VERIFY_TOKEN", default="verify-token")
 
 # Google / Gemini
 GOOGLE_API_KEY = env("GOOGLE_API_KEY", default="")
+OPENROUTER_API_KEY = env("OPENROUTER_API_KEY", default="")
 
 # Django REST Framework
 REST_FRAMEWORK = {

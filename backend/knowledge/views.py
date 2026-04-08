@@ -238,6 +238,13 @@ class DocumentUploadView(APIView):
                 status=IngestionJobStatus.PENDING.value
             )
 
+            # Store task kwargs for recovery re-dispatch
+            ingestion_job.celery_task_kwargs = {
+                'task': 'run_ingestion_job',
+                'kwargs': {'job_id': str(ingestion_job.id)},
+            }
+            ingestion_job.save(update_fields=['celery_task_kwargs'])
+
             # Start background processing
             try:
                 run_ingestion_job.delay(str(ingestion_job.id))
@@ -863,6 +870,7 @@ class WebCrawlSubmitView(APIView):
             depth = request.data.get('depth', 1)
             project_id = request.data.get('project_id')
             kb_name = request.data.get('kb_name', 'default')
+            search_query = request.data.get('search_query', '').strip()[:500]
             
             # Validate inputs
             if not url:
@@ -928,7 +936,8 @@ class WebCrawlSubmitView(APIView):
                 page_url=url,
                 crawl_depth=0,
                 parent_crawl_id=None,
-                status='processing'
+                status='processing',
+                search_query=search_query,
             )
             
             # Create ingestion job for tracking
@@ -938,6 +947,19 @@ class WebCrawlSubmitView(APIView):
                 status=IngestionJobStatus.PENDING.value
             )
             
+            # Store task kwargs for recovery re-dispatch
+            ingestion_job.celery_task_kwargs = {
+                'task': 'crawl_website',
+                'kwargs': {
+                    'url': url,
+                    'depth': depth,
+                    'kb_id': str(kb.id),
+                    'parent_doc_id': str(parent_doc.id),
+                    'job_id': str(ingestion_job.id),
+                },
+            }
+            ingestion_job.save(update_fields=['celery_task_kwargs'])
+
             # Start background crawling
             try:
                 crawl_website.delay(url, depth, str(kb.id), str(parent_doc.id), str(ingestion_job.id))
