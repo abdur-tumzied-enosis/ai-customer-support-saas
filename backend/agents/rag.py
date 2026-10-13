@@ -13,6 +13,7 @@ class Context:
 	custom_instructions: Optional[List[dict]] = None  # List of {'label': str, 'message': str}
 	api_domains: Optional[List[dict]] = None  # enables call_api tool when non-empty
 	api_call_log: List[dict] = field(default_factory=list)  # filled by call_api during the reply
+	handoff_reason: Optional[str] = None  # set by escalate_to_human during the reply
 
 
 @dataclass
@@ -92,6 +93,16 @@ def _build_tools_from_context(context: Context, deps: ToolDeps):
 			tools.append(retrieve_crawler_context)
 		except Exception:
 			pass
+
+	def escalate_to_human(reason: str) -> str:
+		"""Hand this conversation to a human staff member. Use it when the customer asks for a person,
+		is angry or abusive, raises a refund, complaint, cancellation or legal matter, when you could not
+		answer their question twice in a row, or when the custom instructions say so. Give a short reason."""
+		context.handoff_reason = (reason or "").strip() or "customer needs a person"
+		logger.info(f"[Tool: escalate_to_human] reason={context.handoff_reason!r}")
+		return "Handed off. Tell the customer a person will follow up."
+
+	tools.append(escalate_to_human)
 
 	if context.api_domains:
 		tools.append(build_call_api_tool(context.api_domains, context.api_call_log))

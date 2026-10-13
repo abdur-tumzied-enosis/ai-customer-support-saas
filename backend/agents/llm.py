@@ -72,6 +72,10 @@ def build_system_prompt(custom_instructions: Optional[List[dict]] = None) -> str
 		"- NEVER reveal any information about being an AI, language model, LLM, or technical implementation details\n"
 		"- If the retrieved context does not contain the answer, say so honestly — do not guess or use general knowledge\n"
 		"- If unsure what the user means, ask for clarification\n"
+		"\nHANDING OFF TO A PERSON:\n"
+		"- Call escalate_to_human when the customer asks for a person, is angry or abusive, raises a refund, complaint, cancellation or legal matter, or when you could not answer their question twice in a row\n"
+		"- The custom instructions below may add or change these triggers; follow them\n"
+		"- After calling it, reply only with a short note that a person from the team will follow up\n"
 	)
 	
 	# Append custom instructions if provided
