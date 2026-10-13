@@ -17,6 +17,7 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework import serializers
 from .models import KnowledgeBase, Document, IngestionJob, IngestionJobStatus, DocumentFileType, MAX_DOCUMENT_FILE_SIZE, CustomInstruction, InstructionTemplate
 from .tasks import run_ingestion_job, crawl_website
+from .api_tool_config import ApiConfigError, apply_api_config, public_api_domains
 
 
 class CustomInstructionSerializer(serializers.ModelSerializer):
@@ -498,6 +499,27 @@ class InstructionTemplateUseView(APIView):
 			)
 
 
+def _instruction_to_dict(inst: CustomInstruction) -> dict:
+    return {
+        "id": str(inst.id),
+        "label": inst.label,
+        "message": inst.message,
+        "knowledge_base_id": str(inst.knowledge_base_id) if inst.knowledge_base_id else None,
+        "knowledge_base_name": inst.knowledge_base.name if inst.knowledge_base else None,
+        "api_tool_enabled": inst.api_tool_enabled,
+        "api_domains": public_api_domains(inst.api_domains),
+        "created_at": inst.created_at.isoformat(),
+        "updated_at": inst.updated_at.isoformat(),
+    }
+
+
+def _api_config_error(e: ApiConfigError) -> Response:
+    return Response(
+        {"success": False, "error": {"code": "invalid_api_config", "message": str(e)}},
+        status=status.HTTP_400_BAD_REQUEST
+    )
+
+
 class CustomInstructionListCreateView(APIView):
     """
     API endpoint for listing and creating custom instructions.
@@ -539,17 +561,7 @@ class CustomInstructionListCreateView(APIView):
                 qs = qs.filter(knowledge_base__isnull=True)
             # If kb_id not provided at all, return all instructions for the project
             
-            instructions = []
-            for inst in qs.order_by('-created_at'):
-                instructions.append({
-                    "id": str(inst.id),
-                    "label": inst.label,
-                    "message": inst.message,
-                    "knowledge_base_id": str(inst.knowledge_base_id) if inst.knowledge_base_id else None,
-                    "knowledge_base_name": inst.knowledge_base.name if inst.knowledge_base else None,
-                    "created_at": inst.created_at.isoformat(),
-                    "updated_at": inst.updated_at.isoformat(),
-                })
+            instructions = [_instruction_to_dict(inst) for inst in qs.order_by('-created_at')]
             
             return Response({
                 "success": True,
@@ -611,27 +623,26 @@ class CustomInstructionListCreateView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
             
+            try:
+                api_tool_enabled, api_domains = apply_api_config(request.data)
+            except ApiConfigError as e:
+                return _api_config_error(e)
+
             # Create instruction
             instruction = CustomInstruction.objects.create(
                 project=project,
                 knowledge_base=knowledge_base,
                 label=label,
-                message=message
+                message=message,
+                api_tool_enabled=api_tool_enabled,
+                api_domains=api_domains,
             )
-            
+
             return Response({
                 "success": True,
                 "message": "Instruction created successfully",
                 "data": {
-                    "instruction": {
-                        "id": str(instruction.id),
-                        "label": instruction.label,
-                        "message": instruction.message,
-                        "knowledge_base_id": str(instruction.knowledge_base_id) if instruction.knowledge_base_id else None,
-                        "knowledge_base_name": instruction.knowledge_base.name if instruction.knowledge_base else None,
-                        "created_at": instruction.created_at.isoformat(),
-                        "updated_at": instruction.updated_at.isoformat(),
-                    }
+                    "instruction": _instruction_to_dict(instruction)
                 }
             }, status=status.HTTP_201_CREATED)
             
@@ -666,15 +677,7 @@ class CustomInstructionDetailView(APIView):
             return Response({
                 "success": True,
                 "data": {
-                    "instruction": {
-                        "id": str(instruction.id),
-                        "label": instruction.label,
-                        "message": instruction.message,
-                        "knowledge_base_id": str(instruction.knowledge_base_id) if instruction.knowledge_base_id else None,
-                        "knowledge_base_name": instruction.knowledge_base.name if instruction.knowledge_base else None,
-                        "created_at": instruction.created_at.isoformat(),
-                        "updated_at": instruction.updated_at.isoformat(),
-                    }
+                    "instruction": _instruction_to_dict(instruction)
                 }
             }, status=status.HTTP_200_OK)
             
@@ -709,22 +712,20 @@ class CustomInstructionDetailView(APIView):
                 instruction.label = request.data['label'].strip()
             if 'message' in request.data:
                 instruction.message = request.data['message'].strip()
-            
+            try:
+                instruction.api_tool_enabled, instruction.api_domains = apply_api_config(
+                    request.data, instruction.api_tool_enabled, instruction.api_domains
+                )
+            except ApiConfigError as e:
+                return _api_config_error(e)
+
             instruction.save()
             
             return Response({
                 "success": True,
                 "message": "Instruction updated successfully",
                 "data": {
-                    "instruction": {
-                        "id": str(instruction.id),
-                        "label": instruction.label,
-                        "message": instruction.message,
-                        "knowledge_base_id": str(instruction.knowledge_base_id) if instruction.knowledge_base_id else None,
-                        "knowledge_base_name": instruction.knowledge_base.name if instruction.knowledge_base else None,
-                        "created_at": instruction.created_at.isoformat(),
-                        "updated_at": instruction.updated_at.isoformat(),
-                    }
+                    "instruction": _instruction_to_dict(instruction)
                 }
             }, status=status.HTTP_200_OK)
             
@@ -825,17 +826,7 @@ class CustomInstructionResolveView(APIView):
                 ).order_by('-created_at'))
                 source = "project"
             
-            result = []
-            for inst in instructions:
-                result.append({
-                    "id": str(inst.id),
-                    "label": inst.label,
-                    "message": inst.message,
-                    "knowledge_base_id": str(inst.knowledge_base_id) if inst.knowledge_base_id else None,
-                    "knowledge_base_name": inst.knowledge_base.name if inst.knowledge_base else None,
-                    "created_at": inst.created_at.isoformat(),
-                    "updated_at": inst.updated_at.isoformat(),
-                })
+            result = [_instruction_to_dict(inst) for inst in instructions]
             
             return Response({
                 "success": True,
