@@ -121,7 +121,11 @@ def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase) -> tuple[s
 	logger.info(f"Generating reply for message {msg.id} with text: {current_message_text}")
 	logger.info(f"History ({len(history)} msgs): {history[-3:]}")
 
-	reply_text = generate_reply(current_message_text, context, deps, history=history, project_id=str(project.id))
+	try:
+		reply_text = generate_reply(current_message_text, context, deps, history=history, project_id=str(project.id))
+	except Exception as exc:
+		setattr(exc, "api_calls", context.api_call_log)  # lets the caller avoid re-sending POSTs on retry
+		raise
 	logger.info(f"Reply text: {reply_text}")
 	return reply_text, context.api_call_log
 
@@ -144,7 +148,10 @@ def handle_incoming_message(self, message_id: str, knowledge_base_id: str) -> No
 	try:
 		reply_text, api_calls = generate_agent_reply(msg, knowledge_base)
 	except Exception as exc:
-		if self.request.retries < self.max_retries:
+		api_calls = getattr(exc, "api_calls", [])
+		# A retry re-runs the whole agent; never risk sending a POST (order, booking, ticket) twice
+		sent_post = any(c.get("method") == "POST" for c in api_calls)
+		if not sent_post and self.request.retries < self.max_retries:
 			logger.warning(f"Reply generation failed for {msg.id}, retrying: {exc}")
 			raise self.retry(exc=exc)
 		logger.error(f"Reply generation failed for {msg.id} after retries: {exc}", exc_info=True)

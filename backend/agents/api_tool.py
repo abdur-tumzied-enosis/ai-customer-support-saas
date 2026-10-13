@@ -9,9 +9,10 @@ import logging
 import socket
 import time
 from typing import Callable, Optional
-from urllib.parse import urlsplit
 
 import requests
+import urllib3
+from urllib3.util import parse_url
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,32 @@ def _is_public_host(host: str) -> bool:
 	return bool(infos)
 
 
+def _parse_target(url: str) -> tuple[str, str]:
+	"""(scheme, host) as requests/urllib3 will see them. Raises ValueError on anything ambiguous."""
+	# Backslash/whitespace make urllib.parse and urllib3 disagree on the host (allowlist bypass)
+	if any(c == "\\" or c.isspace() or ord(c) < 32 for c in url):
+		raise ValueError("URL contains backslash, whitespace or control characters")
+	parsed = parse_url(url)  # same parser requests uses when sending
+	if parsed.auth:
+		raise ValueError("URL must not contain user:password@")
+	return (parsed.scheme or "").lower(), (parsed.host or "").lower().rstrip(".")
+
+
+def _decode(raw: bytes, encoding: Optional[str]) -> str:
+	try:
+		return raw.decode(encoding or "utf-8", errors="replace")
+	except LookupError:  # server sent an unknown charset
+		return raw.decode("utf-8", errors="replace")
+
+
+def _redact(text: str, secret: str) -> str:
+	"""Remove the injected secret (and its bare token after e.g. 'Bearer ') if the API echoes it back."""
+	for value in {secret, secret.split(" ", 1)[-1]}:
+		if len(value) >= 4:
+			text = text.replace(value, "[redacted]")
+	return text
+
+
 def build_call_api_tool(domains: list[dict], log: list) -> Callable[..., str]:
 	calls = 0
 
@@ -65,9 +92,11 @@ def build_call_api_tool(domains: list[dict], log: list) -> Callable[..., str]:
 		if method not in ("GET", "POST"):
 			return "ERROR: only GET and POST are allowed"
 
-		parts = urlsplit(url or "")
-		host = (parts.hostname or "").rstrip(".")
-		if parts.scheme not in ("http", "https") or not host:
+		try:
+			scheme, host = _parse_target(url or "")
+		except ValueError as e:
+			return f"ERROR: invalid URL ({e})"
+		if scheme not in ("http", "https") or not host:
 			return "ERROR: URL must start with http:// or https://"
 		domain = _match_domain(host, domains)
 		if not domain:
@@ -98,15 +127,21 @@ def build_call_api_tool(domains: list[dict], log: list) -> Callable[..., str]:
 		except requests.Timeout:
 			entry["error"] = "timeout"
 			return "ERROR: timeout"
-		except requests.RequestException as e:
+		except (requests.RequestException, urllib3.exceptions.HTTPError) as e:
 			entry["error"] = type(e).__name__
 			return f"ERROR: request failed ({type(e).__name__})"
+		except Exception as e:  # never raise into the agent; langgraph would abort the whole reply
+			logger.warning(f"[Tool: call_api] unexpected {type(e).__name__}", exc_info=True)
+			entry["error"] = type(e).__name__
+			return "ERROR: request failed"
 		finally:
 			entry["ms"] = int((time.monotonic() - start) * 1000)
 			log.append(entry)
 			logger.info(f"[Tool: call_api] {method} {url} -> {entry.get('status', entry.get('error'))} in {entry['ms']}ms")
 
-		text = raw[:MAX_BYTES].decode(resp.encoding or "utf-8", errors="replace")
+		text = _decode(raw[:MAX_BYTES], resp.encoding)
+		if headers:
+			text = _redact(text, domain["secret"])
 		if len(raw) > MAX_BYTES:
 			text += "\n[truncated]"
 		return f"HTTP {resp.status_code}\n{text}"

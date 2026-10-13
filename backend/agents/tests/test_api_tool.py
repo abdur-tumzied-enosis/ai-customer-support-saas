@@ -2,6 +2,7 @@ import socket
 from unittest import mock
 
 import requests
+import urllib3
 from django.test import SimpleTestCase
 
 from agents.api_tool import MAX_BYTES, MAX_CALLS, build_call_api_tool, collect_api_domains
@@ -108,6 +109,42 @@ class CallApiTest(SimpleTestCase):
 		assert self.log[0]["error"] == "timeout"
 		req.side_effect = requests.ConnectionError()
 		assert self._tool()("GET", "https://shop.com/x").startswith("ERROR")
+
+	def test_backslash_userinfo_and_whitespace_urls_blocked(self, req, _dns):
+		tool = self._tool()
+		for url in (
+			"https://evil.com\\@shop.com/x",
+			"http://169.254.169.254\\@shop.com/latest/meta-data",
+			"https://user@shop.com/x",
+			"https://shop.com /x",
+		):
+			assert tool("GET", url).startswith("ERROR"), url
+		req.assert_not_called()
+
+	def test_at_sign_in_query_allowed(self, req, _dns):
+		req.return_value = _resp()
+		assert self._tool()("GET", "https://shop.com/leads?email=a@b.com").startswith("HTTP 200")
+
+	def test_malformed_url_returns_error(self, req, _dns):
+		assert self._tool()("GET", "https://[shop.com/x").startswith("ERROR")
+		req.assert_not_called()
+
+	def test_bogus_charset_does_not_crash(self, req, _dns):
+		req.return_value = _resp(encoding="bogus")
+		assert self._tool()("GET", "https://shop.com/x").startswith("HTTP 200")
+
+	def test_body_read_error_returns_error(self, req, _dns):
+		resp = _resp()
+		resp.raw.read.side_effect = urllib3.exceptions.ReadTimeoutError(None, "https://shop.com/x", "stalled")
+		req.return_value = resp
+		assert self._tool()("GET", "https://shop.com/x").startswith("ERROR")
+		assert self.log[0]["error"] == "ReadTimeoutError"
+
+	def test_echoed_secret_redacted(self, req, _dns):
+		req.return_value = _resp(body=b'{"headers": {"Authorization": "Bearer s3cret"}, "token": "s3cret"}')
+		out = self._tool()("GET", "https://shop.com/headers")
+		assert "s3cret" not in out
+		assert "[redacted]" in out
 
 	def test_redirect_returned_not_followed(self, req, _dns):
 		req.return_value = _resp(status=302, body=b"")
