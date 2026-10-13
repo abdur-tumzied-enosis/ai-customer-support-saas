@@ -6,7 +6,9 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 
 from accounts.models import Project
 from channels_app.models import ChannelCredential, CustomerContact, Message
-from channels_app.tasks import handle_incoming_message
+from channels_app.facebook_client import get_user_name
+from channels_app.reply import schedule_reply
+from channels_app.service.conversation_service import ensure_contact_conversation
 from channels_app.service.message_service import create_inbound_message
 from knowledge.models import KnowledgeBase
 
@@ -113,6 +115,15 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 			contact, _ = CustomerContact.objects.get_or_create(
 				project=project, platform="facebook", external_id=sender_id
 			)
+			conversation = contact.conversation
+			if conversation is None:
+				if not contact.display_name:
+					contact.display_name = get_user_name(cred.get_credentials().page_access_token, sender_id)
+					if contact.display_name:
+						contact.save(update_fields=["display_name"])
+				conversation = ensure_contact_conversation(
+					contact, knowledge_base, name=contact.display_name or "Facebook user"
+				)
 
 			# Extract message data
 			message_id = message.get("mid", "")
@@ -168,13 +179,14 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 				has_attachments=has_attachments,
 				attachment_info=attachment_info,
 				meta=evt,  # Store full event for reference
+				conversation=conversation,
 			)
 
 			# Only trigger agent reply for text messages (no attachments)
 			# Attachments will be handled later
 			if text and not has_attachments:
 				# Enqueue async handler (generate reply + send)
-				handle_incoming_message.delay(str(msg.id), str(knowledge_base.id))
+				schedule_reply(msg)
 			else:
 				logger.info(
 					f"Skipping agent reply for message {msg.id}: "

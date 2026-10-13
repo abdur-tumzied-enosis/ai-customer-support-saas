@@ -84,3 +84,22 @@ def send_text_message(page_access_token: str, recipient_psid: str, text: str) ->
 		return {}
 
 
+
+
+GRAPH_API_URL = "https://graph.facebook.com/v21.0"
+
+
+def get_user_name(page_access_token: str, psid: str) -> str:
+	"""Customer's name for the dashboard (so staff can find them in the Meta inbox). "" on any failure."""
+	try:
+		resp = requests.get(
+			f"{GRAPH_API_URL}/{psid}",
+			params={"fields": "name", "access_token": page_access_token},
+			timeout=5,
+		)
+		if resp.status_code == 200:
+			return (resp.json().get("name") or "")[:255]
+		logger.warning(f"Facebook name lookup failed: HTTP {resp.status_code}")
+	except (requests.RequestException, ValueError) as e:
+		logger.warning(f"Facebook name lookup failed: {type(e).__name__}")
+	return ""
