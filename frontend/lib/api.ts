@@ -313,6 +313,13 @@ export const documentApi = {
 	},
 };
 
+export type ApiDomain = {
+	domain: string;
+	auth_header?: string;
+	has_secret?: boolean; // from server only
+	secret?: string; // to server only; blank keeps the stored secret
+};
+
 // Custom Instruction type
 export type CustomInstruction = {
 	id: string;
@@ -320,6 +327,8 @@ export type CustomInstruction = {
 	message: string;
 	knowledge_base_id: string | null;
 	knowledge_base_name: string | null;
+	api_tool_enabled: boolean;
+	api_domains: ApiDomain[];
 	created_at: string;
 	updated_at: string;
 };
@@ -373,6 +382,8 @@ export const customInstructionApi = {
 		knowledge_base_id?: string | null;
 		label: string;
 		message: string;
+		api_tool_enabled?: boolean;
+		api_domains?: ApiDomain[];
 	}) => {
 		return apiFetch<{
 			instruction: CustomInstruction;
@@ -394,7 +405,10 @@ export const customInstructionApi = {
 	/**
 	 * Update an instruction.
 	 */
-	update: async (instructionId: string, data: { label?: string; message?: string }) => {
+	update: async (
+		instructionId: string,
+		data: { label?: string; message?: string; api_tool_enabled?: boolean; api_domains?: ApiDomain[] }
+	) => {
 		return apiFetch<{
 			instruction: CustomInstruction;
 		}>(`/api/kb/instructions/${instructionId}/`, {

@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil, Sparkles, Tag, Globe, ChevronRight, ChevronDown, Eye } from "lucide-react";
-import { documentApi, customInstructionApi, instructionTemplateApi, type CustomInstruction, type InstructionTemplate } from "@/lib/api";
+import { documentApi, customInstructionApi, instructionTemplateApi, type ApiDomain, type CustomInstruction, type InstructionTemplate } from "@/lib/api";
+import { ApiAccessEditor, toApiDomainsPayload } from "@/components/knowledge/ApiAccessEditor";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
 
@@ -40,6 +41,8 @@ type Document = {
 	} | null;
 };
 
+const EMPTY_INSTRUCTION = { label: "", message: "", api_tool_enabled: false, api_domains: [] as ApiDomain[] };
+
 export default function KnowledgePage() {
 	const { projects, loading: authLoading } = useAuth();
 	const [documents, setDocuments] = useState<Document[]>([]);
@@ -55,8 +58,8 @@ export default function KnowledgePage() {
 	const [instructionDialogOpen, setInstructionDialogOpen] = useState(false);
 	const [editingInstruction, setEditingInstruction] = useState<CustomInstruction | null>(null);
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
-	const [newInstruction, setNewInstruction] = useState({ label: "", message: "" });
-	const [editInstruction, setEditInstruction] = useState({ label: "", message: "" });
+	const [newInstruction, setNewInstruction] = useState(EMPTY_INSTRUCTION);
+	const [editInstruction, setEditInstruction] = useState(EMPTY_INSTRUCTION);
 	const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 	const [instructionToDelete, setInstructionToDelete] = useState<CustomInstruction | null>(null);
 	const [deleteDocConfirmOpen, setDeleteDocConfirmOpen] = useState(false);
@@ -497,10 +500,7 @@ export default function KnowledgePage() {
 	}
 
 	async function handleUseTemplate(template: InstructionTemplate) {
-		setNewInstruction({
-			label: template.label,
-			message: template.message,
-		});
+		setNewInstruction({ ...EMPTY_INSTRUCTION, label: template.label, message: template.message });
 		setShowTemplates(false);
 		
 		// Record template usage
@@ -517,6 +517,12 @@ export default function KnowledgePage() {
 			return;
 		}
 
+		const newDomains = toApiDomainsPayload(newInstruction.api_domains);
+		if (newInstruction.api_tool_enabled && newDomains.length === 0) {
+			setAlert({ type: "error", message: "Add at least one allowed domain to enable API calls" });
+			return;
+		}
+
 		if (!currentProjectId) {
 			setAlert({ type: "error", message: "No project selected" });
 			return;
@@ -529,10 +535,12 @@ export default function KnowledgePage() {
 				knowledge_base_id: null, // Project-level instruction
 				label: newInstruction.label.trim(),
 				message: newInstruction.message.trim(),
+				api_tool_enabled: newInstruction.api_tool_enabled,
+				api_domains: newDomains,
 			});
 
 			setInstructions((prev) => [response.data.instruction, ...prev]);
-			setNewInstruction({ label: "", message: "" });
+			setNewInstruction(EMPTY_INSTRUCTION);
 			setInstructionDialogOpen(false);
 			setShowTemplates(false);
 			setAlert({ type: "success", message: "Custom instruction added successfully" });
@@ -568,7 +576,12 @@ export default function KnowledgePage() {
 
 	function handleEditClick(instruction: CustomInstruction) {
 		setEditingInstruction(instruction);
-		setEditInstruction({ label: instruction.label, message: instruction.message });
+		setEditInstruction({
+			label: instruction.label,
+			message: instruction.message,
+			api_tool_enabled: instruction.api_tool_enabled ?? false,
+			api_domains: (instruction.api_domains ?? []).map((d) => ({ ...d, secret: "" })),
+		});
 		setEditDialogOpen(true);
 	}
 
@@ -580,11 +593,19 @@ export default function KnowledgePage() {
 			return;
 		}
 
+		const editDomains = toApiDomainsPayload(editInstruction.api_domains);
+		if (editInstruction.api_tool_enabled && editDomains.length === 0) {
+			setAlert({ type: "error", message: "Add at least one allowed domain to enable API calls" });
+			return;
+		}
+
 		setSavingInstruction(true);
 		try {
 			const response = await customInstructionApi.update(editingInstruction.id, {
 				label: editInstruction.label.trim(),
 				message: editInstruction.message.trim(),
+				api_tool_enabled: editInstruction.api_tool_enabled,
+				api_domains: editDomains,
 			});
 
 			setInstructions((prev) =>
@@ -594,7 +615,7 @@ export default function KnowledgePage() {
 			);
 			setEditDialogOpen(false);
 			setEditingInstruction(null);
-			setEditInstruction({ label: "", message: "" });
+			setEditInstruction(EMPTY_INSTRUCTION);
 			setAlert({ type: "success", message: "Custom instruction updated successfully" });
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
@@ -836,12 +857,20 @@ export default function KnowledgePage() {
 											}
 										/>
 									</div>
+									<ApiAccessEditor
+										value={newInstruction}
+										message={newInstruction.message}
+										onChange={(v) => setNewInstruction((prev) => ({ ...prev, ...v }))}
+										onInsertExample={(text) =>
+											setNewInstruction((prev) => ({ ...prev, message: prev.message ? `${prev.message}\n\n${text}` : text }))
+										}
+									/>
 									<div className="flex justify-end gap-2">
 										<Button
 											variant="outline"
 											onClick={() => {
 												setInstructionDialogOpen(false);
-												setNewInstruction({ label: "", message: "" });
+												setNewInstruction(EMPTY_INSTRUCTION);
 												setShowTemplates(false);
 											}}
 											disabled={savingInstruction}
@@ -868,10 +897,10 @@ export default function KnowledgePage() {
 							setEditDialogOpen(open);
 							if (!open) {
 								setEditingInstruction(null);
-								setEditInstruction({ label: "", message: "" });
+								setEditInstruction(EMPTY_INSTRUCTION);
 							}
 						}}>
-							<DialogContent>
+							<DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
 								<DialogHeader>
 									<DialogTitle>Edit Custom Instruction</DialogTitle>
 									<DialogDescription>
@@ -902,13 +931,21 @@ export default function KnowledgePage() {
 											}
 										/>
 									</div>
+									<ApiAccessEditor
+										value={editInstruction}
+										message={editInstruction.message}
+										onChange={(v) => setEditInstruction((prev) => ({ ...prev, ...v }))}
+										onInsertExample={(text) =>
+											setEditInstruction((prev) => ({ ...prev, message: prev.message ? `${prev.message}\n\n${text}` : text }))
+										}
+									/>
 									<div className="flex justify-end gap-2">
 										<Button
 											variant="outline"
 											onClick={() => {
 												setEditDialogOpen(false);
 												setEditingInstruction(null);
-												setEditInstruction({ label: "", message: "" });
+												setEditInstruction(EMPTY_INSTRUCTION);
 											}}
 											disabled={savingInstruction}
 										>
@@ -987,6 +1024,7 @@ export default function KnowledgePage() {
 										<div className="flex items-start justify-between">
 											<div className="flex items-center gap-2">
 												<Badge variant="outline">{inst.label}</Badge>
+												{inst.api_tool_enabled && <Badge variant="secondary">API</Badge>}
 												<span className="text-xs text-muted-foreground">
 													Added {new Date(inst.created_at).toLocaleDateString()}
 												</span>
