@@ -10,6 +10,7 @@ from typing import Optional
 from celery import shared_task
 from django.conf import settings
 from django.db import transaction
+from django.utils.dateparse import parse_datetime
 
 from . import tasks
 from .handoff import start_handoff, wants_human
@@ -24,15 +25,24 @@ def schedule_reply(msg: Message) -> None:
 	process_reply.apply_async(args=[str(msg.conversation_id), str(msg.id)], countdown=delay)
 
 
+def answered_marker(newest_inbound: Optional[Message]) -> dict:
+	"""Outbound meta recording which inbound messages the reply covers (see pending_turn)."""
+	return {"answered_through": newest_inbound.created_at.isoformat()} if newest_inbound else {}
+
+
 def pending_turn(conversation) -> list:
-	"""Inbound messages since the last outbound message (bot or staff), oldest first."""
+	"""Inbound messages not yet covered by a delivered reply, oldest first.
+
+	Uses the last reply's `answered_through` marker rather than its created_at: a message that
+	arrives while the bot is generating is older than the reply but was not answered by it."""
 	last_out = (
 		Message.objects.filter(conversation=conversation, direction="out")
-		.order_by("-created_at").values_list("created_at", flat=True).first()
+		.exclude(status="failed").order_by("-created_at").first()
 	)
 	qs = Message.objects.filter(conversation=conversation, direction="in").select_related("reply_to_message")
 	if last_out:
-		qs = qs.filter(created_at__gt=last_out)
+		marker = (last_out.meta or {}).get("answered_through")
+		qs = qs.filter(created_at__gt=parse_datetime(marker) if marker else last_out.created_at)
 	return list(qs.order_by("created_at"))
 
 
@@ -77,14 +87,18 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 	conversation = Conversation.objects.select_related("project", "contact", "knowledge_base").get(id=conversation_id)
 	msg = Message.objects.get(id=message_id)
 
-	# Batching: a newer message's task will answer the whole burst
+	# Batching: a newer message that gets its own reply task will answer the whole burst.
+	# Attachment-only messages never schedule a task, so they must not supersede this one.
 	# ponytail: if this task is mid-LLM when a newer message lands, both may answer the older one; add a per-conversation lock if that shows up
-	if Message.objects.filter(conversation=conversation, direction="in", created_at__gt=msg.created_at).exists():
+	if Message.objects.filter(
+		conversation=conversation, direction="in", created_at__gt=msg.created_at, has_attachments=False
+	).exclude(text="").exists():
 		_complete([msg])
 		return
 
 	turn = pending_turn(conversation)
 	if not turn:
+		_complete([msg])  # already covered by an earlier reply
 		return
 	if conversation.is_paused():
 		_complete(turn)  # staff answer these
@@ -93,7 +107,7 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 	question = "\n".join(tasks.format_message_with_context(m) for m in turn)
 	api_calls: list = []
 	handoff_reason = None
-	if wants_human(question):
+	if any(wants_human(m.text) for m in turn):  # raw text only: quoted bot messages must not trigger it
 		reply_text = ""
 		handoff_reason = "customer asked for a person"
 	else:
@@ -110,8 +124,15 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 			logger.error(f"Reply generation failed for conversation {conversation.id}: {exc}", exc_info=True)
 			reply_text = ""
 
+	# Staff may have taken over while the bot was generating: their reply wins, the bot's is dropped
+	conversation.refresh_from_db(fields=["handoff_at", "handoff_reason"])
+	if conversation.is_paused():
+		_complete(turn)
+		return
 	if handoff_reason:
-		start_handoff(conversation, handoff_reason)
+		if not start_handoff(conversation, handoff_reason):
+			_complete(turn)  # another task or staff paused it first; don't send a second handoff message
+			return
 		reply_text = settings.HANDOFF_MESSAGE
 	reply_text = reply_text or tasks.FALLBACK_REPLY
 
@@ -121,7 +142,7 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 			project=conversation.project,
 			contact=conversation.contact,
 			text=reply_text,
-			meta={"api_calls": api_calls} if api_calls else {},
+			meta={**answered_marker(newest), **({"api_calls": api_calls} if api_calls else {})},
 			conversation=conversation,
 			id=newest.agent_reply_id or None,
 		)

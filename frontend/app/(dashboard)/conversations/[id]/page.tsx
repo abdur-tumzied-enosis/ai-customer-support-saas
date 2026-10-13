@@ -39,6 +39,28 @@ export default function ConversationThreadPage() {
 		};
 	}, [conversationId]);
 
+	// Staff console: pick up new customer messages, handoffs and auto-resume while the page is open
+	// (customer channels have no per-message polling because their messages are not created by this page)
+	useEffect(() => {
+		if (!conversation || conversation.channel === "self") return;
+		const timer = setInterval(async () => {
+			try {
+				const res = await conversationApi.getMessages(conversationId, 20);
+				const latest = res.data.messages.map(toChatMessage);
+				setMessages((prev) => {
+					const known = new Set(prev.map((m) => m.id));
+					const added = latest.filter((m) => !known.has(m.id));
+					return added.length ? [...prev, ...added] : prev;
+				});
+			} catch {
+				// transient; next tick retries
+			}
+			fetchConversation();
+		}, 5000);
+		return () => clearInterval(timer);
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- restart only when the channel changes, not on every refresh
+	}, [conversation?.channel, conversationId]);
+
 	// Auto-scroll to bottom when messages change
 	useEffect(() => {
 		scrollToBottom();

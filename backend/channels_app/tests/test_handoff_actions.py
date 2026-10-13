@@ -47,3 +47,10 @@ class HandoffActionsTest(TestCase):
 		assert timezone.now() - self.conv.handoff_at < timedelta(minutes=1)
 		assert self.conv.handoff_reason == "angry customer"
 		emit.assert_not_called()
+
+	def test_start_handoff_is_noop_when_already_paused(self, emit):
+		assert start_handoff(self.conv, "refund request") is True
+		assert start_handoff(self.conv, "paused by staff") is False
+		self.conv.refresh_from_db()
+		assert self.conv.handoff_reason == "refund request"
+		assert emit.call_count == 1

@@ -14,7 +14,7 @@ from django.conf import settings
 from django.utils import timezone
 from .handoff import conversation_event_data, end_handoff, note_staff_activity, start_handoff
 from .models import ProjectWebhook
-from .reply import deliver, schedule_reply
+from .reply import answered_marker, deliver, schedule_reply
 from .service.message_service import create_outbound_message
 from .webhooks import WebhookUrlError, build_event, emit_event, post_event, validate_webhook_url
 
@@ -915,16 +915,18 @@ class ConversationStaffReplyView(APIView):
 
 		msg = create_outbound_message(
 			project=conversation.project, contact=conversation.contact, text=text,
-			conversation=conversation, sender="staff",
+			conversation=conversation, sender="staff", meta=answered_marker(last_in),
 		)
 		note_staff_activity(conversation)
-		delivered = deliver(conversation, msg, last_in)
+		if not deliver(conversation, msg, last_in):
+			# Kept for the record but excluded from history/turns: the customer never saw it
+			msg.status = "failed"
+			msg.save(update_fields=["status"])
+			return _error("send_failed", "The message could not be delivered to the customer", status.HTTP_502_BAD_GATEWAY)
 		emit_event(conversation.project, "message.staff_reply", {
 			**conversation_event_data(conversation),
 			"message": {"id": str(msg.id), "text": msg.text, "created_at": msg.created_at.isoformat()},
 		})
-		if not delivered:
-			return _error("send_failed", "Saved, but the message could not be delivered to the customer", status.HTTP_502_BAD_GATEWAY)
 		return Response({"success": True, "data": {"message": _message_dict(msg)}}, status=status.HTTP_201_CREATED)
 
 
@@ -982,6 +984,10 @@ class ProjectWebhookTestView(APIView):
 			code = post_event(hook, build_event(hook.project_id, "ping", {"message": "Test event from Auto Magic Pro"}))
 		except WebhookUrlError as e:
 			return _error("invalid_url", str(e), status.HTTP_400_BAD_REQUEST)
-		except requests.RequestException as e:
-			return _error("delivery_failed", f"Could not reach the URL ({type(e).__name__})", status.HTTP_502_BAD_GATEWAY)
-		return Response({"success": True, "data": {"status": code}})
+		except requests.RequestException:
+			code = None
+		# Only ok/failed: exact statuses or error types would make this a probe for what the URL reaches
+		# ponytail: DNS rebinding can still redirect delivery between our check and requests' own lookup; pin the resolved IP if tenants are untrusted
+		if code is None or not 200 <= code < 300:
+			return _error("delivery_failed", "Your endpoint did not accept the test event (no 2xx response)", status.HTTP_502_BAD_GATEWAY)
+		return Response({"success": True, "data": {"ok": True}})

@@ -833,7 +833,7 @@ export const webhookApi = {
 		}),
 
 	test: async (projectSlug: string) =>
-		apiFetch<{ status: number }>("/api/channels/webhook/test", {
+		apiFetch<{ ok: boolean }>("/api/channels/webhook/test", {
 			method: "POST",
 			json: { project_slug: projectSlug },
 		}),

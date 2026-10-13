@@ -118,6 +118,16 @@ class HandoffApiTest(TestCase):
 		assert r.json()["data"]["messages"][0]["sender"] == "customer"
 
 
+	def test_failed_staff_send_is_marked_failed_without_webhook(self):
+		self.customer_says()
+		self.send.return_value = {}
+		r = self.client.post(f"{BASE}/conversations/{self.fb.id}/staff-reply", {"text": "Hi"}, format="json")
+		assert r.status_code == 502
+		assert Message.objects.get(sender="staff").status == "failed"
+		self.api_emit.assert_not_called()
+
+
+
 @mock.patch("agents.api_tool.socket.getaddrinfo", return_value=PUBLIC)
 class WebhookApiTest(TestCase):
 	def setUp(self):
@@ -151,5 +161,13 @@ class WebhookApiTest(TestCase):
 		post.return_value = mock.Mock(status_code=204)
 		self.client.put(f"{BASE}/webhook", {"project_slug": self.project.slug, "url": "https://hooks.example.com/x", "is_active": True}, format="json")
 		r = self.client.post(f"{BASE}/webhook/test", {"project_slug": self.project.slug}, format="json")
-		assert r.status_code == 200 and r.json()["data"]["status"] == 204
+		assert r.status_code == 200 and r.json()["data"] == {"ok": True}
 		assert post.call_args.kwargs["headers"]["X-AMP-Event"] == "ping"
+
+	@mock.patch("channels_app.webhooks.requests.post")
+	def test_send_test_event_hides_endpoint_status(self, post, _dns):
+		post.return_value = mock.Mock(status_code=500)
+		self.client.put(f"{BASE}/webhook", {"project_slug": self.project.slug, "url": "https://hooks.example.com/x", "is_active": True}, format="json")
+		r = self.client.post(f"{BASE}/webhook/test", {"project_slug": self.project.slug}, format="json")
+		assert r.status_code == 502 and r.json()["error"]["code"] == "delivery_failed"
+		assert b"500" not in r.content

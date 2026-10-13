@@ -12,15 +12,28 @@ class WantsHumanTest(SimpleTestCase):
 		for text in (
 			"can I talk to a person",
 			"HUMAN please",
-			"I want customer service",
 			"let me speak to someone",
 			"is there a real person here?",
 			"talk to an agent",
+			"connect me with customer service",
+			"human",
+			"I want to chat with a real person",
 		):
 			assert wants_human(text), text
 
 	def test_misses(self):
-		for text in ("my travel agent said it was fine", "what are your hours", "", None):
+		for text in (
+			"my travel agent said it was fine",
+			"what are your hours",
+			"What are your customer service hours?",
+			"Do you have a customer support email?",
+			"Is it fit for human consumption?",
+			"Is this human hair?",
+			"Which tour operator do you use?",
+			"is this safe for humans?",
+			"",
+			None,
+		):
 			assert not wants_human(text), text
 
 

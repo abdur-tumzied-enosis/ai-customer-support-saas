@@ -90,6 +90,7 @@ def build_history(msg: Message) -> list:
 		qs = Message.objects.filter(contact=msg.contact)
 	recent = list(
 		qs.exclude(id=msg.id)
+		.exclude(direction="out", status="failed")  # never delivered, so the customer never saw it
 		.filter(created_at__lte=msg.created_at)
 		.select_related("reply_to_message")
 		.order_by("-created_at")[:HISTORY_LIMIT]

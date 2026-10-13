@@ -58,8 +58,8 @@ export default function WebhookSettings({ projectSlug }: { projectSlug: string }
 
 	const sendTest = () =>
 		run(async () => {
-			const r = await webhookApi.test(projectSlug);
-			setNotice({ type: "ok", text: `Test event delivered — your endpoint answered HTTP ${r.data.status}` });
+			await webhookApi.test(projectSlug);
+			setNotice({ type: "ok", text: "Test event delivered — your endpoint accepted it" });
 		});
 
 	return (

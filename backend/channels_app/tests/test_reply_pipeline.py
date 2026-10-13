@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from accounts.models import Project
-from channels_app.models import CustomerContact, Message
+from channels_app.models import Conversation, CustomerContact, Message
 from channels_app.reply import process_reply
 from channels_app.service.conversation_service import create_conversation, ensure_contact_conversation
 from channels_app.service.message_service import create_ui_message
@@ -158,3 +158,85 @@ class LegacyWrapperTest(PipelineBase):
 		m = self.inbound("hi")
 		handle_ui_message.apply(args=[str(m.id)])
 		delay.assert_called_once_with(str(self.conv.id), str(m.id))
+
+
+class ReviewFixesTest(PipelineBase):
+	def capture(self, side=None):
+		seen = []
+
+		def gen(question, context, *args, **kwargs):
+			seen.append(question)
+			return side(question, context) if side else "answer"
+
+		self.gen.side_effect = gen
+		return seen
+
+	def test_message_arriving_during_generation_is_answered_next(self):
+		late = {}
+
+		def while_typing(question, context):
+			if "late" not in late:
+				late["late"] = self.inbound("second, sent while bot was typing")
+			return "answer"
+
+		seen = self.capture(while_typing)
+		self.run_reply(self.inbound("first"))
+		self.run_reply(late["late"])
+		assert len(seen) == 2
+		assert "second, sent while bot was typing" in seen[1] and "first" not in seen[1]
+		late["late"].refresh_from_db()
+		assert late["late"].status == "completed"
+
+	def test_text_then_attachment_burst_gets_one_reply(self):
+		seen = self.capture()
+		a = self.inbound("here's a photo of the broken item")
+		self.inbound("", has_attachments=True, attachment_info=[{"type": "image", "url": "u", "payload": {}}])
+		self.run_reply(a)
+		assert len(seen) == 1 and "image" in seen[0]
+
+	def test_bot_reply_dropped_if_staff_paused_during_generation(self):
+		def staff_pauses(question, context):
+			Conversation.objects.filter(id=self.conv.id).update(handoff_at=timezone.now(), handoff_reason="paused by staff")
+			return "late bot answer"
+
+		self.capture(staff_pauses)
+		m = self.inbound("question")
+		self.run_reply(m)
+		assert self.outbound() == []
+		self.send.assert_not_called()
+		m.refresh_from_db()
+		assert m.status == "completed"
+
+	def test_tool_handoff_on_already_paused_conversation_does_not_duplicate(self):
+		def pause_then_tool(question, context):
+			Conversation.objects.filter(id=self.conv.id).update(handoff_at=timezone.now(), handoff_reason="paused by staff")
+			context.handoff_reason = "refund"
+			return "x"
+
+		self.capture(pause_then_tool)
+		self.run_reply(self.inbound("refund please"))
+		self.conv.refresh_from_db()
+		assert self.conv.handoff_reason == "paused by staff"
+		assert self.outbound() == []
+		self.emit.assert_not_called()
+
+	def test_keyword_rule_ignores_quoted_bot_text(self):
+		seen = self.capture()
+		bot = Message.objects.create(
+			project=self.project, contact=self.contact, conversation=self.conv, direction="out", sender="bot",
+			text="Would you like to talk to a person?",
+		)
+		self.run_reply(self.inbound("no thanks", reply_to_message=bot, is_reply=True))
+		assert len(seen) == 1
+		self.conv.refresh_from_db()
+		assert not self.conv.is_paused()
+
+	def test_failed_staff_reply_does_not_count_as_answered(self):
+		seen = self.capture()
+		a = self.inbound("are you there?")
+		Message.objects.create(
+			project=self.project, contact=self.contact, conversation=self.conv, direction="out", sender="staff",
+			status="failed", text="never delivered",
+		)
+		self.run_reply(a)
+		assert len(seen) == 1 and "are you there?" in seen[0]
