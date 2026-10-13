@@ -124,7 +124,8 @@ def create_outbound_message(
 	external_message_id: str = "",
 	meta: Dict[str, Any] = None,
 	conversation: Optional[Conversation] = None,
-	id: Optional[uuid.UUID] = None
+	id: Optional[uuid.UUID] = None,
+	sender: str = "bot",
 ) -> Message:
 	"""
 	Create an outbound message record.
@@ -137,6 +138,7 @@ def create_outbound_message(
 		meta: Additional metadata dictionary
 		conversation: Optional conversation this message belongs to
 		id: Optional UUID to use as message ID (for linking with agent_reply_id)
+		sender: "bot" (default) or "staff"
 		
 	Returns:
 		Created Message instance
@@ -164,6 +166,7 @@ def create_outbound_message(
 		"has_attachments": False,
 		"attachment_info": [],
 		"meta": meta,
+		"sender": sender,
 	}
 	
 	if id:

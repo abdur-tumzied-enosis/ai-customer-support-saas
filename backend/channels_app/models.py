@@ -15,10 +15,14 @@ Model Hierarchy:
 """
 
 import uuid
+import secrets
+from datetime import timedelta
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Dict, Any, Type, TypeVar
 import json
+from django.conf import settings
 from django.db import models
+from django.utils import timezone
 from django.core.exceptions import ValidationError
 from accounts.models import Project
 
@@ -699,6 +703,7 @@ class CustomerContact(models.Model):
 	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="contacts")
 	platform = models.CharField(max_length=32, default="facebook")
 	external_id = models.CharField(max_length=128)
+	display_name = models.CharField(max_length=255, blank=True, default="")
 	conversation = models.OneToOneField(
 		"Conversation",
 		on_delete=models.SET_NULL,
@@ -756,6 +761,9 @@ class Conversation(models.Model):
 		on_delete=models.PROTECT,
 		related_name="conversations"
 	)
+	# Human handoff: set => bot paused until resumed or HANDOFF_AUTO_RESUME_HOURS pass
+	handoff_at = models.DateTimeField(null=True, blank=True)
+	handoff_reason = models.CharField(max_length=255, blank=True, default="")
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
@@ -767,6 +775,16 @@ class Conversation(models.Model):
 
 	def __str__(self):
 		return f"{self.project.name} - {self.name or 'Unnamed'}"
+
+	@property
+	def channel(self) -> str:
+		return self.contact.platform if self.contact_id else "self"
+
+	def resumes_at(self):
+		return self.handoff_at + timedelta(hours=settings.HANDOFF_AUTO_RESUME_HOURS) if self.handoff_at else None
+
+	def is_paused(self, now=None) -> bool:
+		return self.handoff_at is not None and (now or timezone.now()) < self.resumes_at()
 
 
 class Message(models.Model):
@@ -828,6 +846,8 @@ class Message(models.Model):
 		related_name="messages"
 	)
 	direction = models.CharField(max_length=8, choices=DIRECTION_CHOICES)
+	SENDER_CHOICES = [("customer", "Customer"), ("bot", "Bot"), ("staff", "Staff")]
+	sender = models.CharField(max_length=16, choices=SENDER_CHOICES, default="customer")
 	status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="completed")
 	text = models.TextField(blank=True, default="")
 	# External platform metadata
@@ -1121,3 +1141,21 @@ class WebhookEvent(models.Model):
 		return self.channel.platform.name if self.channel and self.channel.platform else "Unknown"
 
 
+
+
+def _new_webhook_secret() -> str:
+	return secrets.token_hex(32)
+
+
+class ProjectWebhook(models.Model):
+	"""Outbound webhook endpoint for a project (handoff/resume/staff-reply events, see channels_app/webhooks.py)."""
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name="webhook")
+	url = models.URLField(blank=True, default="")
+	secret = models.CharField(max_length=64, default=_new_webhook_secret)
+	is_active = models.BooleanField(default=False)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	def __str__(self):
+		return f"{self.project.name} webhook ({'on' if self.is_active else 'off'})"

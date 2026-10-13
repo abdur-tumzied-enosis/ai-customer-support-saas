@@ -128,6 +128,9 @@ GOOGLE_CLOUD_LOCATION = env("GOOGLE_CLOUD_LOCATION", default="global")  # Vertex
 OPENROUTER_API_KEY = env("OPENROUTER_API_KEY", default="")
 LLM_PROVIDER = env("LLM_PROVIDER", default="google")  # "google" or "openrouter"
 LLM_MODEL = env("LLM_MODEL", default=None)  # None → provider default (see agents/llm.py)
+HANDOFF_AUTO_RESUME_HOURS = env.int("HANDOFF_AUTO_RESUME_HOURS", default=24)
+HANDOFF_MESSAGE = env("HANDOFF_MESSAGE", default="I've passed this to our team — a person will reply here soon.")
+REPLY_DEBOUNCE_SECONDS = {"facebook": env.int("FACEBOOK_REPLY_DEBOUNCE_SECONDS", default=3)}  # channels not listed: 0
 
 # Django REST Framework
 REST_FRAMEWORK = {
