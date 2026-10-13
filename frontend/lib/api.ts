@@ -603,38 +603,47 @@ export const channelApi = {
 	},
 };
 
+export type Conversation = {
+	id: string;
+	name: string;
+	knowledge_base_id: string;
+	knowledge_base_name: string;
+	channel: string; // "self" (test/organic) | "facebook" | ...
+	contact_display_name: string;
+	handoff_at: string | null;
+	handoff_reason: string;
+	is_paused: boolean;
+	resumes_at: string | null;
+	created_at: string;
+	updated_at: string;
+};
+
+export type ConversationListItem = Conversation & {
+	message_count: number;
+	last_message: { id: string; text: string; created_at: string } | null;
+};
+
+export type ConversationMessage = {
+	id: string;
+	direction: "in" | "out";
+	sender: "customer" | "bot" | "staff";
+	status: "pending" | "processing" | "completed" | "failed";
+	text: string;
+	created_at: string;
+	agent_reply_id: string | null;
+};
 // Conversation API functions
 export const conversationApi = {
-	list: async (projectSlug: string) => {
-		return apiFetch<{
-			conversations: Array<{
-				id: string;
-				name: string;
-				knowledge_base_id: string;
-				knowledge_base_name: string;
-				message_count: number;
-				last_message: {
-					id: string;
-					text: string;
-					created_at: string;
-				} | null;
-				created_at: string;
-				updated_at: string;
-			}>;
-		}>(`/api/channels/conversations?project_slug=${encodeURIComponent(projectSlug)}`);
+	list: async (projectSlug: string, opts: { needsHuman?: boolean } = {}) => {
+		const params = new URLSearchParams({ project_slug: projectSlug });
+		if (opts.needsHuman) params.append("needs_human", "1");
+		return apiFetch<{ conversations: ConversationListItem[]; needs_human_count: number }>(
+			`/api/channels/conversations?${params.toString()}`
+		);
 	},
 
 	get: async (conversationId: string) => {
-		return apiFetch<{
-			conversation: {
-				id: string;
-				name: string;
-				knowledge_base_id: string;
-				knowledge_base_name: string;
-				created_at: string;
-				updated_at: string;
-			};
-		}>(`/api/channels/conversations/${conversationId}`);
+		return apiFetch<{ conversation: Conversation }>(`/api/channels/conversations/${conversationId}`);
 	},
 
 	create: async (data: {
@@ -642,32 +651,14 @@ export const conversationApi = {
 		name?: string;
 		knowledge_base_id?: string;
 	}) => {
-		return apiFetch<{
-			conversation: {
-				id: string;
-				name: string;
-				knowledge_base_id: string;
-				knowledge_base_name: string;
-				created_at: string;
-				updated_at: string;
-			};
-		}>("/api/channels/conversations", {
+		return apiFetch<{ conversation: Conversation }>("/api/channels/conversations", {
 			method: "POST",
 			json: data,
 		});
 	},
 
 	update: async (conversationId: string, data: { name?: string }) => {
-		return apiFetch<{
-			conversation: {
-				id: string;
-				name: string;
-				knowledge_base_id: string;
-				knowledge_base_name: string;
-				created_at: string;
-				updated_at: string;
-			};
-		}>(`/api/channels/conversations/${conversationId}`, {
+		return apiFetch<{ conversation: Conversation }>(`/api/channels/conversations/${conversationId}`, {
 			method: "PATCH",
 			json: data,
 		});
@@ -687,14 +678,7 @@ export const conversationApi = {
 		}
 		
 		return apiFetch<{
-			messages: Array<{
-				id: string;
-				direction: "in" | "out";
-				status: "pending" | "processing" | "completed" | "failed";
-				text: string;
-				created_at: string;
-				agent_reply_id: string | null;
-			}>;
+			messages: ConversationMessage[];
 			pagination: {
 				count: number;
 				limit: number;
@@ -708,15 +692,7 @@ export const conversationApi = {
 	},
 
 	sendMessage: async (conversationId: string, text: string) => {
-		return apiFetch<{
-			message: {
-				id: string;
-				direction: "in" | "out";
-				status: "pending" | "processing" | "completed" | "failed";
-				text: string;
-				created_at: string;
-			};
-		}>(`/api/channels/conversations/${conversationId}/messages`, {
+		return apiFetch<{ message: ConversationMessage }>(`/api/channels/conversations/${conversationId}/messages`, {
 			method: "POST",
 			json: { text },
 		});
@@ -738,6 +714,24 @@ export const conversationApi = {
 			};
 		}>(`/api/channels/messages/${messageId}/status`);
 	},
+
+	handoff: async (conversationId: string, reason?: string) =>
+		apiFetch<{ conversation: Conversation }>(`/api/channels/conversations/${conversationId}/handoff`, {
+			method: "POST",
+			json: reason ? { reason } : {},
+		}),
+
+	resume: async (conversationId: string) =>
+		apiFetch<{ conversation: Conversation }>(`/api/channels/conversations/${conversationId}/resume`, {
+			method: "POST",
+			json: {},
+		}),
+
+	staffReply: async (conversationId: string, text: string) =>
+		apiFetch<{ message: ConversationMessage }>(`/api/channels/conversations/${conversationId}/staff-reply`, {
+			method: "POST",
+			json: { text },
+		}),
 };
 
 // Analytics types

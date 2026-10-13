@@ -8,28 +8,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/contexts/AuthContext";
-import { conversationApi, ApiError } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { conversationApi, ApiError, type ConversationListItem } from "@/lib/api";
 import { formatError } from "@/lib/errors";
-
-type Conversation = {
-	id: string;
-	name: string;
-	knowledge_base_id: string;
-	knowledge_base_name: string;
-	message_count: number;
-	last_message: {
-		id: string;
-		text: string;
-		created_at: string;
-	} | null;
-	created_at: string;
-	updated_at: string;
-};
+import { timeAgo } from "@/lib/utils";
 
 export default function ConversationsPage() {
 	const { projects, loading: authLoading } = useAuth();
 	const router = useRouter();
-	const [conversations, setConversations] = useState<Conversation[]>([]);
+	const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+	const [needsHumanOnly, setNeedsHumanOnly] = useState(false);
+	const [needsHumanCount, setNeedsHumanCount] = useState(0);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [creating, setCreating] = useState(false);
@@ -42,7 +31,7 @@ export default function ConversationsPage() {
 		if (!authLoading && currentProject) {
 			fetchConversations();
 		}
-	}, [authLoading, currentProject]);
+	}, [authLoading, currentProject, needsHumanOnly]);
 
 	async function fetchConversations() {
 		if (!currentProject) return;
@@ -50,8 +39,9 @@ export default function ConversationsPage() {
 		setLoading(true);
 		setError(null);
 		try {
-			const response = await conversationApi.list(currentProject.slug);
+			const response = await conversationApi.list(currentProject.slug, { needsHuman: needsHumanOnly });
 			setConversations(response.data.conversations);
+			setNeedsHumanCount(response.data.needs_human_count);
 		} catch (err) {
 			setError(formatError(err));
 		} finally {
@@ -122,9 +112,17 @@ export default function ConversationsPage() {
 		<div className="space-y-4">
 			<div className="flex items-center justify-between">
 				<h1 className="text-2xl font-semibold">Conversations</h1>
-				<Button onClick={handleCreateConversation} disabled={creating}>
-					{creating ? "Creating..." : "New Conversation"}
-				</Button>
+				<div className="flex gap-2">
+					<Button
+						variant={needsHumanOnly ? "default" : "outline"}
+						onClick={() => setNeedsHumanOnly((v) => !v)}
+					>
+						Needs human ({needsHumanCount})
+					</Button>
+					<Button onClick={handleCreateConversation} disabled={creating}>
+						{creating ? "Creating..." : "New Conversation"}
+					</Button>
+				</div>
 			</div>
 
 			{error && (
@@ -148,7 +146,16 @@ export default function ConversationsPage() {
 							<li key={conv.id}>
 								<CardContent className="flex items-center justify-between p-4">
 									<div className="flex-1">
-										<div className="font-medium">{conv.name || "Unnamed Conversation"}</div>
+										<div className="font-medium flex flex-wrap items-center gap-2">
+											{conv.name || "Unnamed Conversation"}
+											<Badge variant="outline">{conv.channel === "self" ? "Test" : conv.channel === "facebook" ? "Facebook" : conv.channel}</Badge>
+											{conv.is_paused && <Badge variant="destructive">Needs human</Badge>}
+										</div>
+										{conv.is_paused && conv.handoff_at && (
+											<div className="text-xs text-destructive">
+												{conv.handoff_reason || "Handed off"} • {timeAgo(conv.handoff_at)}
+											</div>
+										)}
 										<div className="text-xs text-muted-foreground">
 											{conv.message_count} messages • {conv.knowledge_base_name}
 											{conv.last_message && (

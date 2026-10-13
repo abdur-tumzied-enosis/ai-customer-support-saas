@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/hooks/useAuth";
+import { conversationApi } from "@/lib/api";
 import {
 	LayoutDashboard,
 	MessageSquare,
@@ -29,6 +31,18 @@ export default function Sidebar() {
 	const pathname = usePathname();
 	const [isCollapsed, setIsCollapsed] = useState(false);
 	const [isMounted, setIsMounted] = useState(false);
+	const { projects } = useAuth();
+	const [needsHuman, setNeedsHuman] = useState(0);
+	const projectSlug = projects && projects.length > 0 ? projects[0].slug : "";
+
+	// ponytail: refreshed on navigation only; add polling/websocket if staff need live counts
+	useEffect(() => {
+		if (!projectSlug) return;
+		conversationApi
+			.list(projectSlug, { needsHuman: true })
+			.then((r) => setNeedsHuman(r.data.needs_human_count))
+			.catch(() => {});
+	}, [projectSlug, pathname]);
 
 	// Load collapsed state from localStorage on mount
 	useEffect(() => {
@@ -112,6 +126,17 @@ export default function Sidebar() {
 									<Icon className={cn("h-5 w-5 shrink-0", isCollapsed && "h-5 w-5")} />
 									{!isCollapsed && (
 										<span className="truncate">{l.label}</span>
+									)}
+									{l.href === "/conversations" && needsHuman > 0 && (
+										<span
+											className={cn(
+												"rounded-full bg-destructive px-1.5 text-xs font-semibold text-destructive-foreground",
+												!isCollapsed && "ml-auto"
+											)}
+											aria-label={`${needsHuman} conversations need a human`}
+										>
+											{needsHuman}
+										</span>
 									)}
 								</Link>
 							</li>

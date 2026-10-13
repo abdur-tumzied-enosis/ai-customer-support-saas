@@ -6,19 +6,11 @@ import MessageList, { ChatMessage } from "@/components/chat/MessageList";
 import ChatInput from "@/components/chat/ChatInput";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { conversationApi } from "@/lib/api";
+import HandoffControls from "@/components/chat/HandoffControls";
+import { conversationApi, type Conversation, type ConversationMessage } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { ArrowLeft, Loader2, Bot } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-
-type ApiMessage = {
-	id: string;
-	direction: "in" | "out";
-	status: "pending" | "processing" | "completed" | "failed";
-	text: string;
-	created_at: string;
-	agent_reply_id: string | null;
-};
 
 export default function ConversationThreadPage() {
 	const params = useParams<{ id: string }>();
@@ -29,12 +21,14 @@ export default function ConversationThreadPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [sending, setSending] = useState(false);
 	const [waitingForReply, setWaitingForReply] = useState(false);
+	const [conversation, setConversation] = useState<Conversation | null>(null);
 	const pollingIntervals = useRef<Map<string, NodeJS.Timeout>>(new Map());
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
 
 	useEffect(() => {
 		if (conversationId) {
+			fetchConversation();
 			fetchMessages();
 		}
 
@@ -60,6 +54,19 @@ export default function ConversationThreadPage() {
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [currentOffset, setCurrentOffset] = useState<number | null>(null);
 
+	function toChatMessage(msg: ConversationMessage): ChatMessage {
+		return { id: msg.id, role: msg.direction === "in" ? "user" : "assistant", content: msg.text, sender: msg.sender };
+	}
+
+	async function fetchConversation() {
+		try {
+			const res = await conversationApi.get(conversationId);
+			setConversation(res.data.conversation);
+		} catch (err) {
+			setError(formatError(err));
+		}
+	}
+
 	async function fetchMessages(offset: number | null = null, append: boolean = false) {
 		if (!append) {
 			setLoading(true);
@@ -77,11 +84,7 @@ export default function ConversationThreadPage() {
 			const apiMessages = response.data.messages;
 			
 			// Convert API messages to ChatMessage format
-			const chatMessages: ChatMessage[] = apiMessages.map((msg) => ({
-				id: msg.id,
-				role: msg.direction === "in" ? "user" : "assistant",
-				content: msg.text,
-			}));
+			const chatMessages: ChatMessage[] = apiMessages.map(toChatMessage);
 			
 			if (append) {
 				// Prepend older messages to the beginning
@@ -162,6 +165,16 @@ export default function ConversationThreadPage() {
 							},
 						];
 					});
+					fetchConversation(); // the reply may have been a handoff
+				} else if (msg.status === "completed") {
+					// Answered as part of a later message's batch, or bot paused: nothing to add
+					const interval = pollingIntervals.current.get(messageId);
+					if (interval) {
+						clearInterval(interval);
+						pollingIntervals.current.delete(messageId);
+					}
+					setWaitingForReply(pollingIntervals.current.size > 0);
+					fetchConversation();
 				} else if (msg.status === "failed") {
 					// Stop polling on failure
 					const interval = pollingIntervals.current.get(messageId);
@@ -248,8 +261,11 @@ export default function ConversationThreadPage() {
 								</AvatarFallback>
 							</Avatar>
 							<div>
-								<h1 className="text-base font-semibold">AI Assistant</h1>
-								<p className="text-xs text-muted-foreground">Always here to help</p>
+								<h1 className="text-base font-semibold">{conversation?.name || "Conversation"}</h1>
+								<p className="text-xs text-muted-foreground">
+									{conversation?.channel === "facebook" ? "Facebook" : "Test chat"}
+									{conversation?.is_paused ? " · bot paused" : ""}
+								</p>
 							</div>
 						</div>
 					</div>
@@ -322,7 +338,14 @@ export default function ConversationThreadPage() {
 			</div>
 
 			{/* Input Area */}
-			<ChatInput onSend={handleSend} disabled={sending} />
+			{conversation && (
+				<HandoffControls
+					conversation={conversation}
+					onConversationChange={setConversation}
+					onStaffMessage={(m) => setMessages((prev) => [...prev, toChatMessage(m)])}
+				/>
+			)}
+			{conversation?.channel === "self" && <ChatInput onSend={handleSend} disabled={sending} />}
 		</div>
 	);
 }
