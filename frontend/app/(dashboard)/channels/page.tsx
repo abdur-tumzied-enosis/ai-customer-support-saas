@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Facebook, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle } from "lucide-react";
 import { channelApi, platformApi, knowledgeBaseApi, type ChannelCredential, type Platform } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import WebhookSettings from "@/components/channels/WebhookSettings";
 import { formatError } from "@/lib/errors";
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
@@ -644,6 +645,7 @@ export default function ChannelsPage() {
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+			{projectSlug && <WebhookSettings projectSlug={projectSlug} />}
 		</div>
 	);
 }

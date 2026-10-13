@@ -814,3 +814,27 @@ export const analyticsApi = {
 		return apiFetch<AnalyticsData>(path);
 	},
 };
+export type ProjectWebhook = { url: string; is_active: boolean; secret: string };
+
+export const webhookApi = {
+	get: async (projectSlug: string) =>
+		apiFetch<{ webhook: ProjectWebhook }>(`/api/channels/webhook?project_slug=${encodeURIComponent(projectSlug)}`),
+
+	update: async (projectSlug: string, data: { url: string; is_active: boolean }) =>
+		apiFetch<{ webhook: ProjectWebhook }>("/api/channels/webhook", {
+			method: "PUT",
+			json: { project_slug: projectSlug, ...data },
+		}),
+
+	rotate: async (projectSlug: string) =>
+		apiFetch<{ webhook: ProjectWebhook }>("/api/channels/webhook/rotate-secret", {
+			method: "POST",
+			json: { project_slug: projectSlug },
+		}),
+
+	test: async (projectSlug: string) =>
+		apiFetch<{ status: number }>("/api/channels/webhook/test", {
+			method: "POST",
+			json: { project_slug: projectSlug },
+		}),
+};
