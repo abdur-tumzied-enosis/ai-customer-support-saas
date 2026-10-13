@@ -1,2 +1,0 @@
-langgraph==1.1.6
-langchain-openrouter==0.2.1
