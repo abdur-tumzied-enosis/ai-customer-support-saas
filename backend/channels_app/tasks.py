@@ -9,6 +9,7 @@ from .service.message_service import create_outbound_message
 from agents.rag import generate_reply, Context, ToolDeps, ChatMessage
 from agents.vector_store import get_retriever
 from agents.web_crawl_retriever import get_web_crawl_retriever
+from agents.api_tool import collect_api_domains
 
 import logging
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ def get_effective_instructions(project_id: str, knowledge_base_id: str = None) -
 		knowledge_base_id: Optional Knowledge Base UUID
 	
 	Returns:
-		List of instruction dicts with 'label' and 'message' keys
+		List of instruction dicts with 'label', 'message', 'api_tool_enabled' and 'api_domains' keys
 	"""
 	# Try KB-level instructions first
 	if knowledge_base_id:
@@ -34,7 +35,7 @@ def get_effective_instructions(project_id: str, knowledge_base_id: str = None) -
 		).order_by('-created_at')
 		
 		if kb_instructions.exists():
-			return [{'label': inst.label, 'message': inst.message} for inst in kb_instructions]
+			return [{'label': inst.label, 'message': inst.message, 'api_tool_enabled': inst.api_tool_enabled, 'api_domains': inst.api_domains} for inst in kb_instructions]
 	
 	# Fall back to project-level instructions
 	project_instructions = CustomInstruction.objects.filter(
@@ -42,7 +43,7 @@ def get_effective_instructions(project_id: str, knowledge_base_id: str = None) -
 		knowledge_base__isnull=True
 	).order_by('-created_at')
 	
-	return [{'label': inst.label, 'message': inst.message} for inst in project_instructions]
+	return [{'label': inst.label, 'message': inst.message, 'api_tool_enabled': inst.api_tool_enabled, 'api_domains': inst.api_domains} for inst in project_instructions]
 
 
 def format_message_with_context(message: Message) -> str:
@@ -97,8 +98,8 @@ def build_history(msg: Message) -> list:
 	]
 
 
-def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase) -> str:
-	"""Run the RAG agent for `msg`. Does DB reads only; call outside any transaction."""
+def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase) -> tuple[str, list]:
+	"""Run the RAG agent for `msg`. Returns (reply text, API call log). DB reads only; call outside any transaction."""
 	project = msg.project
 	history = build_history(msg)
 	current_message_text = format_message_with_context(msg)
@@ -109,7 +110,8 @@ def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase) -> str:
 	context = Context(
 		knowledge_base_id=str(knowledge_base.id),
 		vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name),
-		custom_instructions=custom_instructions
+		custom_instructions=custom_instructions,
+		api_domains=collect_api_domains(custom_instructions),
 	)
 	deps = ToolDeps(
 		retriever_factory=get_retriever,
@@ -121,7 +123,7 @@ def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase) -> str:
 
 	reply_text = generate_reply(current_message_text, context, deps, history=history, project_id=str(project.id))
 	logger.info(f"Reply text: {reply_text}")
-	return reply_text
+	return reply_text, context.api_call_log
 
 
 def get_facebook_credential(msg: Message):
@@ -138,8 +140,9 @@ def handle_incoming_message(self, message_id: str, knowledge_base_id: str) -> No
 	knowledge_base = KnowledgeBase.objects.get(id=knowledge_base_id)
 
 	# LLM call runs outside any transaction so we don't hold a DB connection/locks for seconds
+	api_calls: list = []
 	try:
-		reply_text = generate_agent_reply(msg, knowledge_base)
+		reply_text, api_calls = generate_agent_reply(msg, knowledge_base)
 	except Exception as exc:
 		if self.request.retries < self.max_retries:
 			logger.warning(f"Reply generation failed for {msg.id}, retrying: {exc}")
@@ -153,7 +156,7 @@ def handle_incoming_message(self, message_id: str, knowledge_base_id: str) -> No
 		contact=msg.contact,
 		text=reply_text,
 		external_message_id="",  # Will be updated after sending
-		meta={},
+		meta={"api_calls": api_calls} if api_calls else {},
 		conversation=msg.conversation,
 		id=msg.agent_reply_id or None
 	)
@@ -171,7 +174,7 @@ def handle_incoming_message(self, message_id: str, knowledge_base_id: str) -> No
 	# Update message with Facebook message_id if successful
 	if response.get("message_id"):
 		out_msg.external_message_id = response["message_id"]
-		out_msg.meta = response  # Store full response in meta
+		out_msg.meta = {**out_msg.meta, **response}  # keep api_calls, add Facebook send response
 		out_msg.save(update_fields=["external_message_id", "meta"])
 		logger.info(f"Updated outbound message {out_msg.id} with Facebook message_id: {response['message_id']}")
 	else:
@@ -194,7 +197,7 @@ def handle_ui_message(message_id: str) -> None:
 		msg.save(update_fields=["status"])
 
 		# LLM call runs outside any transaction
-		reply_text = generate_agent_reply(msg, msg.conversation.knowledge_base)
+		reply_text, api_calls = generate_agent_reply(msg, msg.conversation.knowledge_base)
 
 		with transaction.atomic():
 			out_msg = create_outbound_message(
@@ -202,7 +205,7 @@ def handle_ui_message(message_id: str) -> None:
 				contact=msg.contact,
 				text=reply_text,
 				external_message_id="",
-				meta={},
+				meta={"api_calls": api_calls} if api_calls else {},
 				conversation=msg.conversation,
 				id=msg.agent_reply_id
 			)

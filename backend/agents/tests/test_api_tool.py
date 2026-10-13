@@ -123,3 +123,14 @@ class CollectApiDomainsTest(SimpleTestCase):
 			{"label": "legacy", "message": "no api keys at all"},
 		]
 		assert collect_api_domains(instructions) == [{"domain": "shop.com", "secret": "new"}, {"domain": "b.com"}]
+
+
+class BuildToolsWiringTest(SimpleTestCase):
+	def test_call_api_only_when_domains_configured(self):
+		from agents.rag import Context, ToolDeps, _build_tools_from_context
+
+		names = lambda ctx: [t.__name__ for t in _build_tools_from_context(ctx, ToolDeps())]
+		assert "call_api" not in names(Context())
+		ctx = Context(api_domains=[{"domain": "shop.com"}])
+		assert "call_api" in names(ctx)
+		assert ctx.api_call_log == []

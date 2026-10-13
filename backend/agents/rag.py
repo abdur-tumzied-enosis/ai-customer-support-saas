@@ -1,7 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional, List, Any, Dict, TypedDict, Literal, Sequence
 from .llm import create_basic_agent
 from .vector_store import rerank_docs
+from .api_tool import build_call_api_tool
 import logging
 logger = logging.getLogger(__name__)
 
@@ -10,6 +11,8 @@ class Context:
 	knowledge_base_id: Optional[str] = None
 	vector_collection: Optional[str] = None
 	custom_instructions: Optional[List[dict]] = None  # List of {'label': str, 'message': str}
+	api_domains: Optional[List[dict]] = None  # enables call_api tool when non-empty
+	api_call_log: List[dict] = field(default_factory=list)  # filled by call_api during the reply
 
 
 @dataclass
@@ -89,6 +92,9 @@ def _build_tools_from_context(context: Context, deps: ToolDeps):
 			tools.append(retrieve_crawler_context)
 		except Exception:
 			pass
+
+	if context.api_domains:
+		tools.append(build_call_api_tool(context.api_domains, context.api_call_log))
 
 	return tools
 
