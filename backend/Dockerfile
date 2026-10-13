@@ -15,8 +15,6 @@ COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 RUN playwright install chrome
-COPY backend/req_v2.txt /app/req_v2.txt
-RUN pip install --no-cache-dir -r /app/req_v2.txt
 COPY backend /app
 
 # CMD ["gunicorn", "-w", "3", "-b", "0.0.0.0:8000", "--log-level", "info", "core.wsgi:application"]

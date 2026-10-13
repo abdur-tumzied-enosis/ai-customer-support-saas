@@ -122,7 +122,12 @@ FB_VERIFY_TOKEN = env("FB_VERIFY_TOKEN", default="verify-token")
 
 # Google / Gemini
 GOOGLE_API_KEY = env("GOOGLE_API_KEY", default="")
+GOOGLE_USE_VERTEXAI = env.bool("GOOGLE_USE_VERTEXAI", default=True)  # True: Vertex AI express mode (API key); False: Gemini Developer API
+GOOGLE_CLOUD_PROJECT = env("GOOGLE_CLOUD_PROJECT", default=None)  # Vertex AI only
+GOOGLE_CLOUD_LOCATION = env("GOOGLE_CLOUD_LOCATION", default="global")  # Vertex AI only
 OPENROUTER_API_KEY = env("OPENROUTER_API_KEY", default="")
+LLM_PROVIDER = env("LLM_PROVIDER", default="google")  # "google" or "openrouter"
+LLM_MODEL = env("LLM_MODEL", default=None)  # None → provider default (see agents/llm.py)
 
 # Django REST Framework
 REST_FRAMEWORK = {

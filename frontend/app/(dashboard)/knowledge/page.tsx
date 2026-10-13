@@ -622,7 +622,7 @@ export default function KnowledgePage() {
 						<div>
 							<h3 className="font-medium text-sm mb-1">Documents</h3>
 							<p className="text-sm text-muted-foreground">
-								Upload PDF and text files to provide context for your agent's responses
+								Upload PDF and text files to provide context for your agent&apos;s responses
 							</p>
 						</div>
 					</div>
@@ -747,7 +747,7 @@ export default function KnowledgePage() {
 								<DialogHeader>
 									<DialogTitle>Add Custom Instruction</DialogTitle>
 									<DialogDescription>
-										Add a labeled instruction that guides your agent's behavior
+										Add a labeled instruction that guides your agent&apos;s behavior
 									</DialogDescription>
 								</DialogHeader>
 								<div className="space-y-4 py-4">
@@ -875,7 +875,7 @@ export default function KnowledgePage() {
 								<DialogHeader>
 									<DialogTitle>Edit Custom Instruction</DialogTitle>
 									<DialogDescription>
-										Update the instruction that guides your agent's behavior
+										Update the instruction that guides your agent&apos;s behavior
 									</DialogDescription>
 								</DialogHeader>
 								<div className="space-y-4 py-4">
@@ -1026,7 +1026,7 @@ export default function KnowledgePage() {
 						<div className="text-center py-8 text-muted-foreground">
 							<FileText className="h-12 w-12 mx-auto mb-2 opacity-50" />
 							<p>No custom instructions added yet</p>
-							<p className="text-sm">Add instructions to guide your agent's behavior</p>
+							<p className="text-sm">Add instructions to guide your agent&apos;s behavior</p>
 						</div>
 					)}
 				</CardContent>
@@ -1041,7 +1041,7 @@ export default function KnowledgePage() {
 						Documents
 					</CardTitle>
 					<CardDescription>
-						Upload PDF and text files to enhance your agent's knowledge base
+						Upload PDF and text files to enhance your agent&apos;s knowledge base
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">

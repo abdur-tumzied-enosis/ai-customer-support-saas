@@ -9,6 +9,7 @@ services:
     env_file:
       - .env
     environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-sa.json
       DJANGO_SETTINGS_MODULE: core.settings
       OLLAMA_BASE_URL: http://ollama:11434
     depends_on:
@@ -17,9 +18,10 @@ services:
       - qdrant
       # - ollama
     ports:
-      - "8000:8000"
+      - "8251:8000"
     volumes:
       - ./backend:/app
+      - ./gcp-sa.json:/secrets/gcp-sa.json:ro
 
   celery:
     build:
@@ -28,6 +30,7 @@ services:
     env_file:
       - .env
     environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-sa.json
       DJANGO_SETTINGS_MODULE: core.settings
       C_FORCE_ROOT: "true"
       OLLAMA_BASE_URL: http://ollama:11434
@@ -38,6 +41,7 @@ services:
     command: celery -A core worker -l info
     volumes:
       - ./backend:/app
+      - ./gcp-sa.json:/secrets/gcp-sa.json:ro
 
   celery-beat:
     build:
@@ -64,7 +68,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      - "6378:6379"
 
   postgres:
     image: postgres:15

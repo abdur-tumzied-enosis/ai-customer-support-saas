@@ -41,7 +41,7 @@ export default function ResetPasswordPage() {
 				{success ? (
 					<Alert>
 						<AlertDescription>
-							If an account with that email exists, we've sent you a password reset link.
+							If an account with that email exists, we&apos;ve sent you a password reset link.
 						</AlertDescription>
 					</Alert>
 				) : (

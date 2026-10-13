@@ -1,2 +1,3 @@
 .env
 documents/
+gcp-sa.json

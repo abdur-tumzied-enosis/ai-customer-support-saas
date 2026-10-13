@@ -158,7 +158,7 @@ export default function ConversationThreadPage() {
 							{
 								id: msg.agent_reply!.id,
 								role: "assistant",
-								content: msg.agent_reply.text,
+								content: msg.agent_reply!.text,
 							},
 						];
 					});
@@ -275,7 +275,7 @@ export default function ConversationThreadPage() {
 						</div>
 						<h3 className="text-lg font-semibold mb-2">Start a conversation</h3>
 						<p className="text-sm text-muted-foreground max-w-sm">
-							Ask me anything and I'll help you find the information you need.
+							Ask me anything and I&apos;ll help you find the information you need.
 						</p>
 					</div>
 				) : (

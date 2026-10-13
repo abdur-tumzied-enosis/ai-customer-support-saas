@@ -10,7 +10,6 @@ import {
 	BookOpen,
 	Radio,
 	BarChart3,
-	Settings,
 	X,
 } from "lucide-react";
 
@@ -20,8 +19,7 @@ const links = [
 	{ href: "/knowledge", label: "Knowledge", icon: BookOpen },
 	{ href: "/channels", label: "Channels", icon: Radio },
 	{ href: "/analytics", label: "Analytics", icon: BarChart3 },
-	{ href: "/settings", label: "Settings", icon: Settings },
-];
+] as const;
 
 interface MobileSidebarProps {
 	open: boolean;
@@ -70,7 +68,7 @@ export default function MobileSidebar({ open, onOpenChange }: MobileSidebarProps
 				<nav className="flex-1 p-3">
 					<ul className="space-y-1">
 						{links.map((l) => {
-							const active = pathname === l.href || (l.href !== "/" && pathname.startsWith(l.href));
+							const active = pathname.startsWith(l.href);
 							const Icon = l.icon;
 
 							return (

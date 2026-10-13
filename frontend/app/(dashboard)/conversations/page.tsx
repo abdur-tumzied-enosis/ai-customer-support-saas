@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -32,6 +33,7 @@ export default function ConversationsPage() {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [creating, setCreating] = useState(false);
+	const [deleting, setDeleting] = useState<string | null>(null);
 
 	// Get the first project (for now, we'll use the first one)
 	const currentProject = projects && projects.length > 0 ? projects[0] : null;
@@ -70,6 +72,23 @@ export default function ConversationsPage() {
 		} catch (err) {
 			setError(formatError(err));
 			setCreating(false);
+		}
+	}
+
+	async function handleDeleteConversation(conversationId: string) {
+		if (!confirm("Are you sure you want to delete this conversation? This action cannot be undone.")) {
+			return;
+		}
+
+		setDeleting(conversationId);
+		setError(null);
+		try {
+			await conversationApi.delete(conversationId);
+			setConversations(conversations.filter(c => c.id !== conversationId));
+		} catch (err) {
+			setError(formatError(err));
+		} finally {
+			setDeleting(null);
 		}
 	}
 
@@ -137,11 +156,22 @@ export default function ConversationsPage() {
 											)}
 										</div>
 									</div>
-									<Button variant="ghost" asChild>
-										<Link href={`/conversations/${conv.id}`}>
-											Open →
-										</Link>
-									</Button>
+									<div className="flex items-center gap-2">
+										<Button variant="ghost" asChild>
+											<Link href={`/conversations/${conv.id}`}>
+												Open →
+											</Link>
+										</Button>
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={() => handleDeleteConversation(conv.id)}
+											disabled={deleting === conv.id}
+											className="text-destructive hover:text-destructive hover:bg-destructive/10"
+										>
+											<Trash2 className="w-4 h-4" />
+										</Button>
+									</div>
 								</CardContent>
 								{idx < conversations.length - 1 && <Separator />}
 							</li>
