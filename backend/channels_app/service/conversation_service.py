@@ -1,4 +1,5 @@
 from typing import Optional
+from django.db import transaction
 from accounts.models import Project
 from knowledge.models import KnowledgeBase
 from channels_app.models import CustomerContact, Conversation
@@ -103,3 +104,12 @@ def create_conversation(
 	logger.info(f"Created conversation {conversation.id} for project {project.slug}, contact={contact.id}, platform={contact.platform}")
 	return conversation
 
+
+
+def ensure_contact_conversation(contact: CustomerContact, knowledge_base: KnowledgeBase, name: str = "") -> Conversation:
+	"""The single conversation of an external-platform contact, created on first use."""
+	with transaction.atomic():
+		contact = CustomerContact.objects.select_for_update().get(pk=contact.pk)  # two webhooks at once must not create two
+		if contact.conversation_id:
+			return contact.conversation
+		return create_conversation(project=contact.project, knowledge_base=knowledge_base, name=name, contact=contact)

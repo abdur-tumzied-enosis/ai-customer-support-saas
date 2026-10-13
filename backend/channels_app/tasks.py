@@ -1,6 +1,6 @@
 from celery import shared_task
-from django.db import transaction
-import uuid
+from django.db.models import Q
+from typing import Optional
 
 from knowledge.models import KnowledgeBase, CustomInstruction
 from .models import Message, ChannelCredential
@@ -80,11 +80,14 @@ FALLBACK_REPLY = "Sorry, I'm having trouble answering right now. Please try agai
 
 
 def build_history(msg: Message) -> list:
-	"""Last HISTORY_LIMIT messages before `msg`, oldest first."""
-	qs = (
-		Message.objects.filter(conversation=msg.conversation) if msg.conversation
-		else Message.objects.filter(contact=msg.contact)
-	)
+	"""Last HISTORY_LIMIT messages before `msg`, oldest first.
+	Includes the contact's older messages saved before Facebook chats had conversations."""
+	if msg.conversation_id:
+		qs = Message.objects.filter(
+			Q(conversation_id=msg.conversation_id) | Q(contact_id=msg.contact_id, conversation__isnull=True)
+		)
+	else:
+		qs = Message.objects.filter(contact=msg.contact)
 	recent = list(
 		qs.exclude(id=msg.id)
 		.filter(created_at__lte=msg.created_at)
@@ -98,11 +101,12 @@ def build_history(msg: Message) -> list:
 	]
 
 
-def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase) -> tuple[str, list]:
-	"""Run the RAG agent for `msg`. Returns (reply text, API call log). DB reads only; call outside any transaction."""
+def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: Optional[str] = None) -> tuple[str, Context]:
+	"""Run the RAG agent with history before `msg`. `question` defaults to `msg` formatted.
+	Returns (reply text, Context with api_call_log/handoff_reason). DB reads only; call outside any transaction."""
 	project = msg.project
 	history = build_history(msg)
-	current_message_text = format_message_with_context(msg)
+	current_message_text = question or format_message_with_context(msg)
 
 	custom_instructions = get_effective_instructions(str(project.id), str(knowledge_base.id))
 	logger.info(f"Using {len(custom_instructions)} custom instructions")
@@ -127,7 +131,7 @@ def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase) -> tuple[s
 		setattr(exc, "api_calls", context.api_call_log)  # lets the caller avoid re-sending POSTs on retry
 		raise
 	logger.info(f"Reply text: {reply_text}")
-	return reply_text, context.api_call_log
+	return reply_text, context
 
 
 def get_facebook_credential(msg: Message):
@@ -137,91 +141,23 @@ def get_facebook_credential(msg: Message):
 	return (page_id and creds.filter(credentials__page_id=page_id).first()) or creds.first()
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=5)
-def handle_incoming_message(self, message_id: str, knowledge_base_id: str) -> None:
-	"""Handle incoming message from external channel (e.g., Facebook)."""
-	msg = Message.objects.select_related("project", "contact", "reply_to_message", "conversation").get(id=message_id)
-	knowledge_base = KnowledgeBase.objects.get(id=knowledge_base_id)
+@shared_task
+def handle_incoming_message(message_id: str, knowledge_base_id: str) -> None:
+	"""Legacy entry point for messages queued before channels_app.reply existed."""
+	from .reply import process_reply
+	from .service.conversation_service import ensure_contact_conversation
 
-	# LLM call runs outside any transaction so we don't hold a DB connection/locks for seconds
-	api_calls: list = []
-	try:
-		reply_text, api_calls = generate_agent_reply(msg, knowledge_base)
-	except Exception as exc:
-		api_calls = getattr(exc, "api_calls", [])
-		# A retry re-runs the whole agent; never risk sending a POST (order, booking, ticket) twice
-		sent_post = any(c.get("method") == "POST" for c in api_calls)
-		if not sent_post and self.request.retries < self.max_retries:
-			logger.warning(f"Reply generation failed for {msg.id}, retrying: {exc}")
-			raise self.retry(exc=exc)
-		logger.error(f"Reply generation failed for {msg.id} after retries: {exc}", exc_info=True)
-		reply_text = ""
-	reply_text = reply_text or FALLBACK_REPLY
-
-	out_msg = create_outbound_message(
-		project=msg.project,
-		contact=msg.contact,
-		text=reply_text,
-		external_message_id="",  # Will be updated after sending
-		meta={"api_calls": api_calls} if api_calls else {},
-		conversation=msg.conversation,
-		id=msg.agent_reply_id or None
-	)
-
-	cred = get_facebook_credential(msg)
-	if not cred:
-		logger.error(f"No active Facebook credential for project {msg.project_id}; reply {out_msg.id} not sent")
-		return
-	response = send_text_message(
-		page_access_token=cred.get_credentials().page_access_token,
-		recipient_psid=msg.contact.external_id,
-		text=reply_text
-	)
-
-	# Update message with Facebook message_id if successful
-	if response.get("message_id"):
-		out_msg.external_message_id = response["message_id"]
-		out_msg.meta = {**out_msg.meta, **response}  # keep api_calls, add Facebook send response
-		out_msg.save(update_fields=["external_message_id", "meta"])
-		logger.info(f"Updated outbound message {out_msg.id} with Facebook message_id: {response['message_id']}")
-	else:
-		logger.warning(f"Failed to get message_id from Facebook API response for message {out_msg.id}")
+	msg = Message.objects.select_related("contact", "project").get(id=message_id)
+	if not msg.conversation_id:
+		msg.conversation = ensure_contact_conversation(msg.contact, KnowledgeBase.objects.get(id=knowledge_base_id))
+		msg.save(update_fields=["conversation"])
+	process_reply.delay(str(msg.conversation_id), str(msg.id))
 
 
 @shared_task
 def handle_ui_message(message_id: str) -> None:
-	"""Handle UI message and generate agent reply."""
-	try:
-		msg = Message.objects.select_related(
-			"project", "contact", "conversation", "conversation__knowledge_base", "reply_to_message"
-		).get(id=message_id)
-		if not msg.conversation:
-			raise ValueError(f"Message {message_id} has no conversation")
-		if not msg.agent_reply_id:
-			raise ValueError(f"User message {msg.id} does not have agent_reply_id set")
+	"""Legacy entry point for messages queued before channels_app.reply existed."""
+	from .reply import process_reply
 
-		msg.status = "processing"
-		msg.save(update_fields=["status"])
-
-		# LLM call runs outside any transaction
-		reply_text, api_calls = generate_agent_reply(msg, msg.conversation.knowledge_base)
-
-		with transaction.atomic():
-			out_msg = create_outbound_message(
-				project=msg.project,
-				contact=msg.contact,
-				text=reply_text,
-				external_message_id="",
-				meta={"api_calls": api_calls} if api_calls else {},
-				conversation=msg.conversation,
-				id=msg.agent_reply_id
-			)
-			msg.status = "completed"
-			msg.save(update_fields=["status"])
-
-		logger.info(f"UI message {msg.id} completed, agent reply {out_msg.id} created")
-
-	except Exception as e:
-		logger.error(f"Error processing UI message {message_id}: {e}", exc_info=True)
-		Message.objects.filter(id=message_id).update(status="failed")
-		raise
+	msg = Message.objects.get(id=message_id)
+	process_reply.delay(str(msg.conversation_id), str(msg.id))
