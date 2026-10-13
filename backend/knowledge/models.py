@@ -229,6 +229,9 @@ class CustomInstruction(models.Model):
 	)
 	label = models.CharField(max_length=255)
 	message = models.TextField()
+	# Generic API tool (agents/api_tool.py). api_domains: [{"domain", "auth_header"?, "secret"?}]
+	api_tool_enabled = models.BooleanField(default=False)
+	api_domains = models.JSONField(default=list, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
