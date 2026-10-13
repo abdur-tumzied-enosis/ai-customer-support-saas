@@ -116,6 +116,14 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 
 			# Extract message data
 			message_id = message.get("mid", "")
+
+			# Facebook retries webhooks it considers slow/failed; skip already-stored messages
+			# ponytail: check-then-insert has a tiny race window; add a partial unique constraint if dupes still appear
+			if message_id and Message.objects.filter(
+				project=project, direction="in", external_message_id=message_id
+			).exists():
+				logger.info(f"Duplicate webhook delivery for mid {message_id}, skipping")
+				continue
 			text = message.get("text", "")
 			timestamp = evt.get("timestamp")
 			attachments = message.get("attachments", [])

@@ -5,28 +5,24 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openrouter import ChatOpenRouter
 from langchain.agents import create_agent
 from langchain_core.runnables import Runnable
-from pydantic import BaseModel
 
 OPENROUTER_DEFAULT_MODEL = "stepfun/step-3.5-flash:free"
 
 logger = logging.getLogger(__name__)
 
-class TextResponse(BaseModel):
-	"""Response format for text-only output."""
-	text: str
-
-
-def get_llm(provider: str = "google", model: Optional[str] = None, **kwargs):
+def get_llm(provider: Optional[str] = None, model: Optional[str] = None, **kwargs):
 	"""
 	Return an LLM instance.
 
 	Args:
-		provider: "google" (default) or "openrouter"
+		provider: "google" or "openrouter". Defaults to settings.LLM_PROVIDER.
 		model: Model name override. Defaults per provider:
-			google     → "gemini-2.5-flash"
+			google     → "gemini-3.8-flash"
 			openrouter → "nvidia/nemotron-3-super-120b-a12b:free"
 		**kwargs: Extra kwargs forwarded to the underlying LLM class.
 	"""
+	provider = provider or settings.LLM_PROVIDER
+	model = model or settings.LLM_MODEL
 	if provider == "openrouter":
 		logger.warning("Using OpenRouter LLM - ensure your OPENROUTER_API_KEY is set and monitor usage to avoid unexpected costs.")
 		return ChatOpenRouter(
@@ -35,9 +31,16 @@ def get_llm(provider: str = "google", model: Optional[str] = None, **kwargs):
 			**kwargs,
 		)
 	# default: google
+	if settings.GOOGLE_API_KEY:
+		# API key (Vertex express mode / Gemini API): project/location would override the key and force ADC
+		auth = {"api_key": settings.GOOGLE_API_KEY}
+	else:
+		# No key: Vertex via service-account / ADC credentials
+		auth = {"project": settings.GOOGLE_CLOUD_PROJECT, "location": settings.GOOGLE_CLOUD_LOCATION}
 	return ChatGoogleGenerativeAI(
-		model=model or "gemini-2.5-flash",
-		api_key=settings.GOOGLE_API_KEY,
+		model=model or "gemini-3.8-flash",
+		vertexai=settings.GOOGLE_USE_VERTEXAI,
+		**auth,
 		**kwargs,
 	)
 
@@ -84,7 +87,7 @@ def build_system_prompt(custom_instructions: Optional[List[dict]] = None) -> str
 	return base_prompt
 
 
-def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = None, provider: str = "google", model: Optional[str] = None, **llm_kwargs) -> Runnable:
+def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = None, provider: Optional[str] = None, model: Optional[str] = None, **llm_kwargs) -> Runnable:
 	"""
 	Create an agent with tools and optional custom instructions.
 	
@@ -101,7 +104,6 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 		model=llm,
 		tools=tools,
 		system_prompt=system_prompt,
-		response_format=TextResponse  # Ensure response is in text format
 	)
 	return agent
 

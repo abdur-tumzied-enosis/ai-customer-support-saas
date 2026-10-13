@@ -1,4 +1,3 @@
-import re
 from dataclasses import dataclass
 from typing import Callable, Optional, List, Any, Dict, TypedDict, Literal, Sequence
 from .llm import create_basic_agent
@@ -133,81 +132,15 @@ def _extract_token_usage_from_result(result: Any) -> tuple[int, int]:
 	return total_input_tokens, total_output_tokens
 
 
-def _clean_structured_response_text(content_str: str) -> str:
-	"""Clean up structured response format strings like 'Returning structured response: text="..."'"""
-	if "Returning structured response:" not in content_str:
-		return content_str.strip()
-	
-	# Try to extract text from format: Returning structured response: text="<content>"
-	match = re.search(r'text=["\'](.*?)["\']', content_str)
-	if match:
-		return match.group(1).strip()
-	
-	# Try alternative format
-	match = re.search(r'text=(.+?)(?:\s|$)', content_str)
-	if match:
-		return match.group(1).strip('"\'').strip()
-	
-	return content_str.strip()
-
-
-def _extract_text_from_structured_response(result: Any) -> Optional[str]:
-	"""Extract text from structured_response field if it exists."""
-	try:
-		if not isinstance(result, dict):
-			return None
-		
-		structured = result.get("structured_response")
-		if not structured:
-			return None
-		
-		if hasattr(structured, "text"):
-			text = structured.text
-			if isinstance(text, str):
-				return text.strip()
-		elif isinstance(structured, dict) and "text" in structured:
-			text = structured["text"]
-			if isinstance(text, str):
-				return text.strip()
-	except Exception:
-		pass
-	
-	return None
-
-
-def _extract_text_from_messages(result: Any) -> Optional[str]:
-	"""Extract text from the last message in the messages list (fallback)."""
-	try:
-		if not isinstance(result, dict):
-			return None
-		
-		messages_result = result.get("messages")
-		if not messages_result:
-			return None
-		
-		last = messages_result[-1]
-		content = getattr(last, "content", None) or (last.get("content") if isinstance(last, dict) else None)
-		
-		if content:
-			content_str = str(content)
-			return _clean_structured_response_text(content_str)
-	except Exception:
-		pass
-	
-	return None
-
-
-def _extract_text_from_content(result: Any) -> str:
-	"""Final fallback: extract text from result.content or convert result to string."""
-	content = getattr(result, "content", None)
-	
-	if content:
-		content_str = str(content)
-		return _clean_structured_response_text(content_str)
-	
-	# Last resort - convert to string
-	result_str = str(result)
-	return _clean_structured_response_text(result_str)
+def _extract_reply_text(result: Any) -> str:
+	"""Text of the agent's final message."""
+	messages_result = result.get("messages") if isinstance(result, dict) else None
+	if not messages_result:
+		return ""
+	content = getattr(messages_result[-1], "content", "")
+	if isinstance(content, list):  # some providers (Gemini) return content blocks
+		content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
+	return str(content).strip()
 
 
 def _track_token_usage(
@@ -259,7 +192,7 @@ def generate_reply(
 	# Setup
 	deps = deps or ToolDeps()
 	tools = _build_tools_from_context(context, deps)
-	agent = create_basic_agent(tools, custom_instructions=context.custom_instructions, provider="openrouter")
+	agent = create_basic_agent(tools, custom_instructions=context.custom_instructions)
 	
 	# Prepare messages
 	messages = list(history or [])
@@ -272,15 +205,10 @@ def generate_reply(
 	# Extract token usage
 	input_tokens, output_tokens = _extract_token_usage_from_result(result)
 	
-	# Extract reply text (try multiple methods in order of preference)
-	reply_text = (
-		_extract_text_from_structured_response(result) or
-		_extract_text_from_messages(result) or
-		_extract_text_from_content(result)
-	)
-	
+	reply_text = _extract_reply_text(result)
+
 	# Track token usage if project_id provided
 	if project_id and reply_text and input_tokens > 0:
 		_track_token_usage(project_id, question, reply_text, input_tokens, output_tokens)
-	
-	return reply_text if reply_text else ""
+
+	return reply_text

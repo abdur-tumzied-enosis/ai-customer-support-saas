@@ -13,6 +13,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 _reranker = None
+_reranker_lock = threading.Lock()
 _embeddings = None
 _embeddings_lock = threading.Lock()
 
@@ -55,9 +56,11 @@ def rerank_docs(query: str, docs: List[Document], top_k: int = 4) -> List[Docume
 		return docs
 	try:
 		if _reranker is None:
-			from sentence_transformers import CrossEncoder
-			reranker_model = getattr(settings, 'RERANKER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2')
-			_reranker = CrossEncoder(reranker_model)
+			with _reranker_lock:
+				if _reranker is None:  # re-check after acquiring lock
+					from sentence_transformers import CrossEncoder
+					reranker_model = getattr(settings, 'RERANKER_MODEL', 'cross-encoder/ms-marco-MiniLM-L-6-v2')
+					_reranker = CrossEncoder(reranker_model)
 		pairs = [(query, doc.page_content) for doc in docs]
 		scores = _reranker.predict(pairs)
 		ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)

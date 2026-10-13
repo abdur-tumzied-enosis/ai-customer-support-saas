@@ -74,85 +74,100 @@ def format_message_with_context(message: Message) -> str:
 	return content
 
 
-@shared_task
-def handle_incoming_message(message_id: str, knowledge_base_id: str) -> None:
+HISTORY_LIMIT = 10
+FALLBACK_REPLY = "Sorry, I'm having trouble answering right now. Please try again in a moment."
+
+
+def build_history(msg: Message) -> list:
+	"""Last HISTORY_LIMIT messages before `msg`, oldest first."""
+	qs = (
+		Message.objects.filter(conversation=msg.conversation) if msg.conversation
+		else Message.objects.filter(contact=msg.contact)
+	)
+	recent = list(
+		qs.exclude(id=msg.id)
+		.filter(created_at__lte=msg.created_at)
+		.select_related("reply_to_message")
+		.order_by("-created_at")[:HISTORY_LIMIT]
+	)
+	recent.reverse()
+	return [
+		ChatMessage(role=("user" if m.direction == "in" else "assistant"), content=format_message_with_context(m))
+		for m in recent
+	]
+
+
+def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase) -> str:
+	"""Run the RAG agent for `msg`. Does DB reads only; call outside any transaction."""
+	project = msg.project
+	history = build_history(msg)
+	current_message_text = format_message_with_context(msg)
+
+	custom_instructions = get_effective_instructions(str(project.id), str(knowledge_base.id))
+	logger.info(f"Using {len(custom_instructions)} custom instructions")
+
+	context = Context(
+		knowledge_base_id=str(knowledge_base.id),
+		vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name),
+		custom_instructions=custom_instructions
+	)
+	deps = ToolDeps(
+		retriever_factory=get_retriever,
+		retrieved_factory_for_crawler_url_context=lambda: get_web_crawl_retriever(str(knowledge_base.id), k=5)
+	)
+
+	logger.info(f"Generating reply for message {msg.id} with text: {current_message_text}")
+	logger.info(f"History ({len(history)} msgs): {history[-3:]}")
+
+	reply_text = generate_reply(current_message_text, context, deps, history=history, project_id=str(project.id))
+	logger.info(f"Reply text: {reply_text}")
+	return reply_text
+
+
+def get_facebook_credential(msg: Message):
+	"""Find the Facebook page credential that received `msg` (page id is the webhook recipient)."""
+	creds = ChannelCredential.objects.filter(project=msg.project, channel="facebook", is_active=True)
+	page_id = (msg.meta or {}).get("recipient", {}).get("id")
+	return (page_id and creds.filter(credentials__page_id=page_id).first()) or creds.first()
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=5)
+def handle_incoming_message(self, message_id: str, knowledge_base_id: str) -> None:
 	"""Handle incoming message from external channel (e.g., Facebook)."""
-	with transaction.atomic():
-		msg = Message.objects.select_related("project", "contact", "reply_to_message", "conversation").get(id=message_id)
-		knowledge_base = KnowledgeBase.objects.get(id=knowledge_base_id)
-		project = msg.project
-		contact = msg.contact
-		conversation = msg.conversation
-		
-		# Build conversation history from conversation messages if available, otherwise from contact messages
-		if conversation:
-			prev_qs = (
-				Message.objects.filter(conversation=conversation)
-				.select_related("reply_to_message")
-				.order_by("-created_at")
-			)
-		else:
-			prev_qs = (
-				Message.objects.filter(contact=contact)
-				.select_related("reply_to_message")
-				.order_by("-created_at")
-			)
-		
-		# Convert the queryset to a list and reverse it so that the oldest message comes first (chronological order)
-		prev = list(prev_qs)
-		
-		# Build history with enhanced context
-		history = []
-		for m in prev:
-			content = format_message_with_context(m)
-			history.append(ChatMessage(
-				role=("user" if m.direction == "in" else "assistant"),
-				content=content
-			))
-		
-		# Prepare current message text with context
-		current_message_text = format_message_with_context(msg)
-		
-		# Get effective custom instructions for this project/KB
-		custom_instructions = get_effective_instructions(str(project.id), str(knowledge_base.id))
-		logger.info(f"Using {len(custom_instructions)} custom instructions")
-		
-		# Generate reply via RAG
-		context = Context(
-			knowledge_base_id=str(knowledge_base.id),
-			vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name),
-			custom_instructions=custom_instructions
-		)
-		deps = ToolDeps(
-			retriever_factory=get_retriever,
-			retrieved_factory_for_crawler_url_context=lambda: get_web_crawl_retriever(str(knowledge_base.id), k=5)
-		)
+	msg = Message.objects.select_related("project", "contact", "reply_to_message", "conversation").get(id=message_id)
+	knowledge_base = KnowledgeBase.objects.get(id=knowledge_base_id)
 
-		logger.info(f"Generating reply for message {msg.id} with text: {current_message_text}")
-		logger.info(f"History: {history[:5]}")
+	# LLM call runs outside any transaction so we don't hold a DB connection/locks for seconds
+	try:
+		reply_text = generate_agent_reply(msg, knowledge_base)
+	except Exception as exc:
+		if self.request.retries < self.max_retries:
+			logger.warning(f"Reply generation failed for {msg.id}, retrying: {exc}")
+			raise self.retry(exc=exc)
+		logger.error(f"Reply generation failed for {msg.id} after retries: {exc}", exc_info=True)
+		reply_text = ""
+	reply_text = reply_text or FALLBACK_REPLY
 
-		reply_text = generate_reply(current_message_text, context, deps, history=history[-10:], project_id=str(project.id))
-		logger.info(f"Reply text: {reply_text}")
-		agent_reply_uuid = msg.agent_reply_id
-		# Persist outbound message record using service
-		out_msg = create_outbound_message(
-			project=project,
-			contact=contact,
-			text=reply_text,
-			external_message_id="",  # Will be updated after sending
-			meta={},
-			conversation=conversation,
-			id= agent_reply_uuid or None
-		)
+	out_msg = create_outbound_message(
+		project=msg.project,
+		contact=msg.contact,
+		text=reply_text,
+		external_message_id="",  # Will be updated after sending
+		meta={},
+		conversation=msg.conversation,
+		id=msg.agent_reply_id or None
+	)
 
-	# Send via Facebook
-	cred = ChannelCredential.objects.get(project=project, channel="facebook")
+	cred = get_facebook_credential(msg)
+	if not cred:
+		logger.error(f"No active Facebook credential for project {msg.project_id}; reply {out_msg.id} not sent")
+		return
 	response = send_text_message(
-		page_access_token=cred.page_access_token,
-		recipient_psid=contact.external_id,
+		page_access_token=cred.get_credentials().page_access_token,
+		recipient_psid=msg.contact.external_id,
 		text=reply_text
 	)
-	
+
 	# Update message with Facebook message_id if successful
 	if response.get("message_id"):
 		out_msg.external_message_id = response["message_id"]
@@ -167,100 +182,36 @@ def handle_incoming_message(message_id: str, knowledge_base_id: str) -> None:
 def handle_ui_message(message_id: str) -> None:
 	"""Handle UI message and generate agent reply."""
 	try:
+		msg = Message.objects.select_related(
+			"project", "contact", "conversation", "conversation__knowledge_base", "reply_to_message"
+		).get(id=message_id)
+		if not msg.conversation:
+			raise ValueError(f"Message {message_id} has no conversation")
+		if not msg.agent_reply_id:
+			raise ValueError(f"User message {msg.id} does not have agent_reply_id set")
+
+		msg.status = "processing"
+		msg.save(update_fields=["status"])
+
+		# LLM call runs outside any transaction
+		reply_text = generate_agent_reply(msg, msg.conversation.knowledge_base)
+
 		with transaction.atomic():
-			msg = Message.objects.select_related(
-				"project", "contact", "conversation", "conversation__knowledge_base"
-			).get(id=message_id)
-			
-			# Update status to processing
-			msg.status = "processing"
-			msg.save(update_fields=["status"])
-			
-			conversation = msg.conversation
-			if not conversation:
-				raise ValueError(f"Message {message_id} has no conversation")
-			
-			project = msg.project
-			contact = msg.contact
-			knowledge_base = conversation.knowledge_base
-			
-			# Build conversation history from conversation messages
-			prev_qs = (
-				Message.objects.filter(conversation=conversation)
-				.exclude(id=msg.id)  # Exclude current message
-				.select_related("reply_to_message")
-				.order_by("-created_at")
-			)
-			
-			# Convert to list and reverse for chronological order
-			prev = list(prev_qs)
-			prev.reverse()
-			
-			# Build history with enhanced context
-			history = []
-			for m in prev:
-				content = format_message_with_context(m)
-				history.append(ChatMessage(
-					role=("user" if m.direction == "in" else "assistant"),
-					content=content
-				))
-			
-			# Prepare current message text with context
-			current_message_text = format_message_with_context(msg)
-			
-			# Get effective custom instructions for this project/KB
-			custom_instructions = get_effective_instructions(str(project.id), str(knowledge_base.id))
-			logger.info(f"Using {len(custom_instructions)} custom instructions")
-			
-			# Generate reply via RAG
-			context = Context(
-				knowledge_base_id=str(knowledge_base.id),
-				vector_collection=KnowledgeBase.get_vector_collection_name(project, knowledge_base.name),
-				custom_instructions=custom_instructions
-			)
-			deps = ToolDeps(
-				retriever_factory=get_retriever,
-				retrieved_factory_for_crawler_url_context=lambda: get_web_crawl_retriever(str(knowledge_base.id), k=5)
-			)
-
-			logger.info(f"Generating reply for UI message {msg.id} with text: {current_message_text}")
-			logger.info(f"History: {history[:5]}")
-
-			reply_text = generate_reply(current_message_text, context, deps, history=history[-10:], project_id=str(project.id))
-			logger.info(f"Reply text: {reply_text}")
-			
-			# Get the pre-generated agent_reply_id from user message
-			agent_reply_uuid = msg.agent_reply_id
-			if not agent_reply_uuid:
-				raise ValueError(f"User message {msg.id} does not have agent_reply_id set")
-			
-			# Persist outbound message record using service with the pre-generated UUID
 			out_msg = create_outbound_message(
-				project=project,
-				contact=contact,
+				project=msg.project,
+				contact=msg.contact,
 				text=reply_text,
 				external_message_id="",
 				meta={},
-				conversation=conversation,
-				id=agent_reply_uuid
+				conversation=msg.conversation,
+				id=msg.agent_reply_id
 			)
-			
-			# Update user message status to completed
 			msg.status = "completed"
 			msg.save(update_fields=["status"])
-			
-			logger.info(f"UI message {msg.id} completed, agent reply {out_msg.id} created")
-			
+
+		logger.info(f"UI message {msg.id} completed, agent reply {out_msg.id} created")
+
 	except Exception as e:
 		logger.error(f"Error processing UI message {message_id}: {e}", exc_info=True)
-		# Update message status to failed
-		try:
-			with transaction.atomic():
-				msg = Message.objects.get(id=message_id)
-				msg.status = "failed"
-				msg.save(update_fields=["status"])
-		except Exception:
-			pass
+		Message.objects.filter(id=message_id).update(status="failed")
 		raise
-
-
