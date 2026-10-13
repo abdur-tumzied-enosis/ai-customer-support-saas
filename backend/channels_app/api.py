@@ -8,7 +8,15 @@ from knowledge.models import KnowledgeBase
 from .models import ChannelCredential, Conversation, Message, Platform
 from .service.conversation_service import create_conversation, get_default_knowledge_base
 from .service.message_service import create_ui_message
-from .tasks import handle_ui_message
+from datetime import timedelta
+import requests
+from django.conf import settings
+from django.utils import timezone
+from .handoff import conversation_event_data, end_handoff, note_staff_activity, start_handoff
+from .models import ProjectWebhook
+from .reply import deliver, schedule_reply
+from .service.message_service import create_outbound_message
+from .webhooks import WebhookUrlError, build_event, emit_event, post_event, validate_webhook_url
 
 
 class PlatformListView(APIView):
@@ -177,6 +185,56 @@ def _get_project(user, project_slug: str) -> Project:
 	return project
 
 
+def _iso(dt):
+	return dt.isoformat() if dt else None
+
+
+def _conversation_dict(conv: Conversation) -> dict:
+	return {
+		"id": str(conv.id),
+		"name": conv.name or "Unnamed Conversation",
+		"knowledge_base_id": str(conv.knowledge_base.id),
+		"knowledge_base_name": conv.knowledge_base.name,
+		"channel": conv.channel,
+		"contact_display_name": conv.contact.display_name if conv.contact else "",
+		"handoff_at": _iso(conv.handoff_at),
+		"handoff_reason": conv.handoff_reason,
+		"is_paused": conv.is_paused(),
+		"resumes_at": _iso(conv.resumes_at()),
+		"created_at": conv.created_at.isoformat(),
+		"updated_at": conv.updated_at.isoformat(),
+	}
+
+
+def _message_dict(msg: Message) -> dict:
+	return {
+		"id": str(msg.id),
+		"direction": msg.direction,
+		"sender": msg.sender,
+		"status": msg.status,
+		"text": msg.text,
+		"created_at": msg.created_at.isoformat(),
+		"agent_reply_id": str(msg.agent_reply_id) if msg.agent_reply_id else None,
+	}
+
+
+def _error(code: str, message: str, http_status: int) -> Response:
+	return Response({"success": False, "error": {"code": code, "message": message}}, status=http_status)
+
+
+def _paused_cutoff():
+	return timezone.now() - timedelta(hours=settings.HANDOFF_AUTO_RESUME_HOURS)
+
+
+def _get_conversation(request, conversation_id):
+	conversation = Conversation.objects.filter(id=conversation_id).select_related(
+		"knowledge_base", "contact", "project"
+	).first()
+	if conversation:
+		_verify_project_access(request.user, conversation.project)
+	return conversation
+
+
 class ConversationListView(APIView):
 	permission_classes = [IsAuthenticated]
 
@@ -191,6 +249,8 @@ class ConversationListView(APIView):
 		conversations = Conversation.objects.filter(project=project).select_related(
 			"knowledge_base", "contact"
 		).prefetch_related("messages").order_by("-updated_at")
+		if request.query_params.get("needs_human") == "1":
+			conversations = conversations.filter(handoff_at__gte=_paused_cutoff())
 
 		conversations_data = []
 		for conv in conversations:
@@ -199,24 +259,21 @@ class ConversationListView(APIView):
 			message_count = messages.count()
 
 			conversations_data.append({
-				"id": str(conv.id),
-				"name": conv.name or "Unnamed Conversation",
-				"knowledge_base_id": str(conv.knowledge_base.id),
-				"knowledge_base_name": conv.knowledge_base.name,
+				**_conversation_dict(conv),
 				"message_count": message_count,
 				"last_message": {
 					"id": str(last_message.id),
 					"text": last_message.text[:100] if last_message else "",
 					"created_at": last_message.created_at.isoformat() if last_message else None,
 				} if last_message else None,
-				"created_at": conv.created_at.isoformat(),
-				"updated_at": conv.updated_at.isoformat(),
 			})
+		conversations_data.sort(key=lambda c: not c["is_paused"])  # paused first, stable within groups
 
 		return Response({
 			"success": True,
 			"data": {
-				"conversations": conversations_data
+				"conversations": conversations_data,
+				"needs_human_count": Conversation.objects.filter(project=project, handoff_at__gte=_paused_cutoff()).count(),
 			}
 		}, status=status.HTTP_200_OK)
 
@@ -263,14 +320,7 @@ class ConversationListView(APIView):
 		return Response({
 			"success": True,
 			"data": {
-				"conversation": {
-					"id": str(conversation.id),
-					"name": conversation.name or "Unnamed Conversation",
-					"knowledge_base_id": str(conversation.knowledge_base.id),
-					"knowledge_base_name": conversation.knowledge_base.name,
-					"created_at": conversation.created_at.isoformat(),
-					"updated_at": conversation.updated_at.isoformat(),
-				}
+				"conversation": _conversation_dict(conversation)
 			}
 		}, status=status.HTTP_201_CREATED)
 
@@ -298,14 +348,7 @@ class ConversationDetailView(APIView):
 		return Response({
 			"success": True,
 			"data": {
-				"conversation": {
-					"id": str(conversation.id),
-					"name": conversation.name or "Unnamed Conversation",
-					"knowledge_base_id": str(conversation.knowledge_base.id),
-					"knowledge_base_name": conversation.knowledge_base.name,
-					"created_at": conversation.created_at.isoformat(),
-					"updated_at": conversation.updated_at.isoformat(),
-				}
+				"conversation": _conversation_dict(conversation)
 			}
 		}, status=status.HTTP_200_OK)
 
@@ -332,14 +375,7 @@ class ConversationDetailView(APIView):
 		return Response({
 			"success": True,
 			"data": {
-				"conversation": {
-					"id": str(conversation.id),
-					"name": conversation.name or "Unnamed Conversation",
-					"knowledge_base_id": str(conversation.knowledge_base.id),
-					"knowledge_base_name": conversation.knowledge_base.name,
-					"created_at": conversation.created_at.isoformat(),
-					"updated_at": conversation.updated_at.isoformat(),
-				}
+				"conversation": _conversation_dict(conversation)
 			}
 		}, status=status.HTTP_200_OK)
 
@@ -415,16 +451,7 @@ class ConversationMessageListView(APIView):
 			offset = max(0, offset)
 			messages = messages_queryset[offset:offset + limit]
 		
-		messages_data = []
-		for msg in messages:
-			messages_data.append({
-				"id": str(msg.id),
-				"direction": msg.direction,
-				"status": msg.status,
-				"text": msg.text,
-				"created_at": msg.created_at.isoformat(),
-				"agent_reply_id": str(msg.agent_reply_id) if msg.agent_reply_id else None,
-			})
+		messages_data = [_message_dict(msg) for msg in messages]
 
 		# Calculate pagination info
 		# has_previous = there are older messages (lower offset)
@@ -464,6 +491,8 @@ class ConversationMessageListView(APIView):
 			}, status=status.HTTP_404_NOT_FOUND)
 		
 		_verify_project_access(request.user, conversation.project)
+		if conversation.channel != "self":
+			return _error("not_a_test_conversation", "Use staff reply for customer conversations", status.HTTP_400_BAD_REQUEST)
 
 		text = request.data.get("text")
 		if not text:
@@ -473,18 +502,12 @@ class ConversationMessageListView(APIView):
 		msg = create_ui_message(conversation=conversation, text=text)
 
 		# Trigger async agent reply task
-		handle_ui_message.delay(str(msg.id))
+		schedule_reply(msg)
 
 		return Response({
 			"success": True,
 			"data": {
-				"message": {
-					"id": str(msg.id),
-					"direction": msg.direction,
-					"status": msg.status,
-					"text": msg.text,
-					"created_at": msg.created_at.isoformat(),
-				}
+				"message": _message_dict(msg)
 			}
 		}, status=status.HTTP_201_CREATED)
 
@@ -845,3 +868,120 @@ class ChannelDetailView(APIView):
 		}, status=status.HTTP_200_OK)
 
 
+
+
+class ConversationHandoffView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, conversation_id):
+		conversation = _get_conversation(request, conversation_id)
+		if not conversation:
+			return _error("not_found", "Conversation not found", status.HTTP_404_NOT_FOUND)
+		start_handoff(conversation, (request.data.get("reason") or "").strip() or "paused by staff")
+		return Response({"success": True, "data": {"conversation": _conversation_dict(conversation)}})
+
+
+class ConversationResumeView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, conversation_id):
+		conversation = _get_conversation(request, conversation_id)
+		if not conversation:
+			return _error("not_found", "Conversation not found", status.HTTP_404_NOT_FOUND)
+		end_handoff(conversation)
+		return Response({"success": True, "data": {"conversation": _conversation_dict(conversation)}})
+
+
+class ConversationStaffReplyView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, conversation_id):
+		conversation = _get_conversation(request, conversation_id)
+		if not conversation:
+			return _error("not_found", "Conversation not found", status.HTTP_404_NOT_FOUND)
+		text = (request.data.get("text") or "").strip()
+		if not 1 <= len(text) <= 2000:
+			return _error("invalid_text", "Reply must be 1-2000 characters", status.HTTP_400_BAD_REQUEST)
+
+		last_in = conversation.messages.filter(direction="in").order_by("-created_at").first()
+		if conversation.channel == "facebook" and (
+			not last_in or timezone.now() - last_in.created_at > timedelta(hours=24)
+		):
+			return _error(
+				"outside_messaging_window",
+				"Facebook only allows replies within 24 hours of the customer's last message. Reply from the Meta inbox instead.",
+				status.HTTP_400_BAD_REQUEST,
+			)
+
+		msg = create_outbound_message(
+			project=conversation.project, contact=conversation.contact, text=text,
+			conversation=conversation, sender="staff",
+		)
+		note_staff_activity(conversation)
+		delivered = deliver(conversation, msg, last_in)
+		emit_event(conversation.project, "message.staff_reply", {
+			**conversation_event_data(conversation),
+			"message": {"id": str(msg.id), "text": msg.text, "created_at": msg.created_at.isoformat()},
+		})
+		if not delivered:
+			return _error("send_failed", "Saved, but the message could not be delivered to the customer", status.HTTP_502_BAD_GATEWAY)
+		return Response({"success": True, "data": {"message": _message_dict(msg)}}, status=status.HTTP_201_CREATED)
+
+
+def _webhook_dict(hook: ProjectWebhook) -> dict:
+	return {"url": hook.url, "is_active": hook.is_active, "secret": hook.secret}
+
+
+def _project_webhook(request) -> ProjectWebhook:
+	slug = request.query_params.get("project_slug") or request.data.get("project_slug")
+	if not slug:
+		raise ValidationError({"project_slug": "This field is required"})
+	project = _get_project(request.user, slug)
+	hook, _ = ProjectWebhook.objects.get_or_create(project=project)
+	return hook
+
+
+class ProjectWebhookView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		return Response({"success": True, "data": {"webhook": _webhook_dict(_project_webhook(request))}})
+
+	def put(self, request):
+		hook = _project_webhook(request)
+		url = (request.data.get("url") or "").strip()
+		is_active = request.data.get("is_active") is True
+		try:
+			if url:
+				url = validate_webhook_url(url)
+			if is_active and not url:
+				raise WebhookUrlError("Add a URL before enabling the webhook")
+		except WebhookUrlError as e:
+			return _error("invalid_url", str(e), status.HTTP_400_BAD_REQUEST)
+		hook.url, hook.is_active = url, is_active
+		hook.save(update_fields=["url", "is_active", "updated_at"])
+		return Response({"success": True, "data": {"webhook": _webhook_dict(hook)}})
+
+
+class ProjectWebhookRotateView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		hook = _project_webhook(request)
+		hook.secret = ProjectWebhook._meta.get_field("secret").default()
+		hook.save(update_fields=["secret", "updated_at"])
+		return Response({"success": True, "data": {"webhook": _webhook_dict(hook)}})
+
+
+class ProjectWebhookTestView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		hook = _project_webhook(request)
+		try:
+			code = post_event(hook, build_event(hook.project_id, "ping", {"message": "Test event from Auto Magic Pro"}))
+		except WebhookUrlError as e:
+			return _error("invalid_url", str(e), status.HTTP_400_BAD_REQUEST)
+		except requests.RequestException as e:
+			return _error("delivery_failed", f"Could not reach the URL ({type(e).__name__})", status.HTTP_502_BAD_GATEWAY)
+		return Response({"success": True, "data": {"status": code}})

@@ -9,6 +9,12 @@ from .api import (
 	ConversationDetailView,
 	ConversationMessageListView,
 	MessageStatusView,
+	ConversationHandoffView,
+	ConversationResumeView,
+	ConversationStaffReplyView,
+	ProjectWebhookView,
+	ProjectWebhookRotateView,
+	ProjectWebhookTestView,
 )
 
 urlpatterns = [
@@ -28,6 +34,12 @@ urlpatterns = [
 	path("conversations/<uuid:conversation_id>", ConversationDetailView.as_view(), name="conversation-detail"),
 	path("conversations/<uuid:conversation_id>/messages", ConversationMessageListView.as_view(), name="conversation-messages"),
 	path("messages/<uuid:message_id>/status", MessageStatusView.as_view(), name="message-status"),
+	path("conversations/<uuid:conversation_id>/handoff", ConversationHandoffView.as_view(), name="conversation-handoff"),
+	path("conversations/<uuid:conversation_id>/resume", ConversationResumeView.as_view(), name="conversation-resume"),
+	path("conversations/<uuid:conversation_id>/staff-reply", ConversationStaffReplyView.as_view(), name="conversation-staff-reply"),
+	path("webhook", ProjectWebhookView.as_view(), name="project-webhook"),
+	path("webhook/rotate-secret", ProjectWebhookRotateView.as_view(), name="project-webhook-rotate"),
+	path("webhook/test", ProjectWebhookTestView.as_view(), name="project-webhook-test"),
 ]
 
 
