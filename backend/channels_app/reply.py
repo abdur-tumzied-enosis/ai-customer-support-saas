@@ -17,7 +17,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import memory, tasks
-from .facebook_client import split_text
+from .facebook_client import INSTAGRAM_MAX_TEXT_BYTES, split_text
 from .handoff import start_handoff, wants_human
 from .models import Conversation, Message
 from .service.message_service import create_outbound_message
@@ -56,8 +56,9 @@ def _complete(messages) -> None:
 
 
 def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bool:
-	cred = tasks.get_facebook_credential(reference_msg)
-	parts = split_text(out_msg.text)
+	# Instagram DMs go through the same Send API (Page token, /me/messages), with a smaller text limit
+	cred = tasks.get_facebook_credential(reference_msg, conversation.channel)
+	parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
 	sent = out_msg.meta.get("parts_sent", 0)  # resume point when redelivering a partly sent reply
 	response = {}
 	while cred and sent < len(parts):
@@ -85,6 +86,7 @@ def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bo
 
 SENDERS = {
 	"facebook": _send_facebook,
+	"instagram": _send_facebook,
 	"self": lambda conversation, out_msg, reference_msg: True,  # stored row is the delivery (dashboard, future widget/API)
 }
 

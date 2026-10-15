@@ -1,4 +1,5 @@
 import re
+from typing import Optional
 import requests
 
 import logging
@@ -6,15 +7,22 @@ logger = logging.getLogger(__name__)
 
 FACEBOOK_API_URL = "https://graph.facebook.com/v21.0/me/messages"
 MAX_TEXT_CHARS = 1900  # Messenger rejects text over 2000; margin for the cleanup in send_text_message
+INSTAGRAM_MAX_TEXT_BYTES = 990  # Instagram rejects text over 1000 UTF-8 bytes (Bengali/emoji: 3-4 bytes per char)
 
 
-def split_text(text: str, limit: int = MAX_TEXT_CHARS) -> list:
-	"""Split long text into Messenger-sized parts, on paragraph, line, sentence or word breaks."""
+def split_text(text: str, limit: int = MAX_TEXT_CHARS, max_bytes: Optional[int] = None) -> list:
+	"""Split long text into parts of at most `limit` chars (and `max_bytes` UTF-8 bytes), on paragraph,
+	line, sentence or word breaks."""
 	parts = []
-	while len(text) > limit:
+	while text:
 		window = text[:limit]
+		if max_bytes:
+			window = window.encode()[:max_bytes].decode(errors="ignore")  # drops a char cut mid-sequence
+		if len(window) == len(text):
+			break
 		# Only break past the halfway point, so a stray early newline doesn't leave a tiny part
-		cut = next((i + len(sep) for sep in ("\n\n", "\n", ". ", " ") if (i := window.rfind(sep)) > limit // 2), limit)
+		size = len(window)
+		cut = next((i + len(sep) for sep in ("\n\n", "\n", ". ", " ") if (i := window.rfind(sep)) > size // 2), size)
 		parts.append(text[:cut].strip())
 		text = text[cut:]
 	return [p for p in parts + [text.strip()] if p]
@@ -102,16 +110,18 @@ def send_text_message(page_access_token: str, recipient_psid: str, text: str) ->
 GRAPH_API_URL = "https://graph.facebook.com/v21.0"
 
 
-def get_user_name(page_access_token: str, psid: str) -> str:
-	"""Customer's name for the dashboard (so staff can find them in the Meta inbox). "" on any failure."""
+def get_user_name(page_access_token: str, psid: str, fields: str = "name") -> str:
+	"""Customer's name for the dashboard (so staff can find them in the Meta inbox). "" on any failure.
+	Instagram: pass fields="name,username"; many IG profiles have no name."""
 	try:
 		resp = requests.get(
 			f"{GRAPH_API_URL}/{psid}",
-			params={"fields": "name", "access_token": page_access_token},
+			params={"fields": fields, "access_token": page_access_token},
 			timeout=5,
 		)
 		if resp.status_code == 200:
-			return (resp.json().get("name") or "")[:255]
+			data = resp.json()
+			return (data.get("name") or data.get("username") or "")[:255]
 		logger.warning(f"Facebook name lookup failed: HTTP {resp.status_code}")
 	except (requests.RequestException, ValueError) as e:
 		logger.warning(f"Facebook name lookup failed: {type(e).__name__}")

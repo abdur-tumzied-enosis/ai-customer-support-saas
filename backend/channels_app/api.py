@@ -906,12 +906,12 @@ class ConversationStaffReplyView(APIView):
 			return _error("invalid_text", "Reply must be 1-2000 characters", status.HTTP_400_BAD_REQUEST)
 
 		last_in = conversation.messages.filter(direction="in").order_by("-created_at").first()
-		if conversation.channel == "facebook" and (
+		if conversation.channel in ("facebook", "instagram") and (
 			not last_in or timezone.now() - last_in.created_at > timedelta(hours=24)
 		):
 			return _error(
 				"outside_messaging_window",
-				"Facebook only allows replies within 24 hours of the customer's last message. Reply from the Meta inbox instead.",
+				f"{conversation.channel.capitalize()} only allows replies within 24 hours of the customer's last message. Reply from the Meta inbox instead.",
 				status.HTTP_400_BAD_REQUEST,
 			)
 

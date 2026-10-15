@@ -4,7 +4,7 @@ from typing import Optional
 
 from knowledge.models import KnowledgeBase, CustomInstruction
 from . import memory  # also registers the memory Celery tasks
-from .models import Message, ChannelCredential
+from .models import Message, ChannelCredential, meta_credentials
 from .facebook_client import send_text_message
 from .service.message_service import create_outbound_message
 from agents.rag import generate_reply, Context, ToolDeps, ChatMessage
@@ -149,11 +149,11 @@ def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: 
 	return reply_text, context
 
 
-def get_facebook_credential(msg: Message):
-	"""Find the Facebook page credential that received `msg` (page id is the webhook recipient)."""
-	creds = ChannelCredential.objects.filter(project=msg.project, channel="facebook", is_active=True)
-	page_id = (msg.meta or {}).get("recipient", {}).get("id")
-	return (page_id and creds.filter(credentials__page_id=page_id).first()) or creds.first()
+def get_facebook_credential(msg: Message, channel: str = "facebook"):
+	"""Find the Facebook page / Instagram account credential that received `msg` (the webhook recipient)."""
+	account_id = (msg.meta or {}).get("recipient", {}).get("id")
+	cred = account_id and meta_credentials(account_id).filter(project=msg.project).first()
+	return cred or ChannelCredential.objects.filter(project=msg.project, channel=channel, is_active=True).first()
 
 
 @shared_task

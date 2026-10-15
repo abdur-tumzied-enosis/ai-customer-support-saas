@@ -5,7 +5,7 @@ from typing import Any, Dict
 from django.http import HttpRequest, HttpResponse, JsonResponse
 
 from accounts.models import Project
-from channels_app.models import ChannelCredential, CustomerContact, Message
+from channels_app.models import META_CHANNELS, ChannelCredential, CustomerContact, Message, meta_credentials
 from channels_app.facebook_client import get_user_name
 from channels_app.reply import schedule_reply
 from channels_app.service.conversation_service import ensure_contact_conversation
@@ -50,7 +50,7 @@ def handle_facebook_webhook_verification(request: HttpRequest) -> HttpResponse:
 	# Query database directly for channel with matching verify_token in credentials JSON
 	# Using JSONField lookup: credentials__verify_token
 	channel = ChannelCredential.objects.filter(
-		channel="facebook",
+		channel__in=META_CHANNELS,  # one callback URL serves Messenger and Instagram
 		is_active=True,
 		credentials__verify_token=verify_token
 	).select_related('platform', 'project').first()
@@ -82,6 +82,9 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 	    4. Create Message record
 	    5. Trigger async AI response if applicable
 	"""
+	# Instagram DMs arrive in the same shape, with object="instagram" and the IG account id as recipient
+	channel = "instagram" if payload.get("object") == "instagram" else "facebook"
+	default_name = f"{channel.capitalize()} user"
 	entry_list = payload.get("entry", [])
 	for entry in entry_list:
 		messaging = entry.get("messaging", [])
@@ -90,19 +93,15 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 			recipient_id = evt.get("recipient", {}).get("id")
 			message = evt.get("message", {})
 			
-			if not (sender_id and recipient_id and message):
-				continue
+			if not (sender_id and recipient_id and message) or message.get("is_echo"):
+				continue  # echoes are our own sends (and staff replies from the Meta inbox)
 
 			# Query database directly for channel with matching page_id in credentials JSON
 			# Using JSONField lookup: credentials__page_id
-			cred = ChannelCredential.objects.filter(
-				channel="facebook",
-				is_active=True,
-				credentials__page_id=recipient_id
-			).select_related('platform', 'project', 'knowledge_base').first()
+			cred = meta_credentials(recipient_id).select_related('platform', 'project', 'knowledge_base').first()
 			
 			if not cred:
-				logger.warning(f"ChannelCredential not found for page_id: {recipient_id}")
+				logger.warning(f"ChannelCredential not found for {channel} account: {recipient_id}")
 				continue
 			
 			project: Project = cred.project
@@ -113,22 +112,23 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 				continue
 
 			contact, _ = CustomerContact.objects.get_or_create(
-				project=project, platform="facebook", external_id=sender_id
+				project=project, platform=channel, external_id=sender_id
 			)
 			conversation = contact.conversation
 			# Retried on every message until it works: Meta refuses profile reads for users without an
 			# app role until pages_messaging has Advanced Access, then starts allowing them.
 			# ponytail: one Graph call per message while unnamed; add a retry-after timestamp if that hurts
 			if not contact.display_name:
-				contact.display_name = get_user_name(cred.get_credentials().page_access_token, sender_id)
+				fields = {"fields": "name,username"} if channel == "instagram" else {}
+				contact.display_name = get_user_name(cred.get_credentials().page_access_token, sender_id, **fields)
 				if contact.display_name:
 					contact.save(update_fields=["display_name"])
-					if conversation is not None and conversation.name == "Facebook user":
+					if conversation is not None and conversation.name == default_name:
 						conversation.name = contact.display_name
 						conversation.save(update_fields=["name"])
 			if conversation is None:
 				conversation = ensure_contact_conversation(
-					contact, knowledge_base, name=contact.display_name or "Facebook user"
+					contact, knowledge_base, name=contact.display_name or default_name
 				)
 
 			# Extract message data

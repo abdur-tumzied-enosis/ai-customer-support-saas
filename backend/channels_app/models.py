@@ -343,6 +343,8 @@ PLATFORM_CREDENTIALS: Dict[str, Type[BaseCredentials]] = {
 	"instagram": InstagramCredentials,
 }
 
+META_CHANNELS = ("facebook", "instagram")
+
 
 def get_credentials_class(platform: str) -> Type[BaseCredentials]:
 	"""Get the credentials dataclass for a given platform."""
@@ -390,6 +392,7 @@ class Platform(models.Model):
 	PLATFORM_CHOICES = [
 		("facebook", "Facebook Messenger"),
 		("whatsapp", "WhatsApp Business"),
+		("instagram", "Instagram Messaging"),
 	]
 	
 	name = models.CharField(
@@ -542,6 +545,7 @@ class ChannelCredential(models.Model):
 	CHANNEL_CHOICES = [
 		("facebook", "Facebook"),
 		("whatsapp", "WhatsApp"),
+		("instagram", "Instagram"),
 	]
 	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="channel_credentials")
 	platform = models.ForeignKey(
@@ -672,6 +676,14 @@ class ChannelCredential(models.Model):
 			}
 			return True
 		return False
+
+
+def meta_credentials(account_id: str):
+	"""Active Facebook/Instagram credentials for a webhook recipient: a page id or an Instagram account id.
+	An Instagram connection includes its linked page, so it also answers that page's Messenger messages."""
+	return ChannelCredential.objects.filter(channel__in=META_CHANNELS, is_active=True).filter(
+		models.Q(credentials__page_id=account_id) | models.Q(credentials__instagram_account_id=account_id)
+	).order_by("channel")  # a dedicated facebook credential wins over an instagram one sharing its page
 
 
 class CustomerContact(models.Model):

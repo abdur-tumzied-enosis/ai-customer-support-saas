@@ -156,7 +156,10 @@ HANDOFF_AUTO_RESUME_HOURS = env.int("HANDOFF_AUTO_RESUME_HOURS", default=24)
 HANDOFF_MESSAGE = env("HANDOFF_MESSAGE", default="I've passed this to our team — a person will reply here soon.")
 MEMORY_LLM_MODEL = env("MEMORY_LLM_MODEL", default=None)  # background memory work; None → LLM_MODEL
 EPISODE_GAP_HOURS = env.int("EPISODE_GAP_HOURS", default=12)  # silence that closes a conversation episode
-REPLY_DEBOUNCE_SECONDS = {"facebook": env.int("FACEBOOK_REPLY_DEBOUNCE_SECONDS", default=3)}  # channels not listed: 0
+REPLY_DEBOUNCE_SECONDS = {  # channels not listed: 0
+	"facebook": env.int("FACEBOOK_REPLY_DEBOUNCE_SECONDS", default=3),
+	"instagram": env.int("INSTAGRAM_REPLY_DEBOUNCE_SECONDS", default=3),
+}
 
 # Django REST Framework
 REST_FRAMEWORK = {
