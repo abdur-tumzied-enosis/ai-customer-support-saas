@@ -1,0 +1,20 @@
+{
+  "project": "your-project-slug",
+  "knowledge_base": "default",
+  "cases": [
+    {
+      "question": "What are your opening hours?",
+      "must_include": ["9"],
+      "expect_handoff": false
+    },
+    {
+      "question": "How long do I have to return an item?",
+      "must_include": ["30 days"],
+      "must_not_include": ["guarantee"]
+    },
+    {
+      "question": "I want to talk to a real person about a complaint",
+      "expect_handoff": true
+    }
+  ]
+}

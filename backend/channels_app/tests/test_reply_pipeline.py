@@ -132,6 +132,36 @@ class HistoryAndRetryTest(PipelineBase):
 		out = self.outbound()[0]
 		assert out.text == FALLBACK_REPLY and out.meta["api_calls"] == calls
 
+	def test_reply_trace_is_stored_on_outbound(self):
+		def traced(question, context, *args, **kwargs):
+			context.trace.update(model="m1", ms=42, sources=["faq.pdf"])
+			return "Answer"
+
+		self.gen.side_effect = traced
+		self.run_reply(self.inbound("q"))
+		assert self.outbound()[0].meta["trace"] == {"model": "m1", "ms": 42, "sources": ["faq.pdf"]}
+
+	def test_contact_memory_reaches_prompt_and_update_is_scheduled(self):
+		self.contact.memory = [{"key": "order_number", "value": "#4471", "source_msg_id": "m", "updated_at": "t"}]
+		self.contact.save()
+		seen = []
+		self.gen.side_effect = lambda question, context, *a, **k: seen.append(context.memory_prompt) or "ok"
+		with mock.patch("channels_app.memory.update_contact_memory.delay") as remember:
+			with self.captureOnCommitCallbacks(execute=True):
+				self.run_reply(self.inbound("refund it?"))
+		assert "order_number: #4471" in seen[0]
+		remember.assert_called_once_with(str(self.contact.id))
+
+	def test_failed_reply_trace_records_error(self):
+		def fail(question, context, *args, **kwargs):
+			context.trace["sources"] = ["faq.pdf"]
+			context.api_call_log.append({"method": "POST", "url": "https://shop.com/x"})  # blocks retry
+			raise RuntimeError("llm down")
+
+		self.gen.side_effect = fail
+		self.run_reply(self.inbound("q"))
+		assert self.outbound()[0].meta["trace"] == {"sources": ["faq.pdf"], "error": "RuntimeError"}
+
 
 class SelfChannelTest(PipelineBase):
 	def test_ui_message_reply_uses_agent_reply_id_and_no_send(self):

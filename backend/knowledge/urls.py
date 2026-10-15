@@ -1,4 +1,5 @@
 from django.urls import path
+from .suggestions import SuggestionDecisionView, SuggestionListView
 from .views import (
 	KnowledgeBaseListView,
 	DocumentUploadView, DocumentListView, DocumentDeleteView,
@@ -29,6 +30,10 @@ urlpatterns = [
 	path("instructions/", CustomInstructionListCreateView.as_view(), name="instruction-list-create"),
 	path("instructions/resolve/", CustomInstructionResolveView.as_view(), name="instruction-resolve"),
 	path("instructions/<uuid:instruction_id>/", CustomInstructionDetailView.as_view(), name="instruction-detail"),
+
+	# Agent memory review queue
+	path("suggestions/", SuggestionListView.as_view(), name="suggestion-list"),
+	path("suggestions/<uuid:suggestion_id>/<str:decision>/", SuggestionDecisionView.as_view(), name="suggestion-decision"),
 ]
 
 

@@ -116,11 +116,17 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 				project=project, platform="facebook", external_id=sender_id
 			)
 			conversation = contact.conversation
+			# Retried on every message until it works: Meta refuses profile reads for users without an
+			# app role until pages_messaging has Advanced Access, then starts allowing them.
+			# ponytail: one Graph call per message while unnamed; add a retry-after timestamp if that hurts
+			if not contact.display_name:
+				contact.display_name = get_user_name(cred.get_credentials().page_access_token, sender_id)
+				if contact.display_name:
+					contact.save(update_fields=["display_name"])
+					if conversation is not None and conversation.name == "Facebook user":
+						conversation.name = contact.display_name
+						conversation.save(update_fields=["name"])
 			if conversation is None:
-				if not contact.display_name:
-					contact.display_name = get_user_name(cred.get_credentials().page_access_token, sender_id)
-					if contact.display_name:
-						contact.save(update_fields=["display_name"])
 				conversation = ensure_contact_conversation(
 					contact, knowledge_base, name=contact.display_name or "Facebook user"
 				)

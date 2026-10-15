@@ -109,6 +109,14 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'knowledge.tasks.recover_stuck_jobs',
         'schedule': 600,  # every 10 minutes
     },
+    'summarize-idle-episodes': {
+        'task': 'channels_app.memory.summarize_idle_episodes',
+        'schedule': 1800,
+    },
+    'propose-instructions': {
+        'task': 'channels_app.memory.propose_instructions',
+        'schedule': 86400,  # daily
+    },
 }
 
 # Qdrant
@@ -130,6 +138,8 @@ LLM_PROVIDER = env("LLM_PROVIDER", default="google")  # "google" or "openrouter"
 LLM_MODEL = env("LLM_MODEL", default=None)  # None → provider default (see agents/llm.py)
 HANDOFF_AUTO_RESUME_HOURS = env.int("HANDOFF_AUTO_RESUME_HOURS", default=24)
 HANDOFF_MESSAGE = env("HANDOFF_MESSAGE", default="I've passed this to our team — a person will reply here soon.")
+MEMORY_LLM_MODEL = env("MEMORY_LLM_MODEL", default=None)  # background memory work; None → LLM_MODEL
+EPISODE_GAP_HOURS = env.int("EPISODE_GAP_HOURS", default=12)  # silence that closes a conversation episode
 REPLY_DEBOUNCE_SECONDS = {"facebook": env.int("FACEBOOK_REPLY_DEBOUNCE_SECONDS", default=3)}  # channels not listed: 0
 
 # Django REST Framework

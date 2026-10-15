@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil, Sparkles, Tag, Globe, ChevronRight, ChevronDown, Eye } from "lucide-react";
 import { documentApi, customInstructionApi, instructionTemplateApi, type ApiDomain, type CustomInstruction, type InstructionTemplate } from "@/lib/api";
 import { ApiAccessEditor, toApiDomainsPayload } from "@/components/knowledge/ApiAccessEditor";
+import SuggestionsQueue from "@/components/knowledge/SuggestionsQueue";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
 
@@ -663,6 +664,16 @@ export default function KnowledgePage() {
 				<Alert className={alert.type === "error" ? "border-destructive" : ""}>
 					<AlertDescription>{alert.message}</AlertDescription>
 				</Alert>
+			)}
+
+			{currentProjectId && (
+				<SuggestionsQueue
+					projectId={currentProjectId}
+					onApproved={() => {
+						fetchDocuments();
+						fetchInstructions();
+					}}
+				/>
 			)}
 
 			{/* Web Crawl Section */}

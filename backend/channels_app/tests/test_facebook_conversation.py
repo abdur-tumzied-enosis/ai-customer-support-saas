@@ -47,3 +47,8 @@ class FacebookConversationTest(TestCase):
 		contact = CustomerContact.objects.get(external_id="psid-1")
 		assert contact.display_name == "" and contact.conversation.name == "Facebook user"
 		schedule.assert_called_once()
+
+		_get_name.return_value = "Ann Lee"  # access granted later: next message fills the name in
+		handle_facebook_message(payload("m2"))
+		contact.refresh_from_db()
+		assert contact.display_name == "Ann Lee" and contact.conversation.name == "Ann Lee"

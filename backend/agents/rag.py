@@ -1,5 +1,7 @@
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional, List, Any, Dict, TypedDict, Literal, Sequence
+from langchain_core.messages import AIMessage
 from .llm import create_basic_agent
 from .vector_store import rerank_docs
 from .api_tool import build_call_api_tool
@@ -11,9 +13,11 @@ class Context:
 	knowledge_base_id: Optional[str] = None
 	vector_collection: Optional[str] = None
 	custom_instructions: Optional[List[dict]] = None  # List of {'label': str, 'message': str}
+	memory_prompt: str = ""  # what we remember about the customer (channels_app.memory)
 	api_domains: Optional[List[dict]] = None  # enables call_api tool when non-empty
 	api_call_log: List[dict] = field(default_factory=list)  # filled by call_api during the reply
 	handoff_reason: Optional[str] = None  # set by escalate_to_human during the reply
+	trace: Dict[str, Any] = field(default_factory=dict)  # model/ms/tokens/tool_calls/sources, stored on the reply message
 
 
 @dataclass
@@ -28,6 +32,11 @@ class ToolDeps:
 	retrieved_factory_for_crawler_url_context: Optional[Callable] = None
 
 
+def _source(doc) -> str:
+	meta = doc.metadata or {}
+	return meta.get("page_url") or meta.get("document_filename") or meta.get("document_id", "")
+
+
 def _format_docs(docs: list) -> str:
 	"""Format retrieved docs with source metadata for better agent attribution."""
 	if not docs:
@@ -35,7 +44,7 @@ def _format_docs(docs: list) -> str:
 	parts = []
 	for doc in docs:
 		meta = doc.metadata or {}
-		source = meta.get("page_url") or meta.get("document_filename") or meta.get("document_id", "")
+		source = _source(doc)
 		title = meta.get("page_title", "")
 		header = f"[Source: {title} — {source}]" if title else (f"[Source: {source}]" if source else "")
 		parts.append(f"{header}\n{doc.page_content}".strip())
@@ -65,6 +74,7 @@ def _build_tools_from_context(context: Context, deps: ToolDeps):
 			return "No relevant information found."
 		docs = retriever.invoke(query)
 		docs = rerank_docs(query, docs, top_k=4)
+		context.trace.setdefault("sources", []).extend(_source(d) for d in docs)
 		result = _format_docs(docs)
 		logger.info(f"[Tool: retrieve_business_context] returned {len(docs)} docs")
 		return result
@@ -86,6 +96,7 @@ def _build_tools_from_context(context: Context, deps: ToolDeps):
 					return "No relevant information found."
 				docs = web_retriever.invoke(query)
 				docs = rerank_docs(query, docs, top_k=4)
+				context.trace.setdefault("sources", []).extend(_source(d) for d in docs)
 				result = _format_docs(docs)
 				logger.info(f"[Tool: retrieve_crawler_context] returned {len(docs)} docs")
 				return result
@@ -149,6 +160,16 @@ def _extract_token_usage_from_result(result: Any) -> tuple[int, int]:
 	return total_input_tokens, total_output_tokens
 
 
+def _record_trace(trace: dict, new_messages: list) -> None:
+	"""Model, token totals and tool calls of this run (history messages excluded)."""
+	ai = [m for m in new_messages if isinstance(m, AIMessage)]
+	if ai:
+		trace["model"] = ai[-1].response_metadata.get("model_name")
+	trace["tokens_in"] = sum((m.usage_metadata or {}).get("input_tokens", 0) for m in ai)
+	trace["tokens_out"] = sum((m.usage_metadata or {}).get("output_tokens", 0) for m in ai)
+	trace["tool_calls"] = [{"name": c["name"], "args": c["args"]} for m in ai for c in m.tool_calls]
+
+
 def _extract_reply_text(result: Any) -> str:
 	"""Text of the agent's final message."""
 	messages_result = result.get("messages") if isinstance(result, dict) else None
@@ -209,15 +230,20 @@ def generate_reply(
 	# Setup
 	deps = deps or ToolDeps()
 	tools = _build_tools_from_context(context, deps)
-	agent = create_basic_agent(tools, custom_instructions=context.custom_instructions)
+	agent = create_basic_agent(tools, custom_instructions=context.custom_instructions, memory=context.memory_prompt)
 	
 	# Prepare messages
 	messages = list(history or [])
 	messages.append({"role": "user", "content": question})
 	
 	# Invoke agent
-	result = agent.invoke({"messages": messages})
+	start = time.monotonic()
+	try:
+		result = agent.invoke({"messages": messages})
+	finally:
+		context.trace["ms"] = int((time.monotonic() - start) * 1000)
 	logger.info(f"Agent invoked successfully")
+	_record_trace(context.trace, result["messages"][len(messages):])
 	
 	# Extract token usage
 	input_tokens, output_tokens = _extract_token_usage_from_result(result)

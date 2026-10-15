@@ -1,6 +1,7 @@
 import uuid
 import os
 from enum import Enum
+from django.conf import settings
 from django.db import models
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
@@ -275,3 +276,38 @@ class InstructionTemplate(models.Model):
 		return f"{self.label} ({self.category})"
 
 
+
+
+class MemorySuggestion(models.Model):
+	"""
+	A lesson the agent drafted from real conversations, waiting for staff approval (docs/agent-memory-design.md).
+	knowledge: Q&A from a staff answer → becomes a knowledge-base document when approved.
+	instruction: behaviour rule from handoffs/staff replies → becomes a CustomInstruction when approved.
+	Never applied without a person: drafts come from customer text and may be customer-specific.
+	"""
+	KIND_CHOICES = [("knowledge", "Knowledge"), ("instruction", "Instruction")]
+	STATUS_CHOICES = [("pending", "Pending"), ("approved", "Approved"), ("rejected", "Rejected")]
+
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="memory_suggestions")
+	knowledge_base = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="memory_suggestions")
+	kind = models.CharField(max_length=16, choices=KIND_CHOICES)
+	title = models.CharField(max_length=500)  # question, or instruction label
+	body = models.TextField()  # answer, or instruction text
+	rationale = models.TextField(blank=True, default="")
+	source_conversation = models.ForeignKey(
+		"channels_app.Conversation", on_delete=models.SET_NULL, null=True, blank=True, related_name="memory_suggestions"
+	)
+	source_message_id = models.UUIDField(null=True, blank=True)  # staff reply it was drafted from (dedupe)
+	status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending")
+	result_id = models.CharField(max_length=64, blank=True, default="")  # created Document / CustomInstruction id
+	decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+	decided_at = models.DateTimeField(null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["-created_at"]
+		indexes = [models.Index(fields=["project", "status"])]
+
+	def __str__(self) -> str:
+		return f"{self.kind}: {self.title[:50]} ({self.status})"

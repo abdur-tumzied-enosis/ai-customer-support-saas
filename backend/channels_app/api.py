@@ -5,16 +5,18 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
-from .models import ChannelCredential, Conversation, Message, Platform
+from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
 from .service.conversation_service import create_conversation, get_default_knowledge_base
 from .service.message_service import create_ui_message
 from datetime import timedelta
 import requests
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
+from . import memory
 from .handoff import conversation_event_data, end_handoff, note_staff_activity, start_handoff
 from .models import ProjectWebhook
-from .reply import answered_marker, deliver, schedule_reply
+from .reply import answered_marker, deliver, schedule_memory_update, schedule_reply
 from .service.message_service import create_outbound_message
 from .webhooks import WebhookUrlError, build_event, emit_event, post_event, validate_webhook_url
 
@@ -927,7 +929,46 @@ class ConversationStaffReplyView(APIView):
 			**conversation_event_data(conversation),
 			"message": {"id": str(msg.id), "text": msg.text, "created_at": msg.created_at.isoformat()},
 		})
+		schedule_memory_update(conversation)
+		msg_id = str(msg.id)
+		transaction.on_commit(lambda: memory.draft_knowledge_suggestion.delay(msg_id))
 		return Response({"success": True, "data": {"message": _message_dict(msg)}}, status=status.HTTP_201_CREATED)
+
+
+class ConversationMemoryView(APIView):
+	"""What the bot remembers about this conversation's customer; staff can delete one fact (?key=) or all."""
+	permission_classes = [IsAuthenticated]
+
+	def _contact(self, request, conversation_id):
+		conversation = _get_conversation(request, conversation_id)
+		return conversation, conversation.contact if conversation else None
+
+	def _response(self, conversation, contact):
+		episodes = [
+			{"id": str(e.id), "started_at": _iso(e.started_at), "ended_at": _iso(e.ended_at), "summary": e.summary}
+			for e in conversation.episodes.exclude(summary="").order_by("-ended_at")[:20]
+		]
+		return Response({"success": True, "data": {"facts": contact.memory if contact else [], "episodes": episodes}})
+
+	def get(self, request, conversation_id):
+		conversation, contact = self._contact(request, conversation_id)
+		if not conversation:
+			return _error("not_found", "Conversation not found", status.HTTP_404_NOT_FOUND)
+		return self._response(conversation, contact)
+
+	def delete(self, request, conversation_id):
+		conversation, contact = self._contact(request, conversation_id)
+		if not conversation:
+			return _error("not_found", "Conversation not found", status.HTTP_404_NOT_FOUND)
+		key = request.query_params.get("key")
+		if contact:
+			with transaction.atomic():  # same row lock as update_contact_memory, so a running extraction can't undo this
+				contact = CustomerContact.objects.select_for_update().get(id=contact.id)
+				contact.memory = [f for f in contact.memory if key and f["key"] != key]
+				contact.save(update_fields=["memory"])  # memory_through stays: deleted facts are not re-extracted
+		if not key:
+			memory.forget_conversation(conversation)
+		return self._response(conversation, contact)
 
 
 def _webhook_dict(hook: ProjectWebhook) -> dict:

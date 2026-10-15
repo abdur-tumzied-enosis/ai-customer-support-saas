@@ -732,7 +732,45 @@ export const conversationApi = {
 			method: "POST",
 			json: { text },
 		}),
+
+	getMemory: async (conversationId: string) =>
+		apiFetch<ConversationMemory>(`/api/channels/conversations/${conversationId}/memory`),
+
+	// key omitted: forget everything
+	forgetMemory: async (conversationId: string, key?: string) =>
+		apiFetch<ConversationMemory>(
+			`/api/channels/conversations/${conversationId}/memory${key ? `?key=${encodeURIComponent(key)}` : ""}`,
+			{ method: "DELETE" }
+		),
 };
+
+// Agent-drafted knowledge (from staff answers) and instructions (from handoffs), approved by staff
+export type MemorySuggestion = {
+	id: string;
+	kind: "knowledge" | "instruction";
+	title: string;
+	body: string;
+	rationale: string;
+	status: "pending" | "approved" | "rejected";
+	knowledge_base_id: string;
+	source_conversation_id: string | null;
+	created_at: string;
+};
+
+export const suggestionApi = {
+	list: async (projectId: string) =>
+		apiFetch<{ suggestions: MemorySuggestion[] }>(`/api/kb/suggestions/?project_id=${encodeURIComponent(projectId)}`),
+
+	approve: async (id: string, edits: { title: string; body: string }) =>
+		apiFetch<{ suggestion: MemorySuggestion }>(`/api/kb/suggestions/${id}/approve/`, { method: "POST", json: edits }),
+
+	reject: async (id: string) =>
+		apiFetch<{ suggestion: MemorySuggestion }>(`/api/kb/suggestions/${id}/reject/`, { method: "POST", json: {} }),
+};
+
+export type MemoryFact ={ key: string; value: string; source_msg_id: string; updated_at: string };
+export type MemoryEpisode = { id: string; started_at: string; ended_at: string; summary: string };
+export type ConversationMemory = { facts: MemoryFact[]; episodes: MemoryEpisode[] };
 
 // Analytics types
 export type AnalyticsData = {

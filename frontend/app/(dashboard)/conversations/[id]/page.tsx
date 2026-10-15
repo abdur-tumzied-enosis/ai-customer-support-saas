@@ -3,10 +3,10 @@
 import { useParams, useRouter } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 import MessageList, { ChatMessage } from "@/components/chat/MessageList";
-import ChatInput from "@/components/chat/ChatInput";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import HandoffControls from "@/components/chat/HandoffControls";
+import MessageComposer from "@/components/chat/MessageComposer";
+import MemoryDialog from "@/components/chat/MemoryDialog";
 import { conversationApi, type Conversation, type ConversationMessage } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { ArrowLeft, Loader2, Bot } from "lucide-react";
@@ -291,6 +291,7 @@ export default function ConversationThreadPage() {
 							</div>
 						</div>
 					</div>
+					<MemoryDialog conversationId={conversationId} />
 				</div>
 			</div>
 
@@ -361,13 +362,14 @@ export default function ConversationThreadPage() {
 
 			{/* Input Area */}
 			{conversation && (
-				<HandoffControls
+				<MessageComposer
 					conversation={conversation}
 					onConversationChange={setConversation}
 					onStaffMessage={(m) => setMessages((prev) => [...prev, toChatMessage(m)])}
+					onSendAsCustomer={handleSend}
+					sendingAsCustomer={sending}
 				/>
 			)}
-			{conversation?.channel === "self" && <ChatInput onSend={handleSend} disabled={sending} />}
 		</div>
 	);
 }

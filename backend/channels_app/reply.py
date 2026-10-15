@@ -12,7 +12,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
 
-from . import tasks
+from . import memory, tasks
 from .handoff import start_handoff, wants_human
 from .models import Conversation, Message
 from .service.message_service import create_outbound_message
@@ -106,6 +106,7 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 
 	question = "\n".join(tasks.format_message_with_context(m) for m in turn)
 	api_calls: list = []
+	trace: dict = {}
 	handoff_reason = None
 	if any(wants_human(m.text) for m in turn):  # raw text only: quoted bot messages must not trigger it
 		reply_text = ""
@@ -113,9 +114,10 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 	else:
 		try:
 			reply_text, ctx = tasks.generate_agent_reply(turn[0], conversation.knowledge_base, question=question)
-			api_calls, handoff_reason = ctx.api_call_log, ctx.handoff_reason
+			api_calls, handoff_reason, trace = ctx.api_call_log, ctx.handoff_reason, ctx.trace
 		except Exception as exc:
 			api_calls = getattr(exc, "api_calls", [])
+			trace = {**getattr(exc, "trace", {}), "error": type(exc).__name__}
 			# A retry re-runs the whole agent; never risk sending a POST (order, booking, ticket) twice
 			sent_post = any(c.get("method") == "POST" for c in api_calls)
 			if not sent_post and self.request.retries < self.max_retries:
@@ -142,9 +144,20 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 			project=conversation.project,
 			contact=conversation.contact,
 			text=reply_text,
-			meta={**answered_marker(newest), **({"api_calls": api_calls} if api_calls else {})},
+			meta={
+				**answered_marker(newest),
+				**({"api_calls": api_calls} if api_calls else {}),
+				**({"trace": trace} if trace else {}),
+			},
 			conversation=conversation,
 			id=newest.agent_reply_id or None,
 		)
 		_complete(turn)
 	deliver(conversation, out_msg, newest)
+	schedule_memory_update(conversation)
+
+
+def schedule_memory_update(conversation) -> None:
+	if conversation.contact_id:
+		contact_id = str(conversation.contact_id)
+		transaction.on_commit(lambda: memory.update_contact_memory.delay(contact_id))

@@ -711,6 +711,9 @@ class CustomerContact(models.Model):
 		blank=True,
 		related_name="contact_link"
 	)
+	# Long-term memory (channels_app.memory): [{key, value, source_msg_id, updated_at}], customer-reported
+	memory = models.JSONField(default=list, blank=True)
+	memory_through = models.DateTimeField(null=True, blank=True)  # newest message already read into memory
 	created_at = models.DateTimeField(auto_now_add=True)
 
 	class Meta:
@@ -785,6 +788,21 @@ class Conversation(models.Model):
 
 	def is_paused(self, now=None) -> bool:
 		return self.handoff_at is not None and (now or timezone.now()) < self.resumes_at()
+
+
+class ConversationEpisode(models.Model):
+	"""Summary of one stretch of a conversation, cut at EPISODE_GAP_HOURS of silence (channels_app.memory).
+	Replies see the latest summaries instead of the raw messages they cover."""
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name="episodes")
+	started_at = models.DateTimeField()
+	ended_at = models.DateTimeField()  # created_at of the last message covered
+	summary = models.TextField()
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ["ended_at"]
+		indexes = [models.Index(fields=["conversation", "ended_at"])]
 
 
 class Message(models.Model):

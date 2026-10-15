@@ -45,7 +45,7 @@ def get_llm(provider: Optional[str] = None, model: Optional[str] = None, **kwarg
 	)
 
 
-def build_system_prompt(custom_instructions: Optional[List[dict]] = None) -> str:
+def build_system_prompt(custom_instructions: Optional[List[dict]] = None, memory: str = "") -> str:
 	"""
 	Build the system prompt with optional custom instructions.
 	
@@ -87,11 +87,14 @@ def build_system_prompt(custom_instructions: Optional[List[dict]] = None) -> str
 			if message:
 				instructions_text += f"\n[{label}]\n{message}\n"
 		base_prompt += instructions_text
+
+	if memory:  # channels_app.memory.memory_prompt
+		base_prompt += "\n\n" + memory
 	
 	return base_prompt
 
 
-def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = None, provider: Optional[str] = None, model: Optional[str] = None, **llm_kwargs) -> Runnable:
+def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = None, memory: str = "", provider: Optional[str] = None, model: Optional[str] = None, **llm_kwargs) -> Runnable:
 	"""
 	Create an agent with tools and optional custom instructions.
 	
@@ -103,7 +106,7 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 		Runnable agent.
 	"""
 	llm = get_llm(provider=provider, model=model, **llm_kwargs)
-	system_prompt = build_system_prompt(custom_instructions)
+	system_prompt = build_system_prompt(custom_instructions, memory)
 	agent = create_agent(
 		model=llm,
 		tools=tools,
