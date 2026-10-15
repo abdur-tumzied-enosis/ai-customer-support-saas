@@ -19,7 +19,7 @@ class SearchErrorTest(SimpleTestCase):
 		ctx = Context(vector_collection="vc")
 		tools = {t.__name__: t for t in _build_tools_from_context(ctx, ToolDeps(retriever_factory=lambda c: BrokenRetriever()))}
 		assert tools["retrieve_business_context"]("hours").startswith("ERROR: search is unavailable")
-		assert ctx.trace["search_errors"] == ["retrieve_business_context"]
+		assert ctx.trace["search_errors"] == ["hours"]
 
 
 class FailingModel(FakeListChatModel):

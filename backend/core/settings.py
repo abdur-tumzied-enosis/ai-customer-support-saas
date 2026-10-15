@@ -133,6 +133,9 @@ CELERY_BEAT_SCHEDULE = {
 # Qdrant
 QDRANT_URL = env("QDRANT_URL", default="http://localhost:6333")
 QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production authentication
+# Cross-encoder score below which a retrieved chunk counts as unrelated. ms-marco-MiniLM-L-6-v2 logits:
+# relevant chunks ~ -5..+3, unrelated ~ -10..-11. Re-tune if RERANKER_MODEL changes.
+RERANK_MIN_SCORE = env.float("RERANK_MIN_SCORE", default=-7.0)
 
 # Meta / Facebook
 META_APP_ID = env("META_APP_ID", default="")

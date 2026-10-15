@@ -2,7 +2,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional, List, Any, Dict, TypedDict, Literal, Sequence
 from langchain_core.messages import AIMessage
-from .llm import create_basic_agent
+from celery.exceptions import SoftTimeLimitExceeded
+from django.conf import settings
+from .llm import create_basic_agent, get_llm
 from .vector_store import rerank_docs
 from .api_tool import build_call_api_tool
 import logging
@@ -51,59 +53,84 @@ def _format_docs(docs: list) -> str:
 	return "\n\n---\n\n".join(parts)
 
 
-def _search(tool_name: str, retriever, query: str, context: Context) -> str:
-	logger.info(f"[Tool: {tool_name}] query={query!r}")
-	if not retriever:
-		return "No relevant information found."
-	try:
-		docs = rerank_docs(query, retriever.invoke(query), top_k=4)
-	except Exception:
-		# Qdrant/reranker down: let the agent answer from the rest (other tool, history) instead of failing the reply
-		logger.exception(f"[Tool: {tool_name}] search failed")
-		context.trace.setdefault("search_errors", []).append(tool_name)
+SEARCH_TOP_K = 5
+
+REWRITE_PROMPT = (
+	"Rewrite the customer's latest message as one short, standalone search query for the business's knowledge base. "
+	"Use the conversation to fill in what the message leaves out (what \"it\" or \"that one\" refers to). "
+	"Keep product names, codes and numbers exactly. Reply with the query only.\n\n"
+	"Conversation:\n{history}\n\nLatest message:\n{question}"
+)
+
+
+def _get_retrievers(context: Context, deps: ToolDeps) -> list:
+	"""Knowledge base and crawled-website retrievers that exist for this reply."""
+	retrievers = []
+	if context.vector_collection and deps.retriever_factory:
+		try:
+			retrievers.append(deps.retriever_factory(context.vector_collection))
+		except Exception:
+			logger.exception("Knowledge base retriever unavailable")
+	if deps.retrieved_factory_for_crawler_url_context:
+		try:
+			retrievers.append(deps.retrieved_factory_for_crawler_url_context())
+		except Exception:
+			logger.exception("Web crawl retriever unavailable")
+	return [r for r in retrievers if r]
+
+
+def _search(retrievers: list, query: str, context: Context) -> str:
+	"""Query every collection, rerank the combined results, keep the best that clear RERANK_MIN_SCORE."""
+	logger.info(f"[search] query={query!r}")
+	docs, failed = [], 0
+	for retriever in retrievers:
+		try:
+			docs += retriever.invoke(query)
+		except Exception:
+			# Qdrant down: answer from what the other collection, history and memory give instead of failing the reply
+			logger.exception("[search] retriever failed")
+			failed += 1
+	if failed:
+		context.trace.setdefault("search_errors", []).append(query)
+	if retrievers and failed == len(retrievers):
 		return "ERROR: search is unavailable right now. Do not guess; offer to have a person follow up if needed."
+	docs = rerank_docs(query, docs, top_k=SEARCH_TOP_K, min_score=settings.RERANK_MIN_SCORE)
 	context.trace.setdefault("sources", []).extend(_source(d) for d in docs)
-	logger.info(f"[Tool: {tool_name}] returned {len(docs)} docs")
+	logger.info(f"[search] returned {len(docs)} docs")
 	return _format_docs(docs)
 
 
-def _build_tools_from_context(context: Context, deps: ToolDeps):
+def _standalone_query(question: str, history: Sequence[dict]) -> str:
+	"""Search query for the latest turn. Follow-ups ("how much is it?") need the conversation to make sense."""
+	if not history:
+		return question
+	recent = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in history[-6:])
+	try:
+		llm = get_llm(timeout=10, max_retries=0)
+		query = _text(llm.invoke(REWRITE_PROMPT.format(history=recent, question=question)).content)
+	except SoftTimeLimitExceeded:
+		raise
+	except Exception as exc:
+		logger.warning(f"Query rewrite failed, searching with the raw message: {exc}")
+		return question
+	# ponytail: rewrite tokens aren't counted in usage tracking; add them if billing per token gets exact
+	return query or question
+
+
+def _build_tools_from_context(context: Context, deps: ToolDeps, retrievers: Optional[list] = None):
 
 	tools: List[Callable[..., str]] = []
 
-	retriever = None
-
-	if context.vector_collection and deps.retriever_factory:
-		try:
-			retriever = deps.retriever_factory(context.vector_collection)
-		except Exception:
-			retriever = None
+	if retrievers is None:
+		retrievers = _get_retrievers(context, deps)
 
 	def retrieve_business_context(query: str) -> str:
-		"""Search the business knowledge base for information relevant to the query.
-		Use this tool to find answers about products, services, policies, FAQs, pricing,
-		and any other information the business has uploaded. Call this whenever the user
-		asks something that may be covered by business documents. Use a focused keyword
-		query, not the full user message."""
-		return _search("retrieve_business_context", retriever, query, context)
+		"""Search the business's knowledge base and website for information relevant to the query:
+		products, services, policies, FAQs, pricing, and anything else the business has uploaded or
+		published. Use a short, focused keyword query, not the full customer message."""
+		return _search(retrievers, query, context)
 
 	tools.append(retrieve_business_context)
-
-	if deps.retrieved_factory_for_crawler_url_context:
-		try:
-			web_retriever = deps.retrieved_factory_for_crawler_url_context()
-
-			def retrieve_crawler_context(query: str) -> str:
-				"""Search web pages that have been crawled and indexed from the business's URLs.
-				Use this tool to find information from the company's website, blog, landing pages,
-				or any other URLs that have been added as web sources. Useful for detailed product
-				info, documentation, or anything that may live on a webpage rather than an uploaded
-				file. Use a focused keyword query, not the full user message."""
-				return _search("retrieve_crawler_context", web_retriever, query, context)
-
-			tools.append(retrieve_crawler_context)
-		except Exception:
-			pass
 
 	def escalate_to_human(reason: str) -> str:
 		"""Hand this conversation to a human staff member. Use it when the customer asks for a person,
@@ -170,15 +197,18 @@ def _record_trace(trace: dict, new_messages: list) -> None:
 	trace["tool_calls"] = [{"name": c["name"], "args": c["args"]} for m in ai for c in m.tool_calls]
 
 
+def _text(content) -> str:
+	if isinstance(content, list):  # some providers (Gemini) return content blocks
+		content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
+	return str(content).strip()
+
+
 def _extract_reply_text(result: Any) -> str:
 	"""Text of the agent's final message."""
 	messages_result = result.get("messages") if isinstance(result, dict) else None
 	if not messages_result:
 		return ""
-	content = getattr(messages_result[-1], "content", "")
-	if isinstance(content, list):  # some providers (Gemini) return content blocks
-		content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
-	return str(content).strip()
+	return _text(getattr(messages_result[-1], "content", ""))
 
 
 def _track_token_usage(
@@ -229,16 +259,22 @@ def generate_reply(
 	"""
 	# Setup
 	deps = deps or ToolDeps()
-	tools = _build_tools_from_context(context, deps)
-	agent = create_basic_agent(tools, custom_instructions=context.custom_instructions, memory=context.memory_prompt)
-	
-	# Prepare messages
-	messages = list(history or [])
-	messages.append({"role": "user", "content": question})
-	
-	# Invoke agent
+	retrievers = _get_retrievers(context, deps)
+	tools = _build_tools_from_context(context, deps, retrievers)
+
 	start = time.monotonic()
 	try:
+		# Search before the agent runs, so most replies take one LLM call instead of call → search → call
+		search_results = "No relevant information found."
+		if retrievers:
+			query = context.trace["search_query"] = _standalone_query(question, history or [])
+			search_results = f"Query: {query}\n\n{_search(retrievers, query, context)}"
+		agent = create_basic_agent(
+			tools, custom_instructions=context.custom_instructions, memory=context.memory_prompt, search_results=search_results,
+		)
+
+		messages = list(history or [])
+		messages.append({"role": "user", "content": question})
 		result = agent.invoke({"messages": messages})
 	finally:
 		context.trace["ms"] = int((time.monotonic() - start) * 1000)

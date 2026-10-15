@@ -18,7 +18,7 @@ class FakeRetriever:
 class TraceTest(SimpleTestCase):
 	def test_retrieval_records_sources(self):
 		ctx = Context(vector_collection="vc")
-		with mock.patch("agents.rag.rerank_docs", side_effect=lambda q, docs, top_k: docs):
+		with mock.patch("agents.rag.rerank_docs", side_effect=lambda q, docs, **kw: docs):
 			tools = {t.__name__: t for t in _build_tools_from_context(ctx, ToolDeps(retriever_factory=lambda c: FakeRetriever()))}
 			tools["retrieve_business_context"]("hours")
 		assert ctx.trace["sources"] == ["https://shop.com/hours", "policy.pdf"]

@@ -123,7 +123,7 @@ def build_reply_context(project, knowledge_base: KnowledgeBase, conversation=Non
 	)
 	deps = ToolDeps(
 		retriever_factory=get_retriever,
-		retrieved_factory_for_crawler_url_context=lambda: get_web_crawl_retriever(str(knowledge_base.id), k=5)
+		retrieved_factory_for_crawler_url_context=lambda: get_web_crawl_retriever(str(knowledge_base.id), k=10)
 	)
 	return context, deps
 

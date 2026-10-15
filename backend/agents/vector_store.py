@@ -46,10 +46,11 @@ def get_default_embeddings():
 	return _embeddings
 
 
-def rerank_docs(query: str, docs: List[Document], top_k: int = 4) -> List[Document]:
+def rerank_docs(query: str, docs: List[Document], top_k: int = 4, min_score: Optional[float] = None) -> List[Document]:
 	"""
 	Rerank retrieved documents using a cross-encoder for higher precision.
-	Falls back to the original order if the reranker is unavailable.
+	Drops docs scoring below `min_score` (unrelated text), so an off-topic query can return nothing.
+	Falls back to the original order (no cutoff) if the reranker is unavailable.
 	"""
 	global _reranker
 	if not docs:
@@ -64,7 +65,7 @@ def rerank_docs(query: str, docs: List[Document], top_k: int = 4) -> List[Docume
 		pairs = [(query, doc.page_content) for doc in docs]
 		scores = _reranker.predict(pairs)
 		ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
-		return [doc for _, doc in ranked[:top_k]]
+		return [doc for score, doc in ranked[:top_k] if min_score is None or score >= min_score]
 	except Exception as e:
 		logger.warning(f"Reranker failed, using original order: {e}")
 		return docs[:top_k]
