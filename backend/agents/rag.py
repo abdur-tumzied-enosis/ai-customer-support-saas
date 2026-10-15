@@ -51,6 +51,22 @@ def _format_docs(docs: list) -> str:
 	return "\n\n---\n\n".join(parts)
 
 
+def _search(tool_name: str, retriever, query: str, context: Context) -> str:
+	logger.info(f"[Tool: {tool_name}] query={query!r}")
+	if not retriever:
+		return "No relevant information found."
+	try:
+		docs = rerank_docs(query, retriever.invoke(query), top_k=4)
+	except Exception:
+		# Qdrant/reranker down: let the agent answer from the rest (other tool, history) instead of failing the reply
+		logger.exception(f"[Tool: {tool_name}] search failed")
+		context.trace.setdefault("search_errors", []).append(tool_name)
+		return "ERROR: search is unavailable right now. Do not guess; offer to have a person follow up if needed."
+	context.trace.setdefault("sources", []).extend(_source(d) for d in docs)
+	logger.info(f"[Tool: {tool_name}] returned {len(docs)} docs")
+	return _format_docs(docs)
+
+
 def _build_tools_from_context(context: Context, deps: ToolDeps):
 
 	tools: List[Callable[..., str]] = []
@@ -69,15 +85,7 @@ def _build_tools_from_context(context: Context, deps: ToolDeps):
 		and any other information the business has uploaded. Call this whenever the user
 		asks something that may be covered by business documents. Use a focused keyword
 		query, not the full user message."""
-		logger.info(f"[Tool: retrieve_business_context] query={query!r}")
-		if not retriever:
-			return "No relevant information found."
-		docs = retriever.invoke(query)
-		docs = rerank_docs(query, docs, top_k=4)
-		context.trace.setdefault("sources", []).extend(_source(d) for d in docs)
-		result = _format_docs(docs)
-		logger.info(f"[Tool: retrieve_business_context] returned {len(docs)} docs")
-		return result
+		return _search("retrieve_business_context", retriever, query, context)
 
 	tools.append(retrieve_business_context)
 
@@ -91,15 +99,7 @@ def _build_tools_from_context(context: Context, deps: ToolDeps):
 				or any other URLs that have been added as web sources. Useful for detailed product
 				info, documentation, or anything that may live on a webpage rather than an uploaded
 				file. Use a focused keyword query, not the full user message."""
-				logger.info(f"[Tool: retrieve_crawler_context] query={query!r}")
-				if not web_retriever:
-					return "No relevant information found."
-				docs = web_retriever.invoke(query)
-				docs = rerank_docs(query, docs, top_k=4)
-				context.trace.setdefault("sources", []).extend(_source(d) for d in docs)
-				result = _format_docs(docs)
-				logger.info(f"[Tool: retrieve_crawler_context] returned {len(docs)} docs")
-				return result
+				return _search("retrieve_crawler_context", web_retriever, query, context)
 
 			tools.append(retrieve_crawler_context)
 		except Exception:

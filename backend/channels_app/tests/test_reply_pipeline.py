@@ -1,13 +1,16 @@
 from datetime import timedelta
 from unittest import mock
 
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
+from django.core.cache import cache
 from django.test import TestCase
 from django.utils import timezone
 
 from accounts.models import Project
 from channels_app.models import Conversation, CustomerContact, Message
-from channels_app.reply import process_reply
+from channels_app.facebook_client import split_text
+from channels_app.reply import process_reply, recover_stuck_replies, redeliver as redeliver_task
 from channels_app.service.conversation_service import create_conversation, ensure_contact_conversation
 from channels_app.service.message_service import create_ui_message
 from channels_app.tasks import FALLBACK_REPLY, handle_incoming_message, handle_ui_message
@@ -201,7 +204,7 @@ class ReviewFixesTest(PipelineBase):
 		self.gen.side_effect = gen
 		return seen
 
-	def test_message_arriving_during_generation_is_answered_next(self):
+	def test_message_arriving_during_generation_is_answered_with_the_turn(self):
 		late = {}
 
 		def while_typing(question, context):
@@ -210,12 +213,39 @@ class ReviewFixesTest(PipelineBase):
 			return "answer"
 
 		seen = self.capture(while_typing)
-		self.run_reply(self.inbound("first"))
+		first = self.inbound("first")
+		self.run_reply(first)
+		assert self.outbound() == []  # dropped: the newer message's task answers both
 		self.run_reply(late["late"])
 		assert len(seen) == 2
-		assert "second, sent while bot was typing" in seen[1] and "first" not in seen[1]
-		late["late"].refresh_from_db()
-		assert late["late"].status == "completed"
+		assert "second, sent while bot was typing" in seen[1] and "first" in seen[1]
+		assert len(self.outbound()) == 1
+		assert {m.status for m in Message.objects.filter(id__in=[first.id, late["late"].id])} == {"completed"}
+
+	def test_reply_after_post_is_sent_even_if_newer_message_arrived(self):
+		def post_while_typing(question, context):
+			context.api_call_log.append({"method": "POST", "url": "https://shop.com/book"})
+			self.inbound("also, can I pay cash?")
+			return "Booked for 3pm"
+
+		self.capture(post_while_typing)
+		self.run_reply(self.inbound("book 3pm"))
+		assert [m.text for m in self.outbound()] == ["Booked for 3pm"]
+
+	def test_busy_conversation_reschedules_instead_of_running(self):
+		m = self.inbound("hi")
+		cache.add(f"reply-lock:{self.conv.id}", 1)
+		self.addCleanup(cache.delete, f"reply-lock:{self.conv.id}")
+		with mock.patch("channels_app.reply.process_reply.apply_async") as later:
+			self.run_reply(m)
+		assert self.gen.call_count == 0
+		later.assert_called_once_with(args=[str(self.conv.id), str(m.id)], countdown=3)
+
+	def test_lock_released_after_reply(self):
+		self.run_reply(self.inbound("hi"))
+		assert cache.add(f"reply-lock:{self.conv.id}", 1)
+		cache.delete(f"reply-lock:{self.conv.id}")
+
 
 	def test_text_then_attachment_burst_gets_one_reply(self):
 		seen = self.capture()
@@ -270,3 +300,73 @@ class ReviewFixesTest(PipelineBase):
 		)
 		self.run_reply(a)
 		assert len(seen) == 1 and "are you there?" in seen[0]
+
+
+class DeliveryTest(PipelineBase):
+	def test_failed_send_marks_reply_failed_and_redelivers(self):
+		self.send.return_value = {}
+		with mock.patch("channels_app.reply.redeliver.apply_async") as redeliver, 				mock.patch("channels_app.memory.update_contact_memory.delay"):
+			with self.captureOnCommitCallbacks(execute=True):
+				self.run_reply(self.inbound("hi"))
+		out = self.outbound()[0]
+		assert out.status == "failed" and self.gen.call_count == 1
+		redeliver.assert_called_once_with(args=[str(out.id)], countdown=10)
+
+		self.send.return_value = {"message_id": "mid.retry"}
+		redeliver_task.apply(args=[str(out.id)])
+		out.refresh_from_db()
+		assert out.status == "completed" and out.external_message_id == "mid.retry"
+		assert "send_error" not in out.meta and self.gen.call_count == 1  # send only, LLM not re-run
+
+	def test_redeliver_skips_when_customer_wrote_again(self):
+		self.send.return_value = {}
+		with mock.patch("channels_app.reply.redeliver.apply_async"):
+			self.run_reply(self.inbound("hi"))
+		self.inbound("hello??")
+		self.send.reset_mock()
+		redeliver_task.apply(args=[str(self.outbound()[0].id)])
+		self.send.assert_not_called()
+
+	def test_long_reply_is_split_and_resumes_after_partial_failure(self):
+		self.reply_text = ("word " * 300 + "\n\n") * 2  # ~3000 chars
+		self.send.side_effect = [{"message_id": "m1"}, {}]
+		with mock.patch("channels_app.reply.redeliver.apply_async"):
+			self.run_reply(self.inbound("tell me everything"))
+		out = self.outbound()[0]
+		assert out.status == "failed" and out.meta["parts_sent"] == 1
+		assert all(len(c.kwargs["text"]) <= 2000 for c in self.send.call_args_list)
+
+		self.send.side_effect = [{"message_id": "m2"}]
+		redeliver_task.apply(args=[str(out.id)])
+		out.refresh_from_db()
+		assert out.status == "completed" and out.meta["parts_sent"] == 2 and out.external_message_id == "m2"
+
+	def test_timeout_sends_fallback_without_retry(self):
+		self.gen.side_effect = SoftTimeLimitExceeded()
+		self.run_reply(self.inbound("q"))
+		assert self.gen.call_count == 1
+		assert self.outbound()[0].text == FALLBACK_REPLY
+
+
+class SplitTextTest(TestCase):
+	def test_split(self):
+		assert split_text("short") == ["short"]
+		assert split_text("") == []
+		text = "Para one. " * 100 + "\n\n" + "Para two. " * 100
+		parts = split_text(text, limit=1200)
+		assert parts == ["Para one. " * 99 + "Para one.", "Para two. " * 99 + "Para two."]
+		assert all(len(p) <= 50 for p in split_text("x" * 120, limit=50))  # no break: hard cut
+
+
+class RecoverStuckRepliesTest(PipelineBase):
+	def test_requeues_newest_pending_message_per_conversation(self):
+		ago = lambda minutes: timezone.now() - timedelta(minutes=minutes)
+		old_a = self.inbound("a", status="pending")
+		new_b = self.inbound("b", status="pending")
+		ancient = self.inbound("ancient", status="pending")
+		fresh = self.inbound("fresh", status="pending")
+		for m, minutes in ((old_a, 20), (new_b, 10), (ancient, 300), (fresh, 1)):
+			Message.objects.filter(id=m.id).update(created_at=ago(minutes))
+		with mock.patch("channels_app.reply.process_reply.delay") as delay:
+			recover_stuck_replies.apply()
+		delay.assert_called_once_with(str(self.conv.id), str(new_b.id))

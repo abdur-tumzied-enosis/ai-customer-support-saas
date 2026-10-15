@@ -5,14 +5,19 @@ Channels call schedule_reply(msg) for every inbound customer message. Helpers li
 channels_app.tasks and are referenced as `tasks.X` so tests can patch them in one place.
 """
 import logging
+from datetime import timedelta
 from typing import Optional
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import memory, tasks
+from .facebook_client import split_text
 from .handoff import start_handoff, wants_human
 from .models import Conversation, Message
 from .service.message_service import create_outbound_message
@@ -52,18 +57,28 @@ def _complete(messages) -> None:
 
 def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bool:
 	cred = tasks.get_facebook_credential(reference_msg)
-	response = tasks.send_text_message(
-		page_access_token=cred.get_credentials().page_access_token,
-		recipient_psid=conversation.contact.external_id,
-		text=out_msg.text,
-	) if cred else {}
-	if response.get("message_id"):
-		out_msg.external_message_id = response["message_id"]
-		out_msg.meta = {**out_msg.meta, **response}
+	parts = split_text(out_msg.text)
+	sent = out_msg.meta.get("parts_sent", 0)  # resume point when redelivering a partly sent reply
+	response = {}
+	while cred and sent < len(parts):
+		response = tasks.send_text_message(
+			page_access_token=cred.get_credentials().page_access_token,
+			recipient_psid=conversation.contact.external_id,
+			text=parts[sent],
+		)
+		if not response.get("message_id"):
+			break
+		sent += 1
+	meta = {k: v for k, v in out_msg.meta.items() if k != "send_error"}
+	if len(parts) > 1:
+		meta["parts_sent"] = sent
+	if parts and sent == len(parts):
+		out_msg.external_message_id = response.get("message_id", out_msg.external_message_id)  # last part's id
+		out_msg.meta = {**meta, **response}
 		out_msg.save(update_fields=["external_message_id", "meta"])
 		return True
-	logger.warning(f"Facebook send failed for message {out_msg.id} (credential found: {bool(cred)})")
-	out_msg.meta = {**out_msg.meta, "send_error": "facebook send failed"}
+	logger.warning(f"Facebook send failed for message {out_msg.id} (credential found: {bool(cred)}, parts sent: {sent}/{len(parts)})")
+	out_msg.meta = {**meta, "send_error": "facebook send failed"}
 	out_msg.save(update_fields=["meta"])
 	return False
 
@@ -82,20 +97,38 @@ def deliver(conversation, out_msg: Message, reference_msg: Optional[Message] = N
 	return sender(conversation, out_msg, reference_msg or out_msg)
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=5)
+REPLY_LOCK_SECONDS = 120  # longer than process_reply's time_limit, so a killed task's lock expires on its own
+
+
+def _newer_text_message(conversation, after) -> bool:
+	"""A newer inbound message with its own reply task (attachment-only messages never get one)."""
+	return Message.objects.filter(
+		conversation=conversation, direction="in", created_at__gt=after, has_attachments=False
+	).exclude(text="").exists()
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=5, soft_time_limit=60, time_limit=90)
 def process_reply(self, conversation_id: str, message_id: str) -> None:
 	conversation = Conversation.objects.select_related("project", "contact", "knowledge_base").get(id=conversation_id)
 	msg = Message.objects.get(id=message_id)
 
-	# Batching: a newer message that gets its own reply task will answer the whole burst.
-	# Attachment-only messages never schedule a task, so they must not supersede this one.
-	# ponytail: if this task is mid-LLM when a newer message lands, both may answer the older one; add a per-conversation lock if that shows up
-	if Message.objects.filter(
-		conversation=conversation, direction="in", created_at__gt=msg.created_at, has_attachments=False
-	).exclude(text="").exists():
+	# Batching: a newer message that gets its own reply task will answer the whole burst
+	if _newer_text_message(conversation, msg.created_at):
 		_complete([msg])
 		return
 
+	# One reply task per conversation at a time, or two could answer the same messages
+	lock = f"reply-lock:{conversation_id}"
+	if not cache.add(lock, 1, timeout=REPLY_LOCK_SECONDS):
+		process_reply.apply_async(args=[conversation_id, message_id], countdown=3)
+		return
+	try:
+		_reply(self, conversation, msg)
+	finally:
+		cache.delete(lock)
+
+
+def _reply(task, conversation, msg: Message) -> None:
 	turn = pending_turn(conversation)
 	if not turn:
 		_complete([msg])  # already covered by an earlier reply
@@ -120,11 +153,18 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 			trace = {**getattr(exc, "trace", {}), "error": type(exc).__name__}
 			# A retry re-runs the whole agent; never risk sending a POST (order, booking, ticket) twice
 			sent_post = any(c.get("method") == "POST" for c in api_calls)
-			if not sent_post and self.request.retries < self.max_retries:
+			# Out of time: answer with the fallback now rather than make the customer wait for another full run
+			timed_out = isinstance(exc, SoftTimeLimitExceeded)
+			if not sent_post and not timed_out and task.request.retries < task.max_retries:
 				logger.warning(f"Reply generation failed for conversation {conversation.id}, retrying: {exc}")
-				raise self.retry(exc=exc)
+				raise task.retry(exc=exc)
 			logger.error(f"Reply generation failed for conversation {conversation.id}: {exc}", exc_info=True)
 			reply_text = ""
+
+	# A message that landed mid-generation has its own task waiting on the lock, and it answers this turn too.
+	# Except after a POST: dropping that reply would hide what was done (order, booking) from the customer.
+	if _newer_text_message(conversation, turn[-1].created_at) and not any(c.get("method") == "POST" for c in api_calls):
+		return
 
 	# Staff may have taken over while the bot was generating: their reply wins, the bot's is dropped
 	conversation.refresh_from_db(fields=["handoff_at", "handoff_reason"])
@@ -153,8 +193,49 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 			id=newest.agent_reply_id or None,
 		)
 		_complete(turn)
-	deliver(conversation, out_msg, newest)
+	if not deliver(conversation, out_msg, newest):
+		# Failed rows don't count as answered (pending_turn, build_history); retry only the send, never the LLM
+		out_msg.status = "failed"
+		out_msg.save(update_fields=["status"])
+		out_id = str(out_msg.id)
+		transaction.on_commit(lambda: redeliver.apply_async(args=[out_id], countdown=10))
 	schedule_memory_update(conversation)
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=30)
+def redeliver(self, message_id: str) -> None:
+	"""Re-send a bot reply whose delivery failed. Gives up once the conversation has moved on."""
+	out_msg = Message.objects.select_related("conversation__contact").get(id=message_id)
+	conversation = out_msg.conversation
+	# A newer message means a newer reply (or staff) re-answers this turn, since failed rows don't count
+	# ponytail: a message landing between this check and the send can still get this turn answered twice
+	if (
+		out_msg.status != "failed" or conversation.is_paused()
+		or conversation.messages.filter(created_at__gt=out_msg.created_at).exists()
+	):
+		return
+	newest_in = conversation.messages.filter(direction="in").order_by("-created_at").first()
+	if deliver(conversation, out_msg, newest_in):
+		out_msg.status = "completed"
+		out_msg.save(update_fields=["status"])
+		return
+	raise self.retry(exc=RuntimeError(f"Delivery of message {message_id} failed"))
+
+
+@shared_task
+def recover_stuck_replies() -> None:
+	"""Re-queue replies lost to a worker crash or restart: inbound messages still pending after 5 minutes.
+	Only the last hour, so old rows left pending before this existed aren't suddenly answered."""
+	now = timezone.now()
+	stuck = Message.objects.filter(
+		direction="in", status="pending", conversation__isnull=False,
+		created_at__range=(now - timedelta(hours=1), now - timedelta(minutes=5)),
+	).order_by("created_at").values_list("conversation_id", "id")
+	newest = dict(stuck)  # newest per conversation: its task answers the whole turn
+	for conversation_id, message_id in newest.items():
+		process_reply.delay(str(conversation_id), str(message_id))
+	if newest:
+		logger.warning(f"Re-queued {len(newest)} stuck replies")
 
 
 def schedule_memory_update(conversation) -> None:

@@ -3,7 +3,9 @@ from typing import List, Optional
 from django.conf import settings
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openrouter import ChatOpenRouter
+from celery.exceptions import SoftTimeLimitExceeded
 from langchain.agents import create_agent
+from langchain.agents.middleware import wrap_model_call
 from langchain_core.runnables import Runnable
 
 OPENROUTER_DEFAULT_MODEL = "stepfun/step-3.5-flash:free"
@@ -105,13 +107,36 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 	Returns:
 		Runnable agent.
 	"""
+	# Customer-facing: fail fast instead of hanging a reply worker (process_reply also has a soft time limit)
+	llm_kwargs = {"timeout": 30, "max_retries": 1, **llm_kwargs}
 	llm = get_llm(provider=provider, model=model, **llm_kwargs)
+	middleware = []
+	if settings.LLM_FALLBACK_MODEL:
+		backup = get_llm(provider=settings.LLM_FALLBACK_PROVIDER, model=settings.LLM_FALLBACK_MODEL, **llm_kwargs)
+		middleware.append(fallback_to(backup))
 	system_prompt = build_system_prompt(custom_instructions, memory)
 	agent = create_agent(
 		model=llm,
 		tools=tools,
 		system_prompt=system_prompt,
+		middleware=middleware,
 	)
 	return agent
+
+
+def fallback_to(backup):
+	"""Retry a failed model call once on `backup` (provider outage, quota, bad model name).
+	Not langchain's ModelFallbackMiddleware: that also catches Celery's soft time limit and starts a
+	backup call the hard limit then kills, so no fallback reply gets sent."""
+	@wrap_model_call
+	def model_fallback(request, handler):
+		try:
+			return handler(request)
+		except SoftTimeLimitExceeded:
+			raise
+		except Exception as exc:
+			logger.warning(f"Main LLM failed ({type(exc).__name__}: {exc}); retrying on fallback model")
+			return handler(request.override(model=backup))
+	return model_fallback
 
 

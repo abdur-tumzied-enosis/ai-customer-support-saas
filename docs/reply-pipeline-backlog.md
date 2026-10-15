@@ -20,38 +20,46 @@ Status: `[x]` done · `[ ]` open · `[~]` in progress
 
 ## P0: Reliability (silent reply loss, stuck workers)
 
-- [ ] **R1. A failed Facebook send still counts as delivered.**
+- [x] **R1. A failed Facebook send still counts as delivered.**
   `create_outbound_message` saves `status="completed"`, and `process_reply` ignores the return value of `deliver()`.
   As a result, `pending_turn` treats the turn as answered, and `build_history` shows the LLM a reply the customer never got. Nothing retries it.
   *Fix:* if `deliver()` returns False, set the outbound row to `failed` (both `pending_turn` and `build_history` already skip failed rows). Retry only the send step, never the LLM.
   `reply.py` (end of `process_reply`), `service/message_service.py`
+  *Done:* failed send → row `failed` + `redeliver` task (send only, 2 retries, skipped once the customer writes again or staff pause).
 
-- [ ] **R2. Facebook limit of 2000 characters.** Messenger rejects longer text, and `send_text_message` doesn't split it, so the send fails and then hits R1.
+- [x] **R2. Facebook limit of 2000 characters.** Messenger rejects longer text, and `send_text_message` doesn't split it, so the send fails and then hits R1.
   *Fix:* split at about 1900 chars on paragraph or sentence breaks and send the parts in order.
   `facebook_client.py`
+  *Done:* `split_text`; `meta.parts_sent` lets `redeliver` resume a partly sent reply without repeating parts.
 
-- [ ] **R3. No timeouts.** A hung LLM call blocks a worker forever: there's no client `timeout` or `max_retries`, and no Celery `soft_time_limit`.
+- [x] **R3. No timeouts.** A hung LLM call blocks a worker forever: there's no client `timeout` or `max_retries`, and no Celery `soft_time_limit`.
   *Fix:* give the LLM `timeout=30, max_retries=1`, and give `process_reply` `soft_time_limit=60, time_limit=90`.
   `agents/llm.py`, `reply.py`
+  *Done:* timeouts set in `create_basic_agent` (reply path only; ingestion/memory LLM calls unchanged). A soft-limit hit sends the fallback, no retry.
 
-- [ ] **R4. Replies queue behind ingestion.** There's a single Celery queue, so a long document embed delays customer replies.
+- [x] **R4. Replies queue behind ingestion.** There's a single Celery queue, so a long document embed delays customer replies.
   *Fix:* route `process_reply` to a `replies` queue and run a dedicated worker for it in docker-compose.
   `core/settings.py` (`CELERY_TASK_ROUTES`), `docker-compose*.yml`
+  *Done:* `celery-replies` service (`-Q replies`, `REPLY_WORKER_CONCURRENCY`, default 4). **Every deployment must run a `-Q replies` worker or replies never send.**
 
-- [ ] **R5. Two tasks can run on the same conversation at once.** The 3s debounce only covers messages that arrive within 3s, and generation takes 5–20s. A message that lands mid-generation can lead to a second reply that re-answers the older messages. Dashboard chats have no debounce. The `ponytail:` comment in `process_reply` already flags this.
+- [x] **R5. Two tasks can run on the same conversation at once.** The 3s debounce only covers messages that arrive within 3s, and generation takes 5–20s. A message that lands mid-generation can lead to a second reply that re-answers the older messages. Dashboard chats have no debounce. The `ponytail:` comment in `process_reply` already flags this.
   *Fix:* add a per-conversation lock with `cache.add(f"reply:{id}", 1, timeout=120)`. If it's taken, reschedule with `countdown=3`. After generation, if a newer inbound message exists, drop the reply and let that message's task answer.
   `reply.py`
+  *Done:* `reply-lock:{conversation_id}`. Django `CACHES` is now Redis (was per-process LocMem, which can't lock across workers). A reply is not dropped if a POST already ran, so the customer still hears what was done.
 
-- [ ] **R6. Messages are lost if a worker crashes.** Without `acks_late`, a crash leaves the inbound message `pending` forever, and beat only recovers ingestion jobs.
+- [x] **R6. Messages are lost if a worker crashes.** Without `acks_late`, a crash leaves the inbound message `pending` forever, and beat only recovers ingestion jobs.
   *Fix:* add a beat task that reschedules inbound messages still `pending` after 5 minutes. (Don't use `acks_late`: it can re-run POST calls.)
   `core/settings.py` (`CELERY_BEAT_SCHEDULE`), `channels_app/tasks.py`
+  *Done:* `reply.recover_stuck_replies`, every 5 min, newest pending message per conversation, last hour only. Facebook inbound messages that get a reply are now created `pending` (they were `completed`, so nothing could detect them).
 
-- [ ] **R7. A retrieval error aborts the whole reply.** Qdrant errors in `retrieve_business_context` and `retrieve_crawler_context` propagate into the agent.
+- [x] **R7. A retrieval error aborts the whole reply.** Qdrant errors in `retrieve_business_context` and `retrieve_crawler_context` propagate into the agent.
   *Fix:* catch the error and return "search unavailable", the same pattern `call_api` uses.
   `agents/rag.py`
+  *Done:* both tools share `_search`; failures are recorded in `trace.search_errors`.
 
-- [ ] **R8. Model fallback.** If the main provider or model errors, retry once with a backup model (`LLM_FALLBACK_PROVIDER`/`LLM_FALLBACK_MODEL`). LangChain's `llm.with_fallbacks([backup])` covers it.
+- [x] **R8. Model fallback.** If the main provider or model errors, retry once with a backup model (`LLM_FALLBACK_PROVIDER`/`LLM_FALLBACK_MODEL`). LangChain's `llm.with_fallbacks([backup])` covers it.
   `agents/llm.py`
+  *Done:* `fallback_to` agent middleware, on when `LLM_FALLBACK_MODEL` is set. `with_fallbacks` can't be passed to `create_agent`, and langchain's `ModelFallbackMiddleware` also catches Celery's soft time limit.
 
 ---
 

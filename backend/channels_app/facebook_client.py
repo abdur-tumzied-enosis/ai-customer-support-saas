@@ -5,6 +5,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 FACEBOOK_API_URL = "https://graph.facebook.com/v21.0/me/messages"
+MAX_TEXT_CHARS = 1900  # Messenger rejects text over 2000; margin for the cleanup in send_text_message
+
+
+def split_text(text: str, limit: int = MAX_TEXT_CHARS) -> list:
+	"""Split long text into Messenger-sized parts, on paragraph, line, sentence or word breaks."""
+	parts = []
+	while len(text) > limit:
+		window = text[:limit]
+		# Only break past the halfway point, so a stray early newline doesn't leave a tiny part
+		cut = next((i + len(sep) for sep in ("\n\n", "\n", ". ", " ") if (i := window.rfind(sep)) > limit // 2), limit)
+		parts.append(text[:cut].strip())
+		text = text[cut:]
+	return [p for p in parts + [text.strip()] if p]
 
 
 def send_text_message(page_access_token: str, recipient_psid: str, text: str) -> dict:

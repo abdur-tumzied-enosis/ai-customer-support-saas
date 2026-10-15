@@ -101,9 +101,16 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Celery / Redis
 REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
+# Shared across processes: the per-conversation reply lock (channels_app.reply) needs it
+CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}}
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
-STUCK_JOB_THRESHOLD_MINUTES = env.int("STUCK_JOB_THRESHOLD_MINUTES", default=120)
+# Customer replies get their own queue/worker so document ingestion can't delay them (docker-compose: celery-replies)
+CELERY_TASK_ROUTES = {
+    "channels_app.reply.process_reply": {"queue": "replies"},
+    "channels_app.reply.redeliver": {"queue": "replies"},
+}
+STUCK_JOB_THRESHOLD_MINUTES =env.int("STUCK_JOB_THRESHOLD_MINUTES", default=120)
 CELERY_BEAT_SCHEDULE = {
     'recover-stuck-ingestion-jobs': {
         'task': 'knowledge.tasks.recover_stuck_jobs',
@@ -112,6 +119,10 @@ CELERY_BEAT_SCHEDULE = {
     'summarize-idle-episodes': {
         'task': 'channels_app.memory.summarize_idle_episodes',
         'schedule': 1800,
+    },
+    'recover-stuck-replies': {
+        'task': 'channels_app.reply.recover_stuck_replies',
+        'schedule': 300,
     },
     'propose-instructions': {
         'task': 'channels_app.memory.propose_instructions',
@@ -136,6 +147,8 @@ GOOGLE_CLOUD_LOCATION = env("GOOGLE_CLOUD_LOCATION", default="global")  # Vertex
 OPENROUTER_API_KEY = env("OPENROUTER_API_KEY", default="")
 LLM_PROVIDER = env("LLM_PROVIDER", default="google")  # "google" or "openrouter"
 LLM_MODEL = env("LLM_MODEL", default=None)  # None → provider default (see agents/llm.py)
+LLM_FALLBACK_MODEL = env("LLM_FALLBACK_MODEL", default=None)  # set to retry failed reply calls on this model
+LLM_FALLBACK_PROVIDER = env("LLM_FALLBACK_PROVIDER", default=None)  # None → LLM_PROVIDER
 HANDOFF_AUTO_RESUME_HOURS = env.int("HANDOFF_AUTO_RESUME_HOURS", default=24)
 HANDOFF_MESSAGE = env("HANDOFF_MESSAGE", default="I've passed this to our team — a person will reply here soon.")
 MEMORY_LLM_MODEL = env("MEMORY_LLM_MODEL", default=None)  # background memory work; None → LLM_MODEL

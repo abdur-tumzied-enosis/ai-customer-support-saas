@@ -173,6 +173,10 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 				except Exception as e:
 					logger.warning(f"Error finding reply_to message: {e}")
 
+			# Only trigger agent reply for text messages (no attachments)
+			# Attachments will be handled later
+			wants_reply = bool(text) and not has_attachments
+
 			# Create message record using service
 			msg = create_inbound_message(
 				project=project,
@@ -186,11 +190,10 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 				attachment_info=attachment_info,
 				meta=evt,  # Store full event for reference
 				conversation=conversation,
+				status="pending" if wants_reply else "completed",  # pending until answered (recover_stuck_replies)
 			)
 
-			# Only trigger agent reply for text messages (no attachments)
-			# Attachments will be handled later
-			if text and not has_attachments:
+			if wants_reply:
 				# Enqueue async handler (generate reply + send)
 				schedule_reply(msg)
 			else:
