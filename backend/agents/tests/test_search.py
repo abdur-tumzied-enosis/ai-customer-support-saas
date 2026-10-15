@@ -61,28 +61,20 @@ class MergedSearchTest(SimpleTestCase):
 @mock.patch.object(vector_store, "_reranker", FakeReranker())
 @mock.patch("agents.rag.settings.RERANK_MIN_SCORE", 0.0)
 class SearchFirstTest(SimpleTestCase):
-	def run_reply(self, history=None, rewrite=None):
+	def run_reply(self, history=None):
 		agent = mock.Mock()
 		agent.invoke.return_value = {"messages": [AIMessage("We're open 9-5.")]}
-		llm = mock.Mock()
-		llm.invoke.side_effect = rewrite
 		ctx = Context(vector_collection="vc")
-		with mock.patch("agents.rag.create_basic_agent", return_value=agent) as create, \
-			mock.patch("agents.rag.get_llm", return_value=llm):
+		with mock.patch("agents.rag.create_basic_agent", return_value=agent) as create:
 			generate_reply("when?", ctx, deps(Retriever("5 open 9-5"), None), history=history)
-		return create.call_args.kwargs["search_results"], ctx, llm
+		return create.call_args.kwargs["search_results"], ctx
 
-	def test_results_go_in_the_prompt_without_a_rewrite_for_a_first_message(self):
-		results, ctx, llm = self.run_reply()
+	def test_results_go_in_the_prompt(self):
+		results, ctx = self.run_reply()
 		assert results == "Query: when?\n\n[Source: 5 open 9-5]\n5 open 9-5"
-		assert ctx.trace["search_query"] == "when?" and not llm.invoke.called
-
-	def test_follow_up_is_rewritten_with_history(self):
-		history = [{"role": "user", "content": "is the Main St store open sunday?"}, {"role": "assistant", "content": "No."}]
-		results, ctx, llm = self.run_reply(history, rewrite=lambda prompt: AIMessage("Main St store opening hours"))
-		assert ctx.trace["search_query"] == "Main St store opening hours"
-		assert "is the Main St store open sunday?" in llm.invoke.call_args.args[0]
-
-	def test_rewrite_failure_searches_with_the_raw_message(self):
-		_, ctx, _ = self.run_reply([{"role": "user", "content": "hi"}], rewrite=TimeoutError("slow"))
 		assert ctx.trace["search_query"] == "when?"
+
+	def test_follow_up_query_keeps_the_previous_customer_message(self):
+		history = [{"role": "user", "content": "is the Main St store open sunday?"}, {"role": "assistant", "content": "No."}]
+		_, ctx = self.run_reply(history)
+		assert ctx.trace["search_query"] == "is the Main St store open sunday?\nwhen?"

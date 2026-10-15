@@ -15,6 +15,13 @@ COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 RUN playwright install chrome
+
+# Bake in the embedding and reranker models (agents/vector_store.py). Loaded from the Hugging Face hub at runtime,
+# each worker process's first reply spent minutes on hub checks and hit process_reply's time limit.
+# Changing EMBEDDING_MODEL / RERANKER_MODEL means changing this line and rebuilding.
+RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('BAAI/bge-base-en-v1.5'); CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')"
+ENV HF_HUB_OFFLINE=1
+
 COPY backend /app
 
 # CMD ["gunicorn", "-w", "3", "-b", "0.0.0.0:8000", "--log-level", "info", "core.wsgi:application"]

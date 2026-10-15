@@ -61,6 +61,12 @@ Status: `[x]` done · `[ ]` open · `[~]` in progress
   `agents/llm.py`
   *Done:* `fallback_to` agent middleware, on when `LLM_FALLBACK_MODEL` is set. `with_fallbacks` can't be passed to `create_agent`, and langchain's `ModelFallbackMiddleware` also catches Celery's soft time limit.
 
+- [x] **R9. A worker's first reply hits the time limit.** The embedding and reranker models were loaded from the Hugging Face hub at runtime. Hub checks made each load take about 140s, past `process_reply`'s 90s hard limit, so the worker process was killed and no reply was sent. The soft limit didn't help, because the exception landed inside sentence-transformers' file loading.
+  *Done:* the Dockerfile downloads both models at build time and sets `HF_HUB_OFFLINE=1` (load is now about 6–11s). **Rebuild images after changing `EMBEDDING_MODEL`/`RERANKER_MODEL`.**
+
+- [ ] **R10. Gemini latency.** One agent call takes 6–28s with default thinking, and some calls get a 504 at the 30s client timeout. A timeout plus `max_retries=1` can use up the 60s soft limit. Try `thinking_level="low"` on the reply model (check the quality impact with evals), or a shorter client timeout.
+  `agents/llm.py`
+
 ---
 
 ## P1: Reply quality
@@ -70,7 +76,7 @@ Status: `[x]` done · `[ ]` open · `[~]` in progress
   *Fix:* rewrite the latest turn plus recent history into a standalone query, retrieve before the agent runs, and put the top chunks in the prompt. Keep the tool so the model can search again for follow-ups. Most replies then need a single LLM call.
   Drop chunks whose cross-encoder score is below a threshold. Today the top 4 always come back, even when they're unrelated, so "No relevant information found" never fires.
   `agents/rag.py`, `agents/vector_store.py`, `agents/llm.py` (prompt)
-  *Done:* `generate_reply` searches first and puts results under SEARCH RESULTS in the system prompt. A follow-up gets rewritten into a standalone query with a small LLM call (10s timeout, raw message on failure); a first message skips the rewrite. The query is stored in `trace.search_query`. The cutoff is `RERANK_MIN_SCORE` (default -7, tuned for ms-marco-MiniLM-L-6-v2: relevant chunks score about -5 to +3, unrelated about -10). Rewrite tokens are not counted in usage tracking.
+  *Done:* `generate_reply` searches first and puts results under SEARCH RESULTS in the system prompt. The query is the customer's previous message plus the latest one, so a follow-up keeps its topic. It's stored in `trace.search_query`. An LLM rewrite was tried and dropped: on Gemini 3.8 flash it took 3–40s per follow-up (thinking; `thinking_level` "minimal" is rejected), more than the round trip it saves. Revisit with a fast non-thinking model if evals show follow-up misses. The cutoff is `RERANK_MIN_SCORE` (default -7, tuned for ms-marco-MiniLM-L-6-v2: relevant chunks score about -5 to +3, unrelated about -10).
 
 - [x] **Q2. Merge the two retrievers.** The knowledge base (k=10) and web (k=5) results are reranked separately to 4 each, and reranking 5 down to 4 does almost nothing. Query both collections, rerank the combined results, and return the top 4–5 from one tool.
   `agents/rag.py`

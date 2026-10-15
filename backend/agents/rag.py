@@ -2,9 +2,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional, List, Any, Dict, TypedDict, Literal, Sequence
 from langchain_core.messages import AIMessage
-from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
-from .llm import create_basic_agent, get_llm
+from .llm import create_basic_agent
 from .vector_store import rerank_docs
 from .api_tool import build_call_api_tool
 import logging
@@ -55,14 +54,6 @@ def _format_docs(docs: list) -> str:
 
 SEARCH_TOP_K = 5
 
-REWRITE_PROMPT = (
-	"Rewrite the customer's latest message as one short, standalone search query for the business's knowledge base. "
-	"Use the conversation to fill in what the message leaves out (what \"it\" or \"that one\" refers to). "
-	"Keep product names, codes and numbers exactly. Reply with the query only.\n\n"
-	"Conversation:\n{history}\n\nLatest message:\n{question}"
-)
-
-
 def _get_retrievers(context: Context, deps: ToolDeps) -> list:
 	"""Knowledge base and crawled-website retrievers that exist for this reply."""
 	retrievers = []
@@ -100,21 +91,13 @@ def _search(retrievers: list, query: str, context: Context) -> str:
 	return _format_docs(docs)
 
 
-def _standalone_query(question: str, history: Sequence[dict]) -> str:
-	"""Search query for the latest turn. Follow-ups ("how much is it?") need the conversation to make sense."""
-	if not history:
-		return question
-	recent = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in history[-6:])
-	try:
-		llm = get_llm(timeout=10, max_retries=0)
-		query = _text(llm.invoke(REWRITE_PROMPT.format(history=recent, question=question)).content)
-	except SoftTimeLimitExceeded:
-		raise
-	except Exception as exc:
-		logger.warning(f"Query rewrite failed, searching with the raw message: {exc}")
-		return question
-	# ponytail: rewrite tokens aren't counted in usage tracking; add them if billing per token gets exact
-	return query or question
+def _search_query(question: str, history: Sequence[dict]) -> str:
+	"""Search query for the latest turn: the customer's previous message plus this one, so a follow-up
+	("what about saturday?") keeps its topic. The reranker scores chunks against the whole thing."""
+	# ponytail: no LLM rewrite. It cost 3-40s per follow-up on Gemini (thinking), more than the round trip it saves.
+	# Revisit with a fast non-thinking model if follow-up retrieval misses in evals.
+	previous = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+	return f"{previous[:300]}\n{question}" if previous else question
 
 
 def _build_tools_from_context(context: Context, deps: ToolDeps, retrievers: Optional[list] = None):
@@ -197,18 +180,15 @@ def _record_trace(trace: dict, new_messages: list) -> None:
 	trace["tool_calls"] = [{"name": c["name"], "args": c["args"]} for m in ai for c in m.tool_calls]
 
 
-def _text(content) -> str:
-	if isinstance(content, list):  # some providers (Gemini) return content blocks
-		content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
-	return str(content).strip()
-
-
 def _extract_reply_text(result: Any) -> str:
 	"""Text of the agent's final message."""
 	messages_result = result.get("messages") if isinstance(result, dict) else None
 	if not messages_result:
 		return ""
-	return _text(getattr(messages_result[-1], "content", ""))
+	content = getattr(messages_result[-1], "content", "")
+	if isinstance(content, list):  # some providers (Gemini) return content blocks
+		content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
+	return str(content).strip()
 
 
 def _track_token_usage(
@@ -267,7 +247,7 @@ def generate_reply(
 		# Search before the agent runs, so most replies take one LLM call instead of call → search → call
 		search_results = "No relevant information found."
 		if retrievers:
-			query = context.trace["search_query"] = _standalone_query(question, history or [])
+			query = context.trace["search_query"] = _search_query(question, history or [])
 			search_results = f"Query: {query}\n\n{_search(retrievers, query, context)}"
 		agent = create_basic_agent(
 			tools, custom_instructions=context.custom_instructions, memory=context.memory_prompt, search_results=search_results,
