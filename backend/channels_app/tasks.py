@@ -4,8 +4,8 @@ from typing import Optional
 
 from knowledge.models import KnowledgeBase, CustomInstruction
 from . import memory  # also registers the memory Celery tasks
-from .models import Message, ChannelCredential, meta_credentials
-from .facebook_client import send_text_message
+from .models import Message, ChannelCredential, meta_credentials, whatsapp_credentials
+from .facebook_client import send_text_message, send_whatsapp_text
 from .service.message_service import create_outbound_message
 from agents.rag import generate_reply, Context, ToolDeps, ChatMessage
 from agents.vector_store import get_retriever
@@ -154,6 +154,13 @@ def get_facebook_credential(msg: Message, channel: str = "facebook"):
 	account_id = (msg.meta or {}).get("recipient", {}).get("id")
 	cred = account_id and meta_credentials(account_id).filter(project=msg.project).first()
 	return cred or ChannelCredential.objects.filter(project=msg.project, channel=channel, is_active=True).first()
+
+
+def get_whatsapp_credential(msg: Message):
+	"""The WhatsApp number credential that received `msg`."""
+	phone_number_id = (msg.meta or {}).get("phone_number_id")
+	cred = phone_number_id and whatsapp_credentials(phone_number_id).filter(project=msg.project).first()
+	return cred or ChannelCredential.objects.filter(project=msg.project, channel="whatsapp", is_active=True).first()
 
 
 @shared_task

@@ -126,3 +126,27 @@ def get_user_name(page_access_token: str, psid: str, fields: str = "name") -> st
 	except (requests.RequestException, ValueError) as e:
 		logger.warning(f"Facebook name lookup failed: {type(e).__name__}")
 	return ""
+
+
+WHATSAPP_MAX_TEXT_CHARS = 4000  # Cloud API rejects text bodies over 4096 chars
+
+
+def send_whatsapp_text(access_token: str, phone_number_id: str, to: str, text: str) -> dict:
+	"""Send a text via the WhatsApp Cloud API. {"message_id": ...} on success, {"error": <Meta's message>} on failure.
+	Free-form text only reaches customers within 24h of their last message (error 131047 otherwise)."""
+	try:
+		resp = requests.post(
+			f"{GRAPH_API_URL}/{phone_number_id}/messages",
+			headers={"Authorization": f"Bearer {access_token}"},
+			json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text}},
+			timeout=10,
+		)
+		data = resp.json()
+	except (requests.RequestException, ValueError) as e:
+		logger.error(f"WhatsApp send failed: {type(e).__name__}")
+		return {"error": "whatsapp send failed"}
+	if resp.status_code == 200 and data.get("messages"):
+		return {"message_id": data["messages"][0]["id"]}
+	error = data.get("error") or {}
+	logger.error(f"WhatsApp API error: {resp.status_code} - {error}")
+	return {"error": error.get("message") or "whatsapp send failed"}

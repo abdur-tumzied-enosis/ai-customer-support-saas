@@ -50,7 +50,7 @@ def handle_facebook_webhook_verification(request: HttpRequest) -> HttpResponse:
 	# Query database directly for channel with matching verify_token in credentials JSON
 	# Using JSONField lookup: credentials__verify_token
 	channel = ChannelCredential.objects.filter(
-		channel__in=META_CHANNELS,  # one callback URL serves Messenger and Instagram
+		channel__in=(*META_CHANNELS, "whatsapp"),  # one callback URL serves Messenger, Instagram and WhatsApp
 		is_active=True,
 		credentials__verify_token=verify_token
 	).select_related('platform', 'project').first()

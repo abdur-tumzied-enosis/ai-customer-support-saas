@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Facebook, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle } from "lucide-react";
+import { Facebook, Instagram, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle, Copy, Check, ExternalLink, RefreshCw } from "lucide-react";
 import { channelApi, platformApi, knowledgeBaseApi, type ChannelCredential, type Platform } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import WebhookSettings from "@/components/channels/WebhookSettings";
@@ -17,8 +17,45 @@ import { formatError } from "@/lib/errors";
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
 	facebook: <Facebook className="h-5 w-5 text-blue-600" />,
+	instagram: <Instagram className="h-5 w-5 text-pink-600" />,
 	whatsapp: <MessageCircle className="h-5 w-5 text-green-600" />,
 };
+
+// Where the callback URL and verify token go in the Meta App Dashboard
+const WEBHOOK_SETUP_WHERE: Record<string, string> = {
+	facebook: "Meta App Dashboard → Messenger → Settings → Webhooks",
+	instagram: "Meta App Dashboard → Messenger → Instagram settings → Webhooks",
+	whatsapp: "Meta App Dashboard → WhatsApp → Configuration → Webhook",
+};
+
+const VERIFY_TOKEN = "verify_token";
+
+const newVerifyToken = () => crypto.randomUUID().replace(/-/g, "");
+
+function CopyField({ label, value }: { label: string; value: string }) {
+	const [copied, setCopied] = useState(false);
+	return (
+		<div className="space-y-1">
+			<Label className="text-xs text-muted-foreground">{label}</Label>
+			<div className="flex gap-2">
+				<Input readOnly value={value} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+				<Button
+					type="button"
+					variant="outline"
+					size="icon"
+					aria-label={`Copy ${label}`}
+					onClick={() => {
+						navigator.clipboard?.writeText(value);
+						setCopied(true);
+						setTimeout(() => setCopied(false), 1500);
+					}}
+				>
+					{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+				</Button>
+			</div>
+		</div>
+	);
+}
 
 type KnowledgeBase = {
 	id: string;
@@ -121,6 +158,12 @@ export default function ChannelsPage() {
 			return;
 		}
 
+		// The backend ignores incoming messages on channels without a knowledge base
+		if (!formData.knowledge_base_id) {
+			setError("Please select a knowledge base");
+			return;
+		}
+
 		setLoading(true);
 		setError(null);
 
@@ -150,10 +193,15 @@ export default function ChannelsPage() {
 		setLoading(true);
 		setError(null);
 
+		// Empty fields mean "keep current value", so they are not sent
+		const changedCredentials = Object.fromEntries(
+			Object.entries(formData.credentials).filter(([, value]) => value.trim())
+		);
+
 		try {
 			await channelApi.update(editingChannel.id, {
 				name: formData.name || undefined,
-				credentials: Object.keys(formData.credentials).length > 0 ? formData.credentials : undefined,
+				credentials: Object.keys(changedCredentials).length > 0 ? changedCredentials : undefined,
 				knowledge_base_id: formData.knowledge_base_id || null,
 			});
 
@@ -227,14 +275,107 @@ export default function ChannelsPage() {
 		if (platform) {
 			const initialCreds: Record<string, string> = {};
 			platform.credential_schema.forEach(field => {
-				initialCreds[field.name] = "";
+				initialCreds[field.name] = field.name === VERIFY_TOKEN ? newVerifyToken() : "";
 			});
 			setFormData(prev => ({ ...prev, credentials: initialCreds }));
 		}
 	};
 
+	const setCredential = (name: string, value: string) =>
+		setFormData(prev => ({ ...prev, credentials: { ...prev.credentials, [name]: value } }));
+
+	const renderKnowledgeBaseSelect = (id: string) => (
+		<div className="space-y-2">
+			<Label htmlFor={id}>
+				Knowledge Base <span className="text-destructive">*</span>
+			</Label>
+			<Select
+				value={formData.knowledge_base_id || undefined}
+				onValueChange={(value: string) => setFormData(prev => ({ ...prev, knowledge_base_id: value }))}
+			>
+				<SelectTrigger id={id}>
+					<SelectValue placeholder="Select a knowledge base" />
+				</SelectTrigger>
+				<SelectContent>
+					{knowledgeBases.map((kb) => (
+						<SelectItem key={kb.id} value={kb.id}>
+							{kb.name}
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
+			<p className="text-xs text-muted-foreground">
+				{knowledgeBases.length === 0
+					? "No knowledge bases yet. Create one first; the AI answers from it."
+					: "The AI answers this channel's messages from this knowledge base"}
+			</p>
+		</div>
+	);
+
+	const renderWebhookSetup = (platform: Platform, isEdit: boolean = false) => {
+		const hasVerifyToken = platform.credential_schema.some(field => field.name === VERIFY_TOKEN);
+		return (
+			<div className="rounded-md border bg-muted/40 p-4 space-y-3">
+				<div>
+					<p className="text-sm font-medium">Webhook setup</p>
+					<p className="text-xs text-muted-foreground mt-1">
+						Paste these in {WEBHOOK_SETUP_WHERE[platform.name] || "the Meta App Dashboard"}, then subscribe to
+						the <code className="font-mono">messages</code> field.
+					</p>
+				</div>
+				<CopyField label="Callback URL" value={platform.webhook_url} />
+				{hasVerifyToken && (
+					<div className="space-y-1">
+						<Label htmlFor="verify-token" className="text-xs text-muted-foreground">Verify token</Label>
+						<div className="flex gap-2">
+							<Input
+								id="verify-token"
+								className="font-mono text-xs"
+								placeholder={isEdit ? "Leave empty to keep current value" : ""}
+								value={formData.credentials[VERIFY_TOKEN] || ""}
+								onChange={(e) => setCredential(VERIFY_TOKEN, e.target.value)}
+							/>
+							<Button
+								type="button"
+								variant="outline"
+								size="icon"
+								aria-label="Generate verify token"
+								onClick={() => setCredential(VERIFY_TOKEN, newVerifyToken())}
+							>
+								<RefreshCw className="h-4 w-4" />
+							</Button>
+							<Button
+								type="button"
+								variant="outline"
+								size="icon"
+								aria-label="Copy verify token"
+								disabled={!formData.credentials[VERIFY_TOKEN]}
+								onClick={() => navigator.clipboard?.writeText(formData.credentials[VERIFY_TOKEN])}
+							>
+								<Copy className="h-4 w-4" />
+							</Button>
+						</div>
+						{isEdit && formData.credentials[VERIFY_TOKEN] && (
+							<p className="text-xs text-muted-foreground">Update it in the Meta dashboard too, or verification will fail.</p>
+						)}
+					</div>
+				)}
+				{platform.documentation_url && (
+					<a
+						href={platform.documentation_url}
+						target="_blank"
+						rel="noreferrer"
+						className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+					>
+						{platform.display_name} docs <ExternalLink className="h-3 w-3" />
+					</a>
+				)}
+			</div>
+		);
+	};
+
 	const renderCredentialFields = (platform: Platform, isEdit: boolean = false) => {
-		return platform.credential_schema.map((field) => (
+		return platform.credential_schema.filter((field) => field.name !== VERIFY_TOKEN).map((field) => (
 			<div key={field.name} className="space-y-2">
 				<Label htmlFor={field.name}>
 					{field.label}
@@ -406,8 +547,8 @@ export default function ChannelsPage() {
 												{PLATFORM_ICONS[platform.name]}
 												<div>
 													<p className="font-medium">{platform.display_name}</p>
-													<p className="text-xs text-muted-foreground">
-														{platform.description.slice(0, 50)}...
+													<p className="text-xs text-muted-foreground line-clamp-2">
+														{platform.description}
 													</p>
 												</div>
 											</CardContent>
@@ -440,7 +581,7 @@ export default function ChannelsPage() {
 									</Label>
 									<Input
 										id="channel-name"
-										placeholder="e.g., Main Facebook Page"
+										placeholder={`e.g., Main ${selectedPlatform.display_name}`}
 										value={formData.name}
 										onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
 										required
@@ -449,28 +590,9 @@ export default function ChannelsPage() {
 
 								{renderCredentialFields(selectedPlatform)}
 
-								<div className="space-y-2">
-									<Label htmlFor="kb-select">Knowledge Base (Optional)</Label>
-									<Select
-										value={formData.knowledge_base_id || "none"}
-										onValueChange={(value: string) => setFormData(prev => ({ ...prev, knowledge_base_id: value === "none" ? "" : value }))}
-									>
-										<SelectTrigger>
-											<SelectValue placeholder="Select a knowledge base" />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="none">None</SelectItem>
-											{knowledgeBases.map((kb) => (
-												<SelectItem key={kb.id} value={kb.id}>
-													{kb.name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-									<p className="text-xs text-muted-foreground">
-										Link this channel to a specific knowledge base for AI responses
-									</p>
-								</div>
+								{renderKnowledgeBaseSelect("kb-select")}
+
+								{renderWebhookSetup(selectedPlatform)}
 							</>
 						)}
 					</div>
@@ -539,25 +661,9 @@ export default function ChannelsPage() {
 
 								{renderCredentialFields(selectedPlatform, true)}
 
-								<div className="space-y-2">
-									<Label htmlFor="edit-kb-select">Knowledge Base</Label>
-									<Select
-										value={formData.knowledge_base_id || "none"}
-										onValueChange={(value: string) => setFormData(prev => ({ ...prev, knowledge_base_id: value === "none" ? "" : value }))}
-									>
-										<SelectTrigger>
-											<SelectValue placeholder="Select a knowledge base" />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="none">None</SelectItem>
-											{knowledgeBases.map((kb) => (
-												<SelectItem key={kb.id} value={kb.id}>
-													{kb.name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
-								</div>
+								{renderKnowledgeBaseSelect("edit-kb-select")}
+
+								{renderWebhookSetup(selectedPlatform, true)}
 							</>
 						)}
 					</div>

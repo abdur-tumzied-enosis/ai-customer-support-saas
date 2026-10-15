@@ -4,15 +4,20 @@ import json
 from django.conf import settings
 from django.test import Client, TestCase, override_settings
 
+from accounts.models import Project
+from channels_app.models import ChannelCredential
+
 
 class FacebookWebhookTest(TestCase):
 	def setUp(self):
 		self.client = Client()
 
 	def test_get_verification(self):
+		project = Project.objects.create(name="P", slug="p-fb-verify")
+		ChannelCredential.objects.create(project=project, channel="facebook", credentials={"verify_token": "fb-verify"})
 		resp = self.client.get(
 			"/webhooks/facebook/",
-			{"hub.mode": "subscribe", "hub.verify_token": settings.FB_VERIFY_TOKEN, "hub.challenge": "1234"},
+			{"hub.mode": "subscribe", "hub.verify_token": "fb-verify", "hub.challenge": "1234"},
 		)
 		assert resp.status_code == 200
 		assert resp.content.decode() == "1234"

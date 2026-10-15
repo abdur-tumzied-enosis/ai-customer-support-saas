@@ -485,6 +485,7 @@ export type Platform = {
 	icon: string;
 	is_active: boolean;
 	webhook_path: string;
+	webhook_url: string;
 	api_base_url: string;
 	documentation_url: string;
 	credential_schema: CredentialField[];

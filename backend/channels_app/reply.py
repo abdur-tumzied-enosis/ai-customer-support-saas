@@ -17,7 +17,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import memory, tasks
-from .facebook_client import INSTAGRAM_MAX_TEXT_BYTES, split_text
+from .facebook_client import INSTAGRAM_MAX_TEXT_BYTES, WHATSAPP_MAX_TEXT_CHARS, split_text
 from .handoff import start_handoff, wants_human
 from .models import Conversation, Message
 from .service.message_service import create_outbound_message
@@ -59,14 +59,29 @@ def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bo
 	# Instagram DMs go through the same Send API (Page token, /me/messages), with a smaller text limit
 	cred = tasks.get_facebook_credential(reference_msg, conversation.channel)
 	parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
+	send = cred and (lambda text: tasks.send_text_message(
+		page_access_token=cred.get_credentials().page_access_token,
+		recipient_psid=conversation.contact.external_id,
+		text=text,
+	))
+	return _send_parts(out_msg, parts, send, conversation.channel)
+
+
+def _send_whatsapp(conversation, out_msg: Message, reference_msg: Message) -> bool:
+	cred = tasks.get_whatsapp_credential(reference_msg)
+	creds = cred and cred.get_credentials()
+	send = cred and (lambda text: tasks.send_whatsapp_text(
+		creds.access_token, creds.phone_number_id, conversation.contact.external_id, text
+	))
+	return _send_parts(out_msg, split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS), send, "whatsapp")
+
+
+def _send_parts(out_msg: Message, parts: list, send, channel: str) -> bool:
+	"""Send `parts` in order with `send(text) -> {"message_id"} | {"error"?}`; records progress on out_msg."""
 	sent = out_msg.meta.get("parts_sent", 0)  # resume point when redelivering a partly sent reply
 	response = {}
-	while cred and sent < len(parts):
-		response = tasks.send_text_message(
-			page_access_token=cred.get_credentials().page_access_token,
-			recipient_psid=conversation.contact.external_id,
-			text=parts[sent],
-		)
+	while send and sent < len(parts):
+		response = send(parts[sent])
 		if not response.get("message_id"):
 			break
 		sent += 1
@@ -78,8 +93,8 @@ def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bo
 		out_msg.meta = {**meta, **response}
 		out_msg.save(update_fields=["external_message_id", "meta"])
 		return True
-	logger.warning(f"Facebook send failed for message {out_msg.id} (credential found: {bool(cred)}, parts sent: {sent}/{len(parts)})")
-	out_msg.meta = {**meta, "send_error": "facebook send failed"}
+	logger.warning(f"{channel} send failed for message {out_msg.id} (credential found: {bool(send)}, parts sent: {sent}/{len(parts)})")
+	out_msg.meta = {**meta, "send_error": response.get("error") or f"{channel} send failed"}
 	out_msg.save(update_fields=["meta"])
 	return False
 
@@ -87,6 +102,7 @@ def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bo
 SENDERS = {
 	"facebook": _send_facebook,
 	"instagram": _send_facebook,
+	"whatsapp": _send_whatsapp,
 	"self": lambda conversation, out_msg, reference_msg: True,  # stored row is the delivery (dashboard, future widget/API)
 }
 

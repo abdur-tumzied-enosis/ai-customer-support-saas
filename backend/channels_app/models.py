@@ -490,8 +490,8 @@ class Platform(models.Model):
 				"display_name": "WhatsApp Business",
 				"description": "Connect your WhatsApp Business account to handle customer conversations via the WhatsApp Cloud API.",
 				"icon": "whatsapp",
-				"is_active": False,  # Coming soon
-				"webhook_path": "/webhooks/whatsapp/",
+				"is_active": True,
+				"webhook_path": "/webhooks/facebook/",  # one Meta callback URL, routed on payload "object"
 				"api_base_url": "https://graph.facebook.com/v18.0",
 				"documentation_url": "https://developers.facebook.com/docs/whatsapp/cloud-api",
 			},
@@ -684,6 +684,11 @@ def meta_credentials(account_id: str):
 	return ChannelCredential.objects.filter(channel__in=META_CHANNELS, is_active=True).filter(
 		models.Q(credentials__page_id=account_id) | models.Q(credentials__instagram_account_id=account_id)
 	).order_by("channel")  # a dedicated facebook credential wins over an instagram one sharing its page
+
+
+def whatsapp_credentials(phone_number_id: str):
+	"""Active WhatsApp credentials for a webhook's metadata.phone_number_id."""
+	return ChannelCredential.objects.filter(channel="whatsapp", is_active=True, credentials__phone_number_id=phone_number_id)
 
 
 class CustomerContact(models.Model):

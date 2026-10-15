@@ -39,6 +39,10 @@ class PlatformListView(APIView):
 				"icon": platform.icon,
 				"is_active": platform.is_active,
 				"webhook_path": platform.webhook_path,
+				"webhook_url": (
+					settings.PUBLIC_BASE_URL.rstrip("/") + platform.webhook_path if settings.PUBLIC_BASE_URL
+					else request.build_absolute_uri(platform.webhook_path)
+				),
 				"api_base_url": platform.api_base_url,
 				"documentation_url": platform.documentation_url,
 				"credential_schema": platform.credential_schema,
@@ -906,12 +910,13 @@ class ConversationStaffReplyView(APIView):
 			return _error("invalid_text", "Reply must be 1-2000 characters", status.HTTP_400_BAD_REQUEST)
 
 		last_in = conversation.messages.filter(direction="in").order_by("-created_at").first()
-		if conversation.channel in ("facebook", "instagram") and (
+		if conversation.channel in ("facebook", "instagram", "whatsapp") and (
 			not last_in or timezone.now() - last_in.created_at > timedelta(hours=24)
 		):
+			hint = "Message templates aren't supported yet." if conversation.channel == "whatsapp" else "Reply from the Meta inbox instead."
 			return _error(
 				"outside_messaging_window",
-				f"{conversation.channel.capitalize()} only allows replies within 24 hours of the customer's last message. Reply from the Meta inbox instead.",
+				f"{conversation.channel.capitalize()} only allows replies within 24 hours of the customer's last message. {hint}",
 				status.HTTP_400_BAD_REQUEST,
 			)
 

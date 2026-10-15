@@ -141,6 +141,7 @@ RERANK_MIN_SCORE = env.float("RERANK_MIN_SCORE", default=-7.0)
 META_APP_ID = env("META_APP_ID", default="")
 META_APP_SECRET = env("META_APP_SECRET", default="")
 FB_VERIFY_TOKEN = env("FB_VERIFY_TOKEN", default="verify-token")
+PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", default="")  # how Meta reaches this backend (ngrok/domain); "" → request host
 
 # Google / Gemini
 GOOGLE_API_KEY = env("GOOGLE_API_KEY", default="")
@@ -159,6 +160,7 @@ EPISODE_GAP_HOURS = env.int("EPISODE_GAP_HOURS", default=12)  # silence that clo
 REPLY_DEBOUNCE_SECONDS = {  # channels not listed: 0
 	"facebook": env.int("FACEBOOK_REPLY_DEBOUNCE_SECONDS", default=3),
 	"instagram": env.int("INSTAGRAM_REPLY_DEBOUNCE_SECONDS", default=3),
+	"whatsapp": env.int("WHATSAPP_REPLY_DEBOUNCE_SECONDS", default=3),
 }
 
 # Django REST Framework
