@@ -16,7 +16,7 @@ Backend done. What's left is Meta setup + creating the credential.
 |---|---|
 | `instagram` channel / platform choice | `channels_app/models.py`, migration 0014 |
 | Webhook: `object: "instagram"`, echo skip | `service/facebook_messing.handle_facebook_message` |
-| Routes | `/webhooks/facebook/` and `/webhooks/instagram/` (same view, either works) |
+| Route | `/webhooks/facebook/` serves both (`object` tells them apart) |
 | Reply sending, 990-byte parts | `reply.SENDERS["instagram"]`, `facebook_client.split_text(max_bytes=...)` |
 | Credential lookup by page id or IG account id | `models.meta_credentials`, `tasks.get_facebook_credential` |
 | Name lookup `name,username` | `facebook_client.get_user_name(fields=...)` |
