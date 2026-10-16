@@ -13,7 +13,7 @@ from channels_app.facebook_client import split_text
 from channels_app.reply import process_reply, recover_stuck_replies, redeliver as redeliver_task
 from channels_app.service.conversation_service import create_conversation, ensure_contact_conversation
 from channels_app.service.message_service import create_ui_message
-from channels_app.tasks import FALLBACK_REPLY, handle_incoming_message, handle_ui_message
+from channels_app.tasks import FALLBACK_REPLY, FALLBACK_REPLY_BN, handle_incoming_message, handle_ui_message
 from knowledge.models import KnowledgeBase
 
 
@@ -114,6 +114,17 @@ class HandoffPipelineTest(PipelineBase):
 		self.conv.refresh_from_db()
 		assert self.conv.handoff_reason == "refund request"
 		assert self.outbound()[0].text == settings.HANDOFF_MESSAGE
+
+	def test_bengali_customer_gets_bengali_canned_texts(self):
+		self.gen.side_effect = lambda question, context, *a, **k: setattr(context, "handoff_reason", "refund") or "x"
+		self.run_reply(self.inbound("আমার টাকা ফেরত চাই"))
+		assert self.outbound()[0].text == settings.HANDOFF_MESSAGE_BN
+		self.conv.handoff_at = None
+		self.conv.save()
+		self.gen.side_effect = None
+		self.gen.return_value = ""  # empty reply → fallback
+		self.run_reply(self.inbound("দাম কত?"))
+		assert self.outbound()[-1].text == FALLBACK_REPLY_BN
 
 
 class HistoryAndRetryTest(PipelineBase):

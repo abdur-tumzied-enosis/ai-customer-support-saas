@@ -140,6 +140,30 @@ def embed_crawled_document(document: Document, collection_name: str) -> None:
     logger.info(f"Embedded {len(inserted)} chunks for document {document.id} into '{collection_name}'")
 
 
+def embed_uploaded_chunks(document: Document, chunks: List[str]) -> list[str]:
+    """Embed an uploaded document's chunks into its KB collection; saves and returns the chunk IDs."""
+    kb = document.kb
+    metadatas = [
+        {
+            'document_id': str(document.id),
+            'document_filename': document.filename,
+            'kb_id': str(kb.id),
+            'kb_name': kb.name,
+            'chunk_index': i,
+            'total_chunks': len(chunks),
+            'source_type': document.source_type,
+        }
+        for i in range(len(chunks))
+    ]
+    # Qdrant requires pure UUIDs, not UUIDs with suffixes
+    ids = [str(uuid.uuid4()) for _ in chunks]
+    inserted = add_texts_to_collection(collection_name=kb.vector_collection, texts=chunks, metadatas=metadatas, ids=ids) or []
+    # Saved on the document for deleting its vectors later
+    document.vector_chunk_ids = inserted
+    document.save(update_fields=['vector_chunk_ids'])
+    return inserted
+
+
 def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> List[str]:
     """
     Split text into chunks for embedding.
@@ -247,52 +271,20 @@ def run_ingestion_job(job_id: str) -> None:
             raise ValueError("No text chunks were created from the document")
         logger.info(f"Job {job_id}: Created {len(text_chunks)} chunks")
 
-        # Step 3: Prepare metadata for each chunk
-        logger.info(f"Job {job_id}: Step 3 - Preparing metadata")
-        job.progress = 60
-        job.save()
-        
-        collection_name = job.kb.vector_collection
-        metadatas = []
-        chunk_ids = []
-        
-        for i, chunk in enumerate(text_chunks):
-            metadata = {
-                'document_id': str(document.id),
-                'document_filename': document.filename,
-                'kb_id': str(job.kb.id),
-                'kb_name': job.kb.name,
-                'chunk_index': i,
-                'total_chunks': len(text_chunks),
-                'source_type': document.source_type,
-            }
-            metadatas.append(metadata)
-            # Generate unique UUID for each chunk (Qdrant requires pure UUIDs, not UUIDs with suffixes)
-            chunk_ids.append(str(uuid.uuid4()))
-
-        # Step 4: Store in vector database (Qdrant)
-        logger.info(f"Job {job_id}: Step 4 - Storing {len(text_chunks)} chunks in Qdrant collection '{collection_name}'")
+        # Step 3: Store in vector database (Qdrant)
+        logger.info(f"Job {job_id}: Step 3 - Storing {len(text_chunks)} chunks in Qdrant collection '{job.kb.vector_collection}'")
         job.progress = 80
         job.save()
-        
+
         try:
-            inserted_ids = add_texts_to_collection(
-                collection_name=collection_name,
-                texts=text_chunks,
-                metadatas=metadatas,
-                ids=chunk_ids
-            )
-            
+            inserted_ids = embed_uploaded_chunks(document, text_chunks)
+
             if not inserted_ids:
                 logger.error(f"Job {job_id}: No chunks were inserted into vector database")
                 raise ValueError("Failed to insert chunks into vector database")
-            
+
             logger.info(f"Job {job_id}: Successfully inserted {len(inserted_ids)} chunks into Qdrant")
-            
-            # Save the inserted chunk IDs to the document for easy deletion later
-            document.vector_chunk_ids = inserted_ids
-            document.save()
-            
+
             # Track embedding token usage
             try:
                 from usage.utils import track_token_usage, estimate_tokens

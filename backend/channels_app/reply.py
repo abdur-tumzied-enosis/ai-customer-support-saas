@@ -189,12 +189,14 @@ def _reply(task, conversation, msg: Message) -> None:
 	if conversation.is_paused():
 		_complete(turn)
 		return
+	# ponytail: canned texts in English + Bengali only (script check); Banglish gets English. Add languages here if needed.
+	bengali = any("ঀ" <= ch <= "৿" for m in turn for ch in (m.text or ""))
 	if handoff_reason:
 		if not start_handoff(conversation, handoff_reason):
 			_complete(turn)  # another task or staff paused it first; don't send a second handoff message
 			return
-		reply_text = settings.HANDOFF_MESSAGE
-	reply_text = reply_text or tasks.FALLBACK_REPLY
+		reply_text = settings.HANDOFF_MESSAGE_BN if bengali else settings.HANDOFF_MESSAGE
+	reply_text = reply_text or (tasks.FALLBACK_REPLY_BN if bengali else tasks.FALLBACK_REPLY)
 
 	newest = turn[-1]
 	with transaction.atomic():

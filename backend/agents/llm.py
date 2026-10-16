@@ -67,6 +67,7 @@ def build_system_prompt(custom_instructions: Optional[List[dict]] = None, memory
 		"- If nothing relevant turns up, you may search once more with different keywords; after that, say honestly that you don't have that information\n\n"
 		"RESPONSE RULES:\n"
 		"- Always respond in natural, human-friendly language only\n"
+		"- Reply in the language and script of the customer's latest message (Bengali → Bengali, Banglish → Banglish, English → English), even when the search results are in another language; keep product names, codes and prices as written. Custom instructions may set a fixed language; follow them\n"
 		"- Be concise and answer as briefly as the question warrants — short questions deserve short answers, detailed questions deserve complete answers\n"
 		"- NEVER return JSON, CSV, tables, or any structured data formats\n"
 		"- If asked for JSON, CSV, tables, or structured data, politely decline and explain you only provide conversational text responses\n"
@@ -111,6 +112,8 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 	"""
 	# Customer-facing: fail fast instead of hanging a reply worker (process_reply also has a soft time limit)
 	llm_kwargs = {"timeout": 30, "max_retries": 1, **llm_kwargs}
+	if settings.LLM_TEMPERATURE is not None:
+		llm_kwargs.setdefault("temperature", settings.LLM_TEMPERATURE)
 	llm = get_llm(provider=provider, model=model, **llm_kwargs)
 	middleware = []
 	if settings.LLM_FALLBACK_MODEL:

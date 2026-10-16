@@ -133,9 +133,10 @@ CELERY_BEAT_SCHEDULE = {
 # Qdrant
 QDRANT_URL = env("QDRANT_URL", default="http://localhost:6333")
 QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production authentication
-# Cross-encoder score below which a retrieved chunk counts as unrelated. ms-marco-MiniLM-L-6-v2 logits:
-# relevant chunks ~ -5..+3, unrelated ~ -10..-11. Re-tune if RERANKER_MODEL changes.
-RERANK_MIN_SCORE = env.float("RERANK_MIN_SCORE", default=-7.0)
+# Cross-encoder score below which a retrieved chunk counts as unrelated. mmarco-mMiniLMv2 logits (Bengali/Banglish/
+# English eval): relevant chunks -4.2..+10.7, unrelated -7.3..-3.0. Set to keep every relevant chunk, so some
+# off-topic ones pass (the prompt forbids guessing from them). Re-tune if RERANKER_MODEL changes.
+RERANK_MIN_SCORE = env.float("RERANK_MIN_SCORE", default=-4.5)
 
 # Meta / Facebook
 META_APP_ID = env("META_APP_ID", default="")
@@ -153,8 +154,12 @@ LLM_PROVIDER = env("LLM_PROVIDER", default="google")  # "google" or "openrouter"
 LLM_MODEL = env("LLM_MODEL", default=None)  # None → provider default (see agents/llm.py)
 LLM_FALLBACK_MODEL = env("LLM_FALLBACK_MODEL", default=None)  # set to retry failed reply calls on this model
 LLM_FALLBACK_PROVIDER = env("LLM_FALLBACK_PROVIDER", default=None)  # None → LLM_PROVIDER
+# Reply temperature; None → provider default. ~0.2 suits factual support, but Google advises leaving
+# Gemini 3 models at their default 1.0 (lower can loop or degrade), so only set it for other models.
+LLM_TEMPERATURE = env.float("LLM_TEMPERATURE", default=None)
 HANDOFF_AUTO_RESUME_HOURS = env.int("HANDOFF_AUTO_RESUME_HOURS", default=24)
 HANDOFF_MESSAGE = env("HANDOFF_MESSAGE", default="I've passed this to our team — a person will reply here soon.")
+HANDOFF_MESSAGE_BN = env("HANDOFF_MESSAGE_BN", default="আপনার বিষয়টি আমাদের টিমকে জানিয়েছি — একজন প্রতিনিধি শীঘ্রই এখানে উত্তর দেবেন।")  # sent when the customer writes in Bengali script
 MEMORY_LLM_MODEL = env("MEMORY_LLM_MODEL", default=None)  # background memory work; None → LLM_MODEL
 EPISODE_GAP_HOURS = env.int("EPISODE_GAP_HOURS", default=12)  # silence that closes a conversation episode
 REPLY_DEBOUNCE_SECONDS = {  # channels not listed: 0

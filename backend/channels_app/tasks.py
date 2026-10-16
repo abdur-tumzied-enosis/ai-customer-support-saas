@@ -80,6 +80,7 @@ def format_message_with_context(message: Message) -> str:
 HISTORY_MAX_MESSAGES = 50
 HISTORY_TOKEN_BUDGET = 3000  # estimated tokens of history sent with each reply
 FALLBACK_REPLY = "Sorry, I'm having trouble answering right now. Please try again in a moment."
+FALLBACK_REPLY_BN = "দুঃখিত, এই মুহূর্তে উত্তর দিতে সমস্যা হচ্ছে। একটু পরে আবার চেষ্টা করুন।"
 
 
 def build_history(msg: Message, since=None) -> list:
