@@ -171,11 +171,11 @@ export const authApi = {
 
 // Document API functions
 export const documentApi = {
-	upload: async (file: File, projectId: string, kbName: string = "default") => {
+	upload: async (file: File, projectId: string, kbId: string) => {
 		const formData = new FormData();
 		formData.append("file", file);
 		formData.append("project_id", projectId);
-		formData.append("kb_name", kbName);
+		formData.append("kb_id", kbId);
 
 		const csrfToken = getCsrfToken();
 		const headers: HeadersInit = {
@@ -265,7 +265,7 @@ export const documentApi = {
 		});
 	},
 
-	crawl: async (url: string, depth: number, projectId: string, kbName: string = "default", searchQuery?: string) => {
+	crawl: async (url: string, depth: number, projectId: string, kbId: string, searchQuery?: string) => {
 		return apiFetch<{
 			document: {
 				id: string;
@@ -289,7 +289,7 @@ export const documentApi = {
 				url,
 				depth,
 				project_id: projectId,
-				kb_name: kbName,
+				kb_id: kbId,
 				...(searchQuery ? { search_query: searchQuery } : {}),
 			},
 		});
@@ -427,18 +427,30 @@ export const customInstructionApi = {
 	},
 };
 
+export type KnowledgeBase = {
+	id: string;
+	name: string;
+	is_default: boolean;
+	document_count: number;
+	created_at: string;
+};
+
 // Knowledge Base API functions
 export const knowledgeBaseApi = {
-	list: async (projectId: string) => {
-		return apiFetch<{
-			knowledge_bases: Array<{
-				id: string;
-				name: string;
-				created_at: string;
-			}>;
-			count: number;
-		}>(`/api/kb/knowledge-bases/?project_id=${projectId}`);
-	},
+	list: async (projectId: string) =>
+		apiFetch<{ knowledge_bases: KnowledgeBase[]; count: number }>(`/api/kb/knowledge-bases/?project_id=${projectId}`),
+
+	create: async (projectId: string, name: string) =>
+		apiFetch<{ knowledge_base: KnowledgeBase }>("/api/kb/knowledge-bases/", {
+			method: "POST",
+			json: { project_id: projectId, name },
+		}),
+
+	rename: async (kbId: string, name: string) =>
+		apiFetch<{ knowledge_base: KnowledgeBase }>(`/api/kb/knowledge-bases/${kbId}/`, {
+			method: "PATCH",
+			json: { name },
+		}),
 };
 
 // Instruction Template types and API

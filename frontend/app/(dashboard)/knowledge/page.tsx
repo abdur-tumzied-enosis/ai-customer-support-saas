@@ -12,9 +12,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil, Sparkles, Tag, Globe, ChevronRight, ChevronDown, Eye } from "lucide-react";
-import { documentApi, customInstructionApi, instructionTemplateApi, type ApiDomain, type CustomInstruction, type InstructionTemplate } from "@/lib/api";
+import { documentApi, customInstructionApi, instructionTemplateApi, knowledgeBaseApi, type ApiDomain, type CustomInstruction, type InstructionTemplate, type KnowledgeBase } from "@/lib/api";
 import { ApiAccessEditor, toApiDomainsPayload } from "@/components/knowledge/ApiAccessEditor";
+import KnowledgeBaseBar from "@/components/knowledge/KnowledgeBaseBar";
 import SuggestionsQueue from "@/components/knowledge/SuggestionsQueue";
+import { getStoredKbId, pickKb, storeKbId } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
 
@@ -47,6 +49,9 @@ const EMPTY_INSTRUCTION = { label: "", message: "", api_tool_enabled: false, api
 export default function KnowledgePage() {
 	const { projects, loading: authLoading } = useAuth();
 	const [documents, setDocuments] = useState<Document[]>([]);
+	const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+	const [selectedKb, setSelectedKb] = useState<KnowledgeBase | undefined>();
+	const selectedKbId = selectedKb?.id;
 	const [loading, setLoading] = useState(false);
 	const [instructions, setInstructions] = useState<CustomInstruction[]>([]);
 	const [instructionsLoading, setInstructionsLoading] = useState(false);
@@ -81,19 +86,33 @@ export default function KnowledgePage() {
 	// Get the first project (for now, we'll use the first one)
 	const currentProjectId = projects && projects.length > 0 ? String(projects[0].id) : null;
 
-	const fetchDocuments = useCallback(async () => {
+	const fetchKnowledgeBases = useCallback(async (selectId?: string) => {
 		if (!currentProjectId) return;
+		try {
+			const response = await knowledgeBaseApi.list(currentProjectId);
+			const kbs = response.data.knowledge_bases;
+			setKnowledgeBases(kbs);
+			const kb = pickKb(kbs, selectId ?? getStoredKbId(currentProjectId));
+			setSelectedKb(kb);
+			if (kb) storeKbId(currentProjectId, kb.id);
+		} catch (error) {
+			setAlert({ type: "error", message: formatError(error) });
+		}
+	}, [currentProjectId]);
+
+	const fetchDocuments = useCallback(async () => {
+		if (!currentProjectId || !selectedKbId) return;
 
 		setLoading(true);
 		try {
-			const response = await documentApi.list(currentProjectId);
+			const response = await documentApi.list(currentProjectId, selectedKbId);
 			setDocuments(response.data.documents);
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
 		} finally {
 			setLoading(false);
 		}
-	}, [currentProjectId]);
+	}, [currentProjectId, selectedKbId]);
 
 	const fetchInstructions = useCallback(async () => {
 		if (!currentProjectId) return;
@@ -125,11 +144,21 @@ export default function KnowledgePage() {
 	// Fetch documents, instructions, and templates on mount
 	useEffect(() => {
 		if (!authLoading && currentProjectId) {
-			fetchDocuments();
+			fetchKnowledgeBases();
 			fetchInstructions();
 			fetchTemplates();
 		}
-	}, [authLoading, currentProjectId, fetchDocuments, fetchInstructions, fetchTemplates]);
+	}, [authLoading, currentProjectId, fetchKnowledgeBases, fetchInstructions, fetchTemplates]);
+
+	// Documents follow the selected knowledge base
+	useEffect(() => {
+		fetchDocuments();
+	}, [fetchDocuments]);
+
+	function handleSelectKb(kb: KnowledgeBase) {
+		setSelectedKb(kb);
+		if (currentProjectId) storeKbId(currentProjectId, kb.id);
+	}
 
 	function formatFileSize(bytes: number): string {
 		if (bytes < 1024) return bytes + " B";
@@ -164,6 +193,7 @@ export default function KnowledgePage() {
 			setAlert({ type: "error", message: "No project selected. Please refresh the page." });
 			return;
 		}
+		if (!selectedKb) return;
 
 		setUploading(true);
 		setAlert(null);
@@ -176,14 +206,15 @@ export default function KnowledgePage() {
 					throw new Error(`${file.name} is not a supported file type. Only PDF, TXT, and MD files are allowed.`);
 				}
 
-				await documentApi.upload(file, currentProjectId);
+				await documentApi.upload(file, currentProjectId, selectedKb.id);
 			});
 
 			await Promise.all(uploadPromises);
-			setAlert({ type: "success", message: `Successfully uploaded ${files.length} file(s)` });
-			
-			// Refresh documents list
-			await fetchDocuments();
+			const what = files.length === 1 ? files[0].name : `${files.length} files`;
+			setAlert({ type: "success", message: `Uploaded ${what} to ${selectedKb.name}` });
+
+			// Refresh documents and the per-KB document counts
+			await Promise.all([fetchDocuments(), fetchKnowledgeBases()]);
 			
 			// Reset file input
 			e.target.value = "";
@@ -209,6 +240,7 @@ export default function KnowledgePage() {
 			await documentApi.delete(documentToDelete.id);
 			setDocuments((prev) => prev.filter((doc) => doc.id !== documentToDelete.id));
 			setAlert({ type: "success", message: "Document deleted successfully" });
+			fetchKnowledgeBases();
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
 		} finally {
@@ -229,7 +261,8 @@ export default function KnowledgePage() {
 			setAlert({ type: "error", message: "No project selected" });
 			return;
 		}
-		
+		if (!selectedKb) return;
+
 		// Validate URL
 		try {
 			new URL(crawlUrl);
@@ -243,14 +276,14 @@ export default function KnowledgePage() {
 		
 		try {
 			const depth = parseInt(crawlDepth);
-			await documentApi.crawl(crawlUrl, depth, currentProjectId, "default", crawlSearchQuery.trim() || undefined);
-			setAlert({ type: "success", message: "Web crawl started successfully" });
+			await documentApi.crawl(crawlUrl, depth, currentProjectId, selectedKb.id, crawlSearchQuery.trim() || undefined);
+			setAlert({ type: "success", message: `Web crawl started for ${selectedKb.name}` });
 			setCrawlUrl("");
 			setCrawlDepth("1");
 			setCrawlSearchQuery("");
-			
-			// Refresh documents list
-			await fetchDocuments();
+
+			// Refresh documents and the per-KB document counts
+			await Promise.all([fetchDocuments(), fetchKnowledgeBases()]);
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
 		} finally {
@@ -303,7 +336,7 @@ export default function KnowledgePage() {
 			return (
 				<div className="text-center py-8 text-muted-foreground">
 					<File className="h-12 w-12 mx-auto mb-2 opacity-50" />
-					<p>No documents found</p>
+					<p>No documents in <span className="font-medium">{selectedKb?.name ?? "this knowledge base"}</span> yet</p>
 					<p className="text-sm">Upload PDF or text files or crawl a website to get started</p>
 				</div>
 			);
@@ -660,6 +693,16 @@ export default function KnowledgePage() {
 				</div>
 			</div>
 
+			{currentProjectId && (
+				<KnowledgeBaseBar
+					projectId={currentProjectId}
+					knowledgeBases={knowledgeBases}
+					selected={selectedKb}
+					onSelect={handleSelectKb}
+					onSaved={(kb) => fetchKnowledgeBases(kb.id)}
+				/>
+			)}
+
 			{alert && (
 				<Alert className={alert.type === "error" ? "border-destructive" : ""}>
 					<AlertDescription>{alert.message}</AlertDescription>
@@ -671,6 +714,7 @@ export default function KnowledgePage() {
 					projectId={currentProjectId}
 					onApproved={() => {
 						fetchDocuments();
+						fetchKnowledgeBases();
 						fetchInstructions();
 					}}
 				/>
@@ -763,7 +807,7 @@ export default function KnowledgePage() {
 						Custom Instructions
 					</CardTitle>
 					<CardDescription>
-						Define how your agent should behave, act, and take actions with customers
+						Define how your agent should behave, act, and take actions with customers. These apply to every knowledge base.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
