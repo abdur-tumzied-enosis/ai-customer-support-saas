@@ -10,7 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Facebook, Instagram, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle, Copy, Check, ExternalLink, RefreshCw } from "lucide-react";
-import { channelApi, platformApi, knowledgeBaseApi, type ChannelCredential, type Platform } from "@/lib/api";
+import { channelApi, platformApi, knowledgeBaseApi, type ChannelCredential, type KnowledgeBase, type Platform } from "@/lib/api";
+import { kbOptionLabel } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
 import WebhookSettings from "@/components/channels/WebhookSettings";
 import { formatError } from "@/lib/errors";
@@ -56,12 +57,6 @@ function CopyField({ label, value }: { label: string; value: string }) {
 		</div>
 	);
 }
-
-type KnowledgeBase = {
-	id: string;
-	name: string;
-	created_at: string;
-};
 
 export default function ChannelsPage() {
 	const { projects } = useAuth();
@@ -247,6 +242,8 @@ export default function ChannelsPage() {
 
 	const openAddDialog = () => {
 		resetForm();
+		const defaultKb = knowledgeBases.find((kb) => kb.is_default);
+		if (defaultKb) setFormData((prev) => ({ ...prev, knowledge_base_id: defaultKb.id }));
 		setAddDialogOpen(true);
 	};
 
@@ -284,7 +281,7 @@ export default function ChannelsPage() {
 	const setCredential = (name: string, value: string) =>
 		setFormData(prev => ({ ...prev, credentials: { ...prev.credentials, [name]: value } }));
 
-	const renderKnowledgeBaseSelect = (id: string) => (
+	const renderKnowledgeBaseSelect = (id: string, isEdit: boolean = false) => (
 		<div className="space-y-2">
 			<Label htmlFor={id}>
 				Knowledge Base <span className="text-destructive">*</span>
@@ -299,7 +296,7 @@ export default function ChannelsPage() {
 				<SelectContent>
 					{knowledgeBases.map((kb) => (
 						<SelectItem key={kb.id} value={kb.id}>
-							{kb.name}
+							{kbOptionLabel(kb)}
 						</SelectItem>
 					))}
 				</SelectContent>
@@ -307,7 +304,9 @@ export default function ChannelsPage() {
 			<p className="text-xs text-muted-foreground">
 				{knowledgeBases.length === 0
 					? "No knowledge bases yet. Create one first; the AI answers from it."
-					: "The AI answers this channel's messages from this knowledge base"}
+					: isEdit
+						? "Changing this applies to existing customers from their next message"
+						: "The AI answers this channel's messages from this knowledge base"}
 			</p>
 		</div>
 	);
@@ -504,6 +503,12 @@ export default function ChannelsPage() {
 									{!channel.is_active && (
 										<Badge variant="outline">Inactive</Badge>
 									)}
+									{!channel.knowledge_base && (
+										<Badge variant="destructive">
+											<AlertCircle className="mr-1 h-3 w-3" />
+											No knowledge base — messages are ignored
+										</Badge>
+									)}
 								</div>
 
 								{channel.knowledge_base && (
@@ -661,7 +666,7 @@ export default function ChannelsPage() {
 
 								{renderCredentialFields(selectedPlatform, true)}
 
-								{renderKnowledgeBaseSelect("edit-kb-select")}
+								{renderKnowledgeBaseSelect("edit-kb-select", true)}
 
 								{renderWebhookSetup(selectedPlatform, true)}
 							</>
