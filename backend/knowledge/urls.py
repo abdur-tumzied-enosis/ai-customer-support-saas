@@ -1,7 +1,7 @@
 from django.urls import path
 from .suggestions import SuggestionDecisionView, SuggestionListView
 from .views import (
-	KnowledgeBaseListView,
+	KnowledgeBaseListView, KnowledgeBaseDetailView,
 	DocumentUploadView, DocumentListView, DocumentDeleteView,
 	WebCrawlSubmitView, DocumentMarkdownView, DocumentChildrenView,
 	InstructionTemplateListView, InstructionTemplateUseView,
@@ -11,6 +11,7 @@ from .views import (
 urlpatterns = [
 	# Knowledge base endpoints
 	path("knowledge-bases/", KnowledgeBaseListView.as_view(), name="knowledge-base-list"),
+	path("knowledge-bases/<uuid:kb_id>/", KnowledgeBaseDetailView.as_view(), name="knowledge-base-detail"),
 	
 	# Document endpoints
 	path("documents/upload/", DocumentUploadView.as_view(), name="document-upload"),

@@ -15,6 +15,10 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework import serializers
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
+from django.db.models import Count, Q
+from accounts.models import ProjectUser
 from .models import KnowledgeBase, Document, IngestionJob, IngestionJobStatus, DocumentFileType, MAX_DOCUMENT_FILE_SIZE, CustomInstruction, InstructionTemplate
 from .tasks import run_ingestion_job, crawl_website
 from .api_tool_config import ApiConfigError, apply_api_config, public_api_domains
@@ -33,36 +37,103 @@ class CustomInstructionSerializer(serializers.ModelSerializer):
 User = get_user_model()
 
 
+def _project_user(user, project_id, admin: bool = False):
+	"""The user's membership in project_id (admin role if `admin`), or None — also for a malformed id."""
+	try:
+		qs = ProjectUser.objects.filter(project_id=project_id, user=user)
+		if admin:
+			qs = qs.filter(role="admin")
+		return qs.select_related("project").first()
+	except (ValidationError, ValueError):
+		return None
+
+
+def _kb_error(code: str, message: str, http_status: int) -> Response:
+	return Response({"success": False, "error": {"code": code, "message": message}}, status=http_status)
+
+
+def _kb_dict(kb: KnowledgeBase, document_count: int) -> dict:
+	return {
+		"id": str(kb.id),
+		"name": kb.name,
+		"is_default": kb.is_default,
+		"document_count": document_count,
+		"created_at": kb.created_at.isoformat(),
+	}
+
+
+def _top_level_doc_count(kb: KnowledgeBase) -> int:
+	return kb.documents.filter(parent_crawl_id__isnull=True).count()
+
+
+def _clean_kb_name(project, raw, exclude_id=None):
+	"""(name, None) when usable, else (None, error response)."""
+	name = (raw or "").strip()
+	if not 1 <= len(name) <= 100:
+		return None, _kb_error("invalid_name", "Name must be 1-100 characters", status.HTTP_400_BAD_REQUEST)
+	if KnowledgeBase.objects.filter(project=project, name__iexact=name).exclude(id=exclude_id).exists():
+		return None, _kb_error("duplicate_name", "A knowledge base with this name already exists", status.HTTP_409_CONFLICT)
+	return name, None
+
+
 class KnowledgeBaseListView(APIView):
-	"""List all knowledge bases for a project"""
+	"""List a project's knowledge bases (default first) or create one."""
 	permission_classes = [IsAuthenticated]
 
 	def get(self, request):
 		project_id = request.query_params.get('project_id')
 		if not project_id:
-			return Response(
-				{"success": False, "error": {"code": "missing_project", "message": "project_id is required"}},
-				status=status.HTTP_400_BAD_REQUEST
-			)
+			return _kb_error("missing_project", "project_id is required", status.HTTP_400_BAD_REQUEST)
+		project_user = _project_user(request.user, project_id)
+		if not project_user:
+			return _kb_error("access_denied", "No access to this project", status.HTTP_403_FORBIDDEN)
+		project = project_user.project
+		# Created up front: every project shows its default, and a KB the user names "default" can't collide with it later
+		KnowledgeBase.get_default(project)
+		kbs = KnowledgeBase.objects.filter(project=project).annotate(
+			doc_count=Count("documents", filter=Q(documents__parent_crawl_id__isnull=True))
+		).order_by("-is_default", "name")
+		kb_data = [_kb_dict(kb, kb.doc_count) for kb in kbs]
+		return Response({"success": True, "data": {"knowledge_bases": kb_data, "count": len(kb_data)}}, status=status.HTTP_200_OK)
 
-		# Get knowledge bases for this project
-		knowledge_bases = KnowledgeBase.objects.filter(project_id=project_id).order_by('name')
-		
-		kb_data = []
-		for kb in knowledge_bases:
-			kb_data.append({
-				"id": str(kb.id),
-				"name": kb.name,
-				"created_at": kb.created_at.isoformat(),
-			})
+	def post(self, request):
+		project_user = _project_user(request.user, request.data.get("project_id"), admin=True)
+		if not project_user:
+			return _kb_error("access_denied", "No admin access to this project", status.HTTP_403_FORBIDDEN)
+		project = project_user.project
+		KnowledgeBase.get_default(project)
+		name, error = _clean_kb_name(project, request.data.get("name"))
+		if error:
+			return error
+		kb = KnowledgeBase(project=project, name=name)
+		try:
+			with transaction.atomic():
+				kb.save()
+		except IntegrityError:  # same name created concurrently
+			return _kb_error("duplicate_name", "A knowledge base with this name already exists", status.HTTP_409_CONFLICT)
+		return Response({"success": True, "data": {"knowledge_base": _kb_dict(kb, 0)}}, status=status.HTTP_201_CREATED)
 
-		return Response({
-			"success": True,
-			"data": {
-				"knowledge_bases": kb_data,
-				"count": len(kb_data)
-			}
-		}, status=status.HTTP_200_OK)
+
+class KnowledgeBaseDetailView(APIView):
+	"""Rename a knowledge base. Only the label changes; its collection, documents and conversations stay."""
+	permission_classes = [IsAuthenticated]
+
+	def patch(self, request, kb_id):
+		kb = KnowledgeBase.objects.filter(id=kb_id).select_related("project").first()
+		if not kb:
+			return _kb_error("not_found", "Knowledge base not found", status.HTTP_404_NOT_FOUND)
+		if not _project_user(request.user, kb.project_id, admin=True):
+			return _kb_error("access_denied", "No admin access to this project", status.HTTP_403_FORBIDDEN)
+		name, error = _clean_kb_name(kb.project, request.data.get("name"), exclude_id=kb.id)
+		if error:
+			return error
+		kb.name = name
+		try:
+			with transaction.atomic():
+				kb.save(update_fields=["name"])
+		except IntegrityError:
+			return _kb_error("duplicate_name", "A knowledge base with this name already exists", status.HTTP_409_CONFLICT)
+		return Response({"success": True, "data": {"knowledge_base": _kb_dict(kb, _top_level_doc_count(kb))}}, status=status.HTTP_200_OK)
 
 
 class InstructionTemplateListView(APIView):
