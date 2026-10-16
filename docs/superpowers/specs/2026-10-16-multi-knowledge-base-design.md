@@ -46,7 +46,7 @@ Out (later):
 - Add `is_default = BooleanField(default=False)`.
 - Data migration: set `is_default=True` on every KB named `"default"`.
 - Constraints:
-  - `UniqueConstraint(project, name)`: KB names are unique per project.
+  - `UniqueConstraint(Lower(name), project)`: KB names are unique per project, ignoring case ("products" duplicates "Products").
   - `UniqueConstraint(project, condition=Q(is_default=True))`: at most one default per project.
 - Collection naming for new KBs: `kb_{project.slug}_{kb.id.hex}`. The name is not part of it, so spaces or Bengali names cannot produce an invalid collection name, and a rename never touches Qdrant. Existing KBs keep their stored `vector_collection`.
 - Replace `get_vector_collection_name(project, kb_name)` with `new_collection_name(project, kb_id)`, and update its callers and tests.
@@ -54,7 +54,7 @@ Out (later):
 If existing data has duplicate `(project, name)` pairs, the migration fails. They are unlikely, because creation was always `get_or_create` by name. Check before deploying with:
 
 ```sql
-select project_id, name, count(*) from knowledge_knowledgebase group by 1, 2 having count(*) > 1;
+select project_id, lower(name), count(*) from knowledge_knowledgebase group by 1, 2 having count(*) > 1;
 ```
 
 ### Default KB (`channels_app/service/conversation_service.py`)
