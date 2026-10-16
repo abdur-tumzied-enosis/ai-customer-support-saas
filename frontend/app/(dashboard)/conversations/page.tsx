@@ -9,7 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/contexts/AuthContext";
 import { Badge } from "@/components/ui/badge";
-import { conversationApi, ApiError, type ConversationListItem } from "@/lib/api";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { conversationApi, knowledgeBaseApi, ApiError, type ConversationListItem, type KnowledgeBase } from "@/lib/api";
+import { getStoredKbId, kbOptionLabel, pickKb } from "@/lib/knowledgeBase";
 import { formatError } from "@/lib/errors";
 import { timeAgo } from "@/lib/utils";
 
@@ -23,6 +27,9 @@ export default function ConversationsPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [creating, setCreating] = useState(false);
 	const [deleting, setDeleting] = useState<string | null>(null);
+	const [newChatOpen, setNewChatOpen] = useState(false);
+	const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+	const [newChatKbId, setNewChatKbId] = useState("");
 
 	// Get the first project (for now, we'll use the first one)
 	const currentProject = projects && projects.length > 0 ? projects[0] : null;
@@ -49,14 +56,29 @@ export default function ConversationsPage() {
 		}
 	}
 
-	async function handleCreateConversation() {
+	async function openNewChat() {
 		if (!currentProject) return;
+		setError(null);
+		try {
+			const projectId = String(currentProject.id);
+			const response = await knowledgeBaseApi.list(projectId);
+			setKnowledgeBases(response.data.knowledge_bases);
+			setNewChatKbId(pickKb(response.data.knowledge_bases, getStoredKbId(projectId))?.id ?? "");
+			setNewChatOpen(true);
+		} catch (err) {
+			setError(formatError(err));
+		}
+	}
+
+	async function handleCreateConversation() {
+		if (!currentProject || !newChatKbId) return;
 
 		setCreating(true);
 		setError(null);
 		try {
 			const response = await conversationApi.create({
 				project_slug: currentProject.slug,
+				knowledge_base_id: newChatKbId,
 			});
 			router.push(`/conversations/${response.data.conversation.id}`);
 		} catch (err) {
@@ -119,8 +141,8 @@ export default function ConversationsPage() {
 					>
 						Needs human ({needsHumanCount})
 					</Button>
-					<Button onClick={handleCreateConversation} disabled={creating}>
-						{creating ? "Creating..." : "New Conversation"}
+					<Button onClick={openNewChat} disabled={creating}>
+						New test chat
 					</Button>
 				</div>
 			</div>
@@ -137,7 +159,7 @@ export default function ConversationsPage() {
 				{conversations.length === 0 ? (
 					<CardContent className="p-4">
 						<div className="text-center text-muted-foreground py-8">
-							No conversations yet. Create one to get started!
+							No conversations yet. Start a test chat to try your knowledge base.
 						</div>
 					</CardContent>
 				) : (
@@ -149,6 +171,7 @@ export default function ConversationsPage() {
 										<div className="font-medium flex flex-wrap items-center gap-2">
 											{conv.name || "Unnamed Conversation"}
 											<Badge variant="outline">{conv.channel === "self" ? "Test" : conv.channel === "facebook" ? "Facebook" : conv.channel}</Badge>
+											<Badge variant="secondary">{conv.knowledge_base_name}</Badge>
 											{conv.is_paused && <Badge variant="destructive">Needs human</Badge>}
 										</div>
 										{conv.is_paused && conv.handoff_at && (
@@ -157,7 +180,7 @@ export default function ConversationsPage() {
 											</div>
 										)}
 										<div className="text-xs text-muted-foreground">
-											{conv.message_count} messages • {conv.knowledge_base_name}
+											{conv.message_count} messages
 											{conv.last_message && (
 												<> • {new Date(conv.last_message.created_at).toLocaleDateString()}</>
 											)}
@@ -186,6 +209,36 @@ export default function ConversationsPage() {
 					</ul>
 				)}
 			</Card>
+
+			<Dialog open={newChatOpen} onOpenChange={setNewChatOpen}>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>New test chat</DialogTitle>
+						<DialogDescription>The bot answers only from the knowledge base you pick.</DialogDescription>
+					</DialogHeader>
+					<div className="space-y-2">
+						<Label htmlFor="new-chat-kb">Knowledge base</Label>
+						<Select value={newChatKbId || undefined} onValueChange={setNewChatKbId}>
+							<SelectTrigger id="new-chat-kb">
+								<SelectValue placeholder="Select a knowledge base" />
+							</SelectTrigger>
+							<SelectContent>
+								{knowledgeBases.map((kb) => (
+									<SelectItem key={kb.id} value={kb.id}>
+										{kbOptionLabel(kb)}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+					</div>
+					<DialogFooter>
+						<Button variant="outline" onClick={() => setNewChatOpen(false)}>Cancel</Button>
+						<Button onClick={handleCreateConversation} disabled={creating || !newChatKbId}>
+							{creating ? "Creating..." : "Start chat"}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }

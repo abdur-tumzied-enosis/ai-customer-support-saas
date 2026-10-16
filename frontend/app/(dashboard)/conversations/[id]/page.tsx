@@ -11,6 +11,7 @@ import { conversationApi, type Conversation, type ConversationMessage } from "@/
 import { formatError } from "@/lib/errors";
 import { ArrowLeft, Loader2, Bot } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 
 export default function ConversationThreadPage() {
 	const params = useParams<{ id: string }>();
@@ -284,10 +285,15 @@ export default function ConversationThreadPage() {
 							</Avatar>
 							<div>
 								<h1 className="text-base font-semibold">{conversation?.name || "Conversation"}</h1>
-								<p className="text-xs text-muted-foreground">
-									{conversation?.channel === "facebook" ? "Facebook" : "Test chat"}
-									{conversation?.is_paused ? " · bot paused" : ""}
-								</p>
+								<div className="flex items-center gap-2 text-xs text-muted-foreground">
+									<span>
+										{conversation?.channel === "facebook" ? "Facebook" : "Test chat"}
+										{conversation?.is_paused ? " · bot paused" : ""}
+									</span>
+									{conversation?.knowledge_base_name && (
+										<Badge variant="secondary" className="text-xs">{conversation.knowledge_base_name}</Badge>
+									)}
+								</div>
 							</div>
 						</div>
 					</div>
