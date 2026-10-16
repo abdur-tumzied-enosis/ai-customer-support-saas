@@ -3,6 +3,7 @@ import os
 from enum import Enum
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from accounts.models import Project
@@ -77,25 +78,29 @@ class KnowledgeBase(models.Model):
 	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="knowledge_bases")
 	name = models.CharField(max_length=255)
 	vector_collection = models.CharField(max_length=255, unique=True)
+	# Fallback for uploads, crawls and test chats that name no KB. A flag, not the name "default", so it survives a rename.
+	is_default = models.BooleanField(default=False)
 	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		constraints = [
+			models.UniqueConstraint(Lower("name"), "project", name="kb_unique_name_per_project"),
+			models.UniqueConstraint(fields=["project"], condition=models.Q(is_default=True), name="kb_one_default_per_project"),
+		]
 
 	def __str__(self) -> str:
 		return f"{self.project.name} - {self.name}"
 
+	def save(self, *args, **kwargs):
+		# Named by id, not name: a rename never touches Qdrant, and any name (spaces, Bengali) gives a valid collection name
+		if not self.vector_collection:
+			self.vector_collection = f"kb_{self.project.slug}_{self.id.hex}"
+		super().save(*args, **kwargs)
+
 	@classmethod
-	def get_vector_collection_name(cls, project, kb_name: str) -> str:
-		"""
-		Generate a vector collection name for a knowledge base.
-		
-		Args:
-			project: Project instance
-			kb_name: Knowledge base name
-			
-		Returns:
-			str: Vector collection name in format: kb_{project_slug}_{kb_name}_{project_id_without_dashes}
-		"""
-		project_id_str = str(project.id).replace('-', '')
-		return f"kb_{project.slug}_{kb_name}_{project_id_str}"
+	def get_default(cls, project) -> "KnowledgeBase":
+		kb, _ = cls.objects.get_or_create(project=project, is_default=True, defaults={"name": "default"})
+		return kb
 
 
 class Document(models.Model):

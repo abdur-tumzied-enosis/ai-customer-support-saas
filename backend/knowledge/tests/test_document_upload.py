@@ -34,11 +34,7 @@ class DocumentUploadViewTests(TestCase):
 		ProjectUser.objects.create(project=self.project, user=self.user, role="admin")
 		
 		# Create knowledge base
-		self.kb = KnowledgeBase.objects.create(
-			project=self.project,
-			name="default",
-			vector_collection=KnowledgeBase.get_vector_collection_name(self.project, "default")
-		)
+		self.kb = KnowledgeBase.objects.create(project=self.project, name="default", is_default=True)
 		
 		# Authenticate client
 		self.client.force_authenticate(user=self.user)

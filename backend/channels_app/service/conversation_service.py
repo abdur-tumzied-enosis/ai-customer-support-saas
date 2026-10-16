@@ -8,26 +8,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def get_default_knowledge_base(project: Project) -> KnowledgeBase:
-	"""
-	Get or create the default knowledge base for a project.
-	
-	Args:
-		project: The project to get the default KB for
-		
-	Returns:
-		KnowledgeBase instance
-	"""
-	kb, created = KnowledgeBase.objects.get_or_create(
-		project=project,
-		name="default",
-		defaults={'vector_collection': KnowledgeBase.get_vector_collection_name(project, "default")}
-	)
-	if created:
-		logger.info(f"Created default knowledge base for project {project.slug}")
-	return kb
-
-
 def get_or_create_self_contact(project: Project, user_id: Optional[str] = None) -> CustomerContact:
 	"""
 	Get or create a contact with platform="self" for UI conversations.
@@ -75,7 +55,7 @@ def create_conversation(
 		Created Conversation instance
 	"""
 	if knowledge_base is None:
-		knowledge_base = get_default_knowledge_base(project)
+		knowledge_base = KnowledgeBase.get_default(project)
 	
 	# For UI conversations, create or get self contact
 	if contact is None:

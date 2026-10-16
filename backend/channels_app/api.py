@@ -6,7 +6,7 @@ from rest_framework.exceptions import ValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
 from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
-from .service.conversation_service import create_conversation, get_default_knowledge_base
+from .service.conversation_service import create_conversation
 from .service.message_service import create_ui_message
 from datetime import timedelta
 import requests

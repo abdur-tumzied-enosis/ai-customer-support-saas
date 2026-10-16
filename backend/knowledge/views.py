@@ -135,8 +135,7 @@ class DocumentUploadView(APIView):
             kb_name = request.data.get('kb_name', 'default')
             kb, created = KnowledgeBase.objects.get_or_create(
                 project=project,
-                name=kb_name,
-                defaults={'vector_collection': KnowledgeBase.get_vector_collection_name(project, kb_name)}
+                name=kb_name
             )
 
             # Handle file upload
@@ -915,8 +914,7 @@ class WebCrawlSubmitView(APIView):
             # Get or create knowledge base
             kb, created = KnowledgeBase.objects.get_or_create(
                 project=project,
-                name=kb_name,
-                defaults={'vector_collection': KnowledgeBase.get_vector_collection_name(project, kb_name)}
+                name=kb_name
             )
             
             # Create parent document record
