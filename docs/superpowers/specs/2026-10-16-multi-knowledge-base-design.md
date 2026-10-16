@@ -29,6 +29,8 @@ In:
 - Switch the KB on the knowledge page
 - Pick the KB for a new test chat
 - Show the KB name on the conversation list and in the chat header
+- Changing a channel's KB applies to its existing customers too, not only new ones
+- Flag a channel that has no KB
 
 Out (later):
 - Delete a KB
@@ -60,6 +62,19 @@ select project_id, name, count(*) from knowledge_knowledgebase group by 1, 2 hav
 `get_default_knowledge_base(project)` looks up by `is_default=True`, not by name. When none exists, it creates `name="default", is_default=True`.
 
 `GET /knowledge-bases/` calls it first. Every project therefore has its default before the user can create other KBs, and a user-created KB named "default" cannot collide with an auto-created one.
+
+### Channel KB applies to existing customers (`channels_app/service/conversation_service.py`)
+
+Today each external contact has one conversation, and that conversation keeps the KB it was created with. After a channel's KB changes, existing customers are still answered from the old KB.
+
+`ensure_contact_conversation(contact, knowledge_base)` now also handles an existing conversation: when its `knowledge_base_id` differs from the channel's KB, it updates the conversation and saves it with `update_fields=["knowledge_base"]`. The switch therefore happens on the customer's next message.
+
+Callers:
+- `facebook_messing.py` (also handles Instagram)
+- `tasks.py`
+- `whatsapp_messaging.py`, which currently skips the call when `contact.conversation` exists. It must always call `ensure_contact_conversation`.
+
+Test chats have no contact and are unaffected.
 
 ### Reply context fix (`channels_app/tasks.py`)
 
@@ -121,6 +136,15 @@ Every endpoint returns errors in the existing `{"success": false, "error": {code
 - **List:** each conversation's KB name shows as a badge (it is plain text today).
 - **Chat header** (`conversations/[id]/page.tsx`): shows a KB name badge next to "Test chat" / the channel label.
 
+### Channels page (`app/(dashboard)/channels/page.tsx`)
+
+The add and edit dialogs already have a required KB dropdown, and the channel card already shows the KB name. Changes:
+
+- Dropdown items read `Products · 12 docs`, and the default KB carries a "default" tag.
+- Adding a channel preselects the default KB.
+- A channel card with no KB shows a red badge: "No knowledge base — messages are ignored".
+- Edit dialog hint: "Changing this applies to existing customers from their next message".
+
 ## Testing
 
 Backend (`knowledge/tests`, `channels_app/tests`):
@@ -146,6 +170,9 @@ Backend (`knowledge/tests`, `channels_app/tests`):
   - With no `kb_id`, the default KB is used.
   - Existing tests are moved from `kb_name` to `kb_id`.
 - **Reply context:** `build_reply_context` uses the stored `vector_collection` after a rename.
+- **Channel KB change**
+  - An existing contact's conversation switches to the channel's new KB on its next message, for both the Facebook and WhatsApp paths.
+  - The conversation is not changed when the KB is the same.
 
 Frontend: there is no test setup in `frontend/package.json`, so check by hand:
 
