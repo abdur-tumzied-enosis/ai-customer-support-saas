@@ -1,6 +1,7 @@
 import json
 import hashlib
 import os
+import uuid
 from django.http import JsonResponse, HttpRequest
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
@@ -19,7 +20,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from accounts.models import ProjectUser
-from .models import KnowledgeBase, Document, IngestionJob, IngestionJobStatus, DocumentFileType, MAX_DOCUMENT_FILE_SIZE, CustomInstruction, InstructionTemplate
+from .models import KnowledgeBase, Document, IngestionJob, IngestionJobStatus, DocumentFileType, MAX_DOCUMENT_FILE_SIZE, CustomInstruction, InstructionTemplate, document_storage_path
 from .tasks import run_ingestion_job, crawl_website
 from .api_tool_config import ApiConfigError, apply_api_config, public_api_domains
 
@@ -198,19 +199,13 @@ class DocumentUploadView(APIView):
                 )
 
             # Verify user has access to this project
-            try:
-                from accounts.models import ProjectUser
-                project_user = ProjectUser.objects.get(
-                    project_id=project_id,
-                    user=request.user,
-                    role='admin'
-                )
-                project = project_user.project
-            except ProjectUser.DoesNotExist:
+            project_user = _project_user(request.user, project_id, admin=True)
+            if not project_user:
                 return Response(
                     {"success": False, "error": {"code": "access_denied", "message": "No access to this project"}},
                     status=status.HTTP_403_FORBIDDEN
                 )
+            project = project_user.project
 
             kb = _resolve_kb(project, request.data.get('kb_id'))
             if kb is None:
@@ -289,25 +284,8 @@ class DocumentUploadView(APIView):
                 status='processing'
             )
 
-            # Save file to storage
-            # Use KB name as slug (slugify if needed, but for now use name directly)
-            kb_slug = kb.name.lower().replace(' ', '-')
-            # Calculate max filename length to keep total path under 100 chars
-            # Path structure: "documents/" (10) + project_slug (32) + "/" (1) + kb_slug + "/" (1) + doc_id (36) + "_" (1) + filename
-            # Base path length: 10 + 32 + 1 + len(kb_slug) + 1 + 36 + 1 = 81 + len(kb_slug)
-            base_path_length = 81 + len(kb_slug)
-            max_filename_length = max(10, 100 - base_path_length)  # Ensure at least 10 chars for filename
-            
-            # Further truncate filename if needed to fit in path
-            if len(filename) > max_filename_length:
-                name, ext = os.path.splitext(filename)
-                max_base_length = max_filename_length - len(ext)
-                if max_base_length < 1:
-                    filename = filename[:max_filename_length]
-                else:
-                    filename = name[:max_base_length] + ext
-            
-            file_path = f"documents/{project.slug}/{kb_slug}/{document.id}_{filename}"
+            # Save file to storage (filename is already ≤100 chars, so the path fits Document.file)
+            file_path = document_storage_path(kb, f"{document.id}_{filename}")
             saved_file = default_storage.save(file_path, ContentFile(file_content))
             document.file = saved_file
             document.save()
@@ -385,18 +363,12 @@ class DocumentListView(APIView):
 
             # Filter by project access
             if project_id:
-                try:
-                    from accounts.models import ProjectUser
-                    ProjectUser.objects.get(
-                        project_id=project_id,
-                        user=request.user
-                    )
-                    qs = qs.filter(kb__project_id=project_id)
-                except ProjectUser.DoesNotExist:
+                if not _project_user(request.user, project_id):
                     return Response(
                         {"success": False, "error": {"code": "access_denied", "message": "No access to this project"}},
                         status=status.HTTP_403_FORBIDDEN
                     )
+                qs = qs.filter(kb__project_id=project_id)
             else:
                 # If no project specified, show documents from all user's projects
                 from accounts.models import ProjectUser
@@ -405,6 +377,13 @@ class DocumentListView(APIView):
 
             # Additional filters
             if kb_id:
+                try:
+                    uuid.UUID(str(kb_id))
+                except ValueError:
+                    return Response(
+                        {"success": False, "error": {"code": "kb_not_found", "message": "Knowledge base not found"}},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
                 qs = qs.filter(kb_id=kb_id)
             if status_filter:
                 qs = qs.filter(status=status_filter)
@@ -934,7 +913,6 @@ class WebCrawlSubmitView(APIView):
     def post(self, request):
         try:
             from urllib.parse import urlparse
-            from accounts.models import ProjectUser
             
             # Get parameters
             url = request.data.get('url', '').strip()
@@ -978,19 +956,14 @@ class WebCrawlSubmitView(APIView):
                 )
             
             # Verify user has admin access to this project
-            try:
-                project_user = ProjectUser.objects.get(
-                    project_id=project_id,
-                    user=request.user,
-                    role='admin'
-                )
-                project = project_user.project
-            except ProjectUser.DoesNotExist:
+            project_user = _project_user(request.user, project_id, admin=True)
+            if not project_user:
                 return Response(
                     {"success": False, "error": {"code": "access_denied", "message": "No admin access to this project"}},
                     status=status.HTTP_403_FORBIDDEN
                 )
-            
+            project = project_user.project
+
             kb = _resolve_kb(project, request.data.get('kb_id'))
             if kb is None:
                 return Response(

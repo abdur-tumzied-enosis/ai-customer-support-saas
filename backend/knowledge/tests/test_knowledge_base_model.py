@@ -28,3 +28,8 @@ class KnowledgeBaseModelTest(TestCase):
 			KnowledgeBase.objects.create(project=self.project, name="products")
 		other = Project.objects.create(name="Q", slug="q-kb")
 		KnowledgeBase.objects.create(project=other, name="Products")  # other project: fine
+
+	def test_get_default_adopts_legacy_default_in_other_case(self):
+		legacy = KnowledgeBase.objects.create(project=self.project, name="Default")
+		kb = KnowledgeBase.get_default(self.project)
+		assert kb.id == legacy.id and kb.is_default

@@ -33,3 +33,6 @@ class CrawlKbTest(TestCase):
 	def test_crawl_rejects_unknown_kb(self, _delay):
 		assert self.crawl(kb_id="not-a-uuid").status_code == 404
 		assert not Document.objects.exists()
+
+	def test_crawl_with_malformed_project_id_is_403(self, _delay):
+		assert self.crawl(project_id="not-a-uuid").status_code == 403

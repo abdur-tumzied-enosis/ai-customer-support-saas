@@ -14,7 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import ProjectUser
-from .models import CustomInstruction, Document, IngestionJob, IngestionJobStatus, MemorySuggestion
+from .models import CustomInstruction, Document, IngestionJob, IngestionJobStatus, MemorySuggestion, document_storage_path
 from .tasks import run_ingestion_job
 
 
@@ -41,8 +41,7 @@ def _add_knowledge_document(s: MemorySuggestion) -> str:
 	content = f"Q: {s.title}\nA: {s.body}\n".encode()
 	doc = Document.objects.create(kb=kb, source_type="upload", filename=f"faq-{str(s.id)[:8]}.txt",
 		checksum=hashlib.sha256(content).hexdigest())
-	kb_slug = kb.name.lower().replace(" ", "-")
-	doc.file = default_storage.save(f"documents/{kb.project.slug}/{kb_slug}/{doc.id}_{doc.filename}", ContentFile(content))
+	doc.file = default_storage.save(document_storage_path(kb, f"{doc.id}_{doc.filename}"), ContentFile(content))
 	doc.file_size = len(content)
 	doc.save()
 	job = IngestionJob.objects.create(kb=kb, document=doc, status=IngestionJobStatus.PENDING.value,

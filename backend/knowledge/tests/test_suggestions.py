@@ -23,7 +23,7 @@ class SuggestionApiTest(TestCase):
 
 	def setUp(self):
 		self.user = get_user_model().objects.create_user(username="k@x.com", email="k@x.com", password="pw123456")
-		self.project = Project.objects.create(name="P", slug="p-sugg")
+		self.project = Project.objects.create(name="P", slug="0123456789abcdef0123456789abce")  # signup-sized slug: 30 hex chars
 		ProjectUser.objects.create(project=self.project, user=self.user, role="admin")
 		self.kb = KnowledgeBase.objects.create(project=self.project, name="default", vector_collection="vc-sugg")
 		self.client = APIClient()

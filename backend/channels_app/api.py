@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
+from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
 from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
@@ -296,7 +297,7 @@ class ConversationListView(APIView):
 		if knowledge_base_id:
 			try:
 				knowledge_base = KnowledgeBase.objects.get(id=knowledge_base_id, project=project)
-			except KnowledgeBase.DoesNotExist:
+			except (KnowledgeBase.DoesNotExist, DjangoValidationError):  # unknown or malformed id
 				return Response({
 					"success": False,
 					"error": {
@@ -642,7 +643,7 @@ class ChannelListCreateView(APIView):
 		if knowledge_base_id:
 			try:
 				knowledge_base = KnowledgeBase.objects.get(id=knowledge_base_id, project=project)
-			except KnowledgeBase.DoesNotExist:
+			except (KnowledgeBase.DoesNotExist, DjangoValidationError):  # unknown or malformed id
 				return Response({
 					"success": False,
 					"error": {

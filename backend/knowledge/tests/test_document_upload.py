@@ -323,3 +323,28 @@ class DocumentUploadViewTests(TestCase):
 		self.assertIn("id", job_data)
 		self.assertIn("status", job_data)
 
+
+	@patch('knowledge.views.run_ingestion_job.delay')
+	def test_upload_to_long_kb_name_in_signup_sized_project(self, mock_task):
+		project = Project.objects.create(name="Real", slug="0123456789abcdef0123456789abcd")  # signup slugs are 30 hex chars
+		ProjectUser.objects.create(project=project, user=self.user, role="admin")
+		kb = KnowledgeBase.objects.create(project=project, name="Support policies and refund rules for 2026")
+		file = self.create_test_file("refund-policy-for-customers.pdf")
+		data = {"project_id": str(project.id), "kb_id": str(kb.id), "file": file}
+		response = self.client.post("/api/kb/documents/upload/", data, format="multipart")
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		doc = Document.objects.get(kb=kb)
+		self.assertIn(kb.id.hex, doc.file.name)
+		self.assertTrue(doc.file.name.endswith("refund-policy-for-customers.pdf"))
+
+	@patch('knowledge.views.run_ingestion_job.delay')
+	def test_upload_with_malformed_project_id_is_403(self, mock_task):
+		data = {"project_id": "not-a-uuid", "file": self.create_test_file()}
+		response = self.client.post("/api/kb/documents/upload/", data, format="multipart")
+		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+	def test_document_list_rejects_malformed_ids(self):
+		response = self.client.get("/api/kb/documents/", {"project_id": "not-a-uuid"})
+		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+		response = self.client.get("/api/kb/documents/", {"project_id": str(self.project.id), "kb_id": "not-a-uuid"})
+		self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

@@ -62,15 +62,14 @@ class DocumentFileType(str, Enum):
 MAX_DOCUMENT_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 
+def document_storage_path(kb, filename: str) -> str:
+	"""documents/<project slug>/<kb id>/<filename>. The KB id, not its name: survives renames, and any name is a safe path.
+	Longest: 10 + 50 (slug) + 1 + 32 + 1 + 36 ("<doc id>_") + 100 (filename) = 230, inside Document.file's 255."""
+	return f"documents/{kb.project.slug}/{kb.id.hex}/{filename}"
+
+
 def document_upload_path(instance, filename):
-    """
-    Generate upload path for documents
-    Format: documents/project_slug/kb_slug/filename
-    """
-    project_slug = instance.kb.project.slug
-    # Use KB name as slug (slugify if needed, but for now use name directly)
-    kb_slug = instance.kb.name.lower().replace(' ', '-')
-    return f"documents/{project_slug}/{kb_slug}/{filename}"
+	return document_storage_path(instance.kb, filename)
 
 
 class KnowledgeBase(models.Model):
@@ -99,6 +98,12 @@ class KnowledgeBase(models.Model):
 
 	@classmethod
 	def get_default(cls, project) -> "KnowledgeBase":
+		# A pre-flag KB named "Default"/"DEFAULT" (the migration only flagged exact "default") would block creating "default"
+		legacy = cls.objects.filter(project=project, name__iexact="default", is_default=False).first()
+		if legacy and not cls.objects.filter(project=project, is_default=True).exists():
+			legacy.is_default = True
+			legacy.save(update_fields=["is_default"])
+			return legacy
 		kb, _ = cls.objects.get_or_create(project=project, is_default=True, defaults={"name": "default"})
 		return kb
 
@@ -110,7 +115,7 @@ class Document(models.Model):
 	source_type = models.CharField(max_length=32, choices=SOURCE_CHOICES, default="upload")
 
 	# File upload field
-	file = models.FileField(upload_to=document_upload_path, null=True, blank=True)
+	file = models.FileField(upload_to=document_upload_path, max_length=255, null=True, blank=True)
 	filename = models.CharField(max_length=255, blank=True, default="")
 	file_size = models.PositiveBigIntegerField(default=0)
 
