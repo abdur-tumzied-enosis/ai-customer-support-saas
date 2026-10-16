@@ -87,9 +87,13 @@ def create_conversation(
 
 
 def ensure_contact_conversation(contact: CustomerContact, knowledge_base: KnowledgeBase, name: str = "") -> Conversation:
-	"""The single conversation of an external-platform contact, created on first use."""
+	"""The single conversation of an external-platform contact, created on first use; it follows the channel's current KB."""
 	with transaction.atomic():
 		contact = CustomerContact.objects.select_for_update().get(pk=contact.pk)  # two webhooks at once must not create two
-		if contact.conversation_id:
-			return contact.conversation
-		return create_conversation(project=contact.project, knowledge_base=knowledge_base, name=name, contact=contact)
+		conversation = contact.conversation
+		if conversation is None:
+			return create_conversation(project=contact.project, knowledge_base=knowledge_base, name=name, contact=contact)
+		if conversation.knowledge_base_id != knowledge_base.id:  # the channel's KB was changed since this conversation began
+			conversation.knowledge_base = knowledge_base
+			conversation.save(update_fields=["knowledge_base"])
+		return conversation

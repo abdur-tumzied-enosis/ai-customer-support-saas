@@ -126,10 +126,9 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 					if conversation is not None and conversation.name == default_name:
 						conversation.name = contact.display_name
 						conversation.save(update_fields=["name"])
-			if conversation is None:
-				conversation = ensure_contact_conversation(
-					contact, knowledge_base, name=contact.display_name or default_name
-				)
+			conversation = ensure_contact_conversation(
+				contact, knowledge_base, name=contact.display_name or default_name
+			)
 
 			# Extract message data
 			message_id = message.get("mid", "")

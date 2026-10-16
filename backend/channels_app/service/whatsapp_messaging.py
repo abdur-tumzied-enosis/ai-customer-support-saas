@@ -37,7 +37,7 @@ def _handle_message(phone_number_id: str, message: Dict[str, Any], name: str) ->
 	if name and not contact.display_name:  # WhatsApp sends the profile name with every message
 		contact.display_name = name[:255]
 		contact.save(update_fields=["display_name"])
-	conversation = contact.conversation or ensure_contact_conversation(
+	conversation = ensure_contact_conversation(
 		contact, cred.knowledge_base, name=contact.display_name or "WhatsApp user"
 	)
 

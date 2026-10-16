@@ -52,3 +52,13 @@ class FacebookConversationTest(TestCase):
 		handle_facebook_message(payload("m2"))
 		contact.refresh_from_db()
 		assert contact.display_name == "Ann Lee" and contact.conversation.name == "Ann Lee"
+
+	@mock.patch("channels_app.service.facebook_messing.get_user_name", return_value="Ann Lee")
+	def test_existing_customer_follows_channel_kb_change(self, _get_name, schedule):
+		handle_facebook_message(payload("m1"))
+		new_kb = KnowledgeBase.objects.create(project=self.project, name="kb2", vector_collection="vc-fb2")
+		ChannelCredential.objects.filter(project=self.project).update(knowledge_base=new_kb)
+		handle_facebook_message(payload("m2"))
+		contact = CustomerContact.objects.get(external_id="psid-1")
+		assert contact.conversation.knowledge_base_id == new_kb.id
+		assert Message.objects.get(external_message_id="m2").conversation_id == contact.conversation_id

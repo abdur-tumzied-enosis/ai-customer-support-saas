@@ -7,8 +7,9 @@ from django.test import Client, SimpleTestCase, TestCase
 
 from accounts.models import Project
 from channels_app.facebook_client import WHATSAPP_MAX_TEXT_CHARS, send_whatsapp_text
-from channels_app.models import ChannelCredential, CustomerContact, Message
+from channels_app.models import ChannelCredential, Conversation, CustomerContact, Message
 from channels_app.reply import deliver
+from channels_app.service.conversation_service import ensure_contact_conversation
 from channels_app.service.message_service import create_outbound_message
 from channels_app.service.whatsapp_messaging import handle_whatsapp_message
 from knowledge.models import KnowledgeBase
@@ -74,6 +75,13 @@ class WhatsAppInboundTest(WhatsAppBase):
 		assert not Message.objects.exists() and not CustomerContact.objects.exists()
 		schedule.assert_not_called()
 
+	def test_existing_customer_follows_channel_kb_change(self, schedule):
+		handle_whatsapp_message(payload(text("wamid.1")))
+		new_kb = KnowledgeBase.objects.create(project=self.project, name="kb2", vector_collection="vc-wa2")
+		ChannelCredential.objects.filter(id=self.cred.id).update(knowledge_base=new_kb)
+		handle_whatsapp_message(payload(text("wamid.2")))
+		assert CustomerContact.objects.get(external_id="8801700000000").conversation.knowledge_base_id == new_kb.id
+
 
 @mock.patch("channels_app.service.whatsapp_messaging.schedule_reply")
 class WhatsAppSendTest(WhatsAppBase):
@@ -138,3 +146,12 @@ class SendWhatsAppTextTest(SimpleTestCase):
 		post.return_value.status_code = 400
 		post.return_value.json.return_value = {"error": {"code": 131047, "message": "Re-engagement message"}}
 		assert send_whatsapp_text("tok", "pn-1", "880", "hi") == {"error": "Re-engagement message"}
+
+
+class ContactConversationKbTest(WhatsAppBase):
+	def test_same_kb_leaves_conversation_unsaved(self):
+		contact = CustomerContact.objects.create(project=self.project, platform="whatsapp", external_id="x")
+		conversation = ensure_contact_conversation(contact, self.kb)
+		with mock.patch.object(Conversation, "save") as save:
+			assert ensure_contact_conversation(contact, self.kb).id == conversation.id
+		save.assert_not_called()
