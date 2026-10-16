@@ -76,6 +76,16 @@ def _clean_kb_name(project, raw, exclude_id=None):
 	return name, None
 
 
+def _resolve_kb(project, kb_id):
+	"""The project's KB `kb_id`, or its default KB when kb_id is empty; None if kb_id isn't one of the project's KBs."""
+	if not kb_id:
+		return KnowledgeBase.get_default(project)
+	try:
+		return KnowledgeBase.objects.filter(id=kb_id, project=project).first()
+	except (ValidationError, ValueError):
+		return None
+
+
 class KnowledgeBaseListView(APIView):
 	"""List a project's knowledge bases (default first) or create one."""
 	permission_classes = [IsAuthenticated]
@@ -202,12 +212,12 @@ class DocumentUploadView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
 
-            # Get or create knowledge base
-            kb_name = request.data.get('kb_name', 'default')
-            kb, created = KnowledgeBase.objects.get_or_create(
-                project=project,
-                name=kb_name
-            )
+            kb = _resolve_kb(project, request.data.get('kb_id'))
+            if kb is None:
+                return Response(
+                    {"success": False, "error": {"code": "kb_not_found", "message": "Knowledge base not found"}},
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
             # Handle file upload
             if 'file' not in request.FILES:
@@ -930,7 +940,6 @@ class WebCrawlSubmitView(APIView):
             url = request.data.get('url', '').strip()
             depth = request.data.get('depth', 1)
             project_id = request.data.get('project_id')
-            kb_name = request.data.get('kb_name', 'default')
             search_query = request.data.get('search_query', '').strip()[:500]
             
             # Validate inputs
@@ -982,11 +991,12 @@ class WebCrawlSubmitView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # Get or create knowledge base
-            kb, created = KnowledgeBase.objects.get_or_create(
-                project=project,
-                name=kb_name
-            )
+            kb = _resolve_kb(project, request.data.get('kb_id'))
+            if kb is None:
+                return Response(
+                    {"success": False, "error": {"code": "kb_not_found", "message": "Knowledge base not found"}},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
             # Create parent document record
             parent_doc = Document.objects.create(

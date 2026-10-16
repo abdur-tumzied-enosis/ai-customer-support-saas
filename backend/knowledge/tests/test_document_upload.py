@@ -51,7 +51,7 @@ class DocumentUploadViewTests(TestCase):
 		
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -88,7 +88,7 @@ class DocumentUploadViewTests(TestCase):
 		
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -106,7 +106,7 @@ class DocumentUploadViewTests(TestCase):
 		
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -121,7 +121,7 @@ class DocumentUploadViewTests(TestCase):
 		file = self.create_test_file("test.pdf", b"content", "application/pdf")
 		
 		data = {
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -135,7 +135,7 @@ class DocumentUploadViewTests(TestCase):
 		"""Test upload without file"""
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default"
+			"kb_id": str(self.kb.id)
 		}
 		
 		response = self.client.post("/api/kb/documents/upload/", data, format="multipart")
@@ -150,7 +150,7 @@ class DocumentUploadViewTests(TestCase):
 		
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -168,7 +168,7 @@ class DocumentUploadViewTests(TestCase):
 		
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -196,7 +196,7 @@ class DocumentUploadViewTests(TestCase):
 		file = self.create_test_file("new.pdf", file_content, "application/pdf")
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -219,7 +219,7 @@ class DocumentUploadViewTests(TestCase):
 		file = self.create_test_file("test.pdf", b"content", "application/pdf")
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -236,7 +236,7 @@ class DocumentUploadViewTests(TestCase):
 		file = self.create_test_file("test.pdf", b"content", "application/pdf")
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -246,25 +246,28 @@ class DocumentUploadViewTests(TestCase):
 		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 	
 	@patch('knowledge.views.run_ingestion_job.delay')
-	def test_upload_creates_knowledge_base(self, mock_task):
-		"""Test that upload creates knowledge base if it doesn't exist"""
-		# Delete existing KB
-		self.kb.delete()
-		
-		file = self.create_test_file("test.pdf", b"content", "application/pdf")
-		data = {
-			"project_id": str(self.project.id),
-			"kb_name": "new-kb",
-			"file": file
-		}
-		
+	def test_upload_goes_to_chosen_kb(self, mock_task):
+		other = KnowledgeBase.objects.create(project=self.project, name="Products")
+		data = {"project_id": str(self.project.id), "kb_id": str(other.id), "file": self.create_test_file()}
 		response = self.client.post("/api/kb/documents/upload/", data, format="multipart")
-		
 		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-		
-		# Check KB was created
-		kb = KnowledgeBase.objects.get(project=self.project, name="new-kb")
-		self.assertIsNotNone(kb)
+		self.assertEqual(Document.objects.get().kb_id, other.id)
+
+	@patch('knowledge.views.run_ingestion_job.delay')
+	def test_upload_without_kb_id_uses_default(self, mock_task):
+		data = {"project_id": str(self.project.id), "file": self.create_test_file()}
+		response = self.client.post("/api/kb/documents/upload/", data, format="multipart")
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(Document.objects.get().kb_id, self.kb.id)
+
+	@patch('knowledge.views.run_ingestion_job.delay')
+	def test_upload_rejects_foreign_or_malformed_kb_id(self, mock_task):
+		foreign = KnowledgeBase.objects.create(project=Project.objects.create(name="Other", slug="other-proj"), name="x")
+		for kb_id in (str(foreign.id), "not-a-uuid"):
+			data = {"project_id": str(self.project.id), "kb_id": kb_id, "file": self.create_test_file()}
+			response = self.client.post("/api/kb/documents/upload/", data, format="multipart")
+			self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+		self.assertFalse(Document.objects.exists())
 	
 	@patch('knowledge.views.run_ingestion_job.delay')
 	def test_upload_checksum_calculation(self, mock_task):
@@ -275,7 +278,7 @@ class DocumentUploadViewTests(TestCase):
 		file = self.create_test_file("test.pdf", file_content, "application/pdf")
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
@@ -292,7 +295,7 @@ class DocumentUploadViewTests(TestCase):
 		file = self.create_test_file("test.pdf", b"content", "application/pdf")
 		data = {
 			"project_id": str(self.project.id),
-			"kb_name": "default",
+			"kb_id": str(self.kb.id),
 			"file": file
 		}
 		
