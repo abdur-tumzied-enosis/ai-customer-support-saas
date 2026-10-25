@@ -1,6 +1,6 @@
 from unittest import mock
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
 
@@ -33,6 +33,7 @@ def deps(kb, web):
 
 @mock.patch.object(vector_store, "_reranker", FakeReranker())
 @mock.patch("agents.rag.settings.RERANK_MIN_SCORE", 0.0)
+@override_settings(RERANKER_URL="")  # use FakeReranker even where the TEI reranker is configured
 class MergedSearchTest(SimpleTestCase):
 	def search(self, kb, web, ctx=None):
 		ctx = ctx or Context(vector_collection="vc")
@@ -60,6 +61,7 @@ class MergedSearchTest(SimpleTestCase):
 
 @mock.patch.object(vector_store, "_reranker", FakeReranker())
 @mock.patch("agents.rag.settings.RERANK_MIN_SCORE", 0.0)
+@override_settings(RERANKER_URL="")  # use FakeReranker even where the TEI reranker is configured
 class SearchFirstTest(SimpleTestCase):
 	def run_reply(self, history=None):
 		agent = mock.Mock()
