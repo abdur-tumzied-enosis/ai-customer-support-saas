@@ -133,6 +133,11 @@ CELERY_BEAT_SCHEDULE = {
 # Qdrant
 QDRANT_URL = env("QDRANT_URL", default="http://localhost:6333")
 QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production authentication
+# Embedding / reranker model servers (text-embeddings-inference, docker-compose). Set: workers call them over HTTP
+# instead of loading both models (~1.3GB RAM per process), so reply workers can run many more processes.
+# Unset: models load in-process. Same models and outputs either way, so no reindex when switching.
+EMBEDDINGS_URL = env("EMBEDDINGS_URL", default="")
+RERANKER_URL = env("RERANKER_URL", default="")
 # Cross-encoder score below which a retrieved chunk counts as unrelated. mmarco-mMiniLMv2 logits (Bengali/Banglish/
 # English eval): relevant chunks -4.2..+10.7, unrelated -7.3..-3.0. Set to keep every relevant chunk, so some
 # off-topic ones pass (the prompt forbids guessing from them). Re-tune if RERANKER_MODEL changes.
@@ -157,11 +162,18 @@ LLM_FALLBACK_PROVIDER = env("LLM_FALLBACK_PROVIDER", default=None)  # None → L
 # Reply temperature; None → provider default. ~0.2 suits factual support, but Google advises leaving
 # Gemini 3 models at their default 1.0 (lower can loop or degrade), so only set it for other models.
 LLM_TEMPERATURE = env.float("LLM_TEMPERATURE", default=None)
+# Gemini 3+ thinking for customer replies: low/medium/high ("minimal" → 400 on gemini-3.8-flash); None → model
+# default. Lower = faster replies, so each reply worker answers more customers. Check `manage.py run_reply_evals`
+# before lowering it: on 2026-10-25 "low" cut output tokens 3-5x but missed a catalog answer the default gave.
+LLM_THINKING_LEVEL = env("LLM_THINKING_LEVEL", default=None)
 HANDOFF_AUTO_RESUME_HOURS = env.int("HANDOFF_AUTO_RESUME_HOURS", default=24)
 HANDOFF_MESSAGE = env("HANDOFF_MESSAGE", default="I've passed this to our team — a person will reply here soon.")
 HANDOFF_MESSAGE_BN = env("HANDOFF_MESSAGE_BN", default="আপনার বিষয়টি আমাদের টিমকে জানিয়েছি — একজন প্রতিনিধি শীঘ্রই এখানে উত্তর দেবেন।")  # sent when the customer writes in Bengali script
 MEMORY_LLM_MODEL = env("MEMORY_LLM_MODEL", default=None)  # background memory work; None → LLM_MODEL
 EPISODE_GAP_HOURS = env.int("EPISODE_GAP_HOURS", default=12)  # silence that closes a conversation episode
+# Contact memory extraction (one LLM call) runs this long after the first reply of a burst and covers the whole
+# burst, instead of once per reply. Recent turns are in the reply's history anyway, so the delay costs nothing.
+MEMORY_UPDATE_DELAY_SECONDS = env.int("MEMORY_UPDATE_DELAY_SECONDS", default=300)
 REPLY_DEBOUNCE_SECONDS = {  # channels not listed: 0
 	"facebook": env.int("FACEBOOK_REPLY_DEBOUNCE_SECONDS", default=3),
 	"instagram": env.int("INSTAGRAM_REPLY_DEBOUNCE_SECONDS", default=3),

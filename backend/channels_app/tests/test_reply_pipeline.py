@@ -160,11 +160,19 @@ class HistoryAndRetryTest(PipelineBase):
 		self.contact.save()
 		seen = []
 		self.gen.side_effect = lambda question, context, *a, **k: seen.append(context.memory_prompt) or "ok"
-		with mock.patch("channels_app.memory.update_contact_memory.delay") as remember:
+		with mock.patch("channels_app.memory.update_contact_memory.apply_async") as remember:
 			with self.captureOnCommitCallbacks(execute=True):
 				self.run_reply(self.inbound("refund it?"))
 		assert "order_number: #4471" in seen[0]
-		remember.assert_called_once_with(str(self.contact.id))
+		remember.assert_called_once_with(args=[str(self.contact.id)], countdown=settings.MEMORY_UPDATE_DELAY_SECONDS)
+
+	def test_burst_of_replies_schedules_one_memory_update(self):
+		with mock.patch("channels_app.memory.update_contact_memory.apply_async") as remember:
+			for text in ("hi", "price?", "thanks"):
+				with self.captureOnCommitCallbacks(execute=True):
+					self.run_reply(self.inbound(text))
+		assert len(self.outbound()) == 3
+		remember.assert_called_once()
 
 	def test_failed_reply_trace_records_error(self):
 		def fail(question, context, *args, **kwargs):
@@ -316,7 +324,7 @@ class ReviewFixesTest(PipelineBase):
 class DeliveryTest(PipelineBase):
 	def test_failed_send_marks_reply_failed_and_redelivers(self):
 		self.send.return_value = {}
-		with mock.patch("channels_app.reply.redeliver.apply_async") as redeliver, 				mock.patch("channels_app.memory.update_contact_memory.delay"):
+		with mock.patch("channels_app.reply.redeliver.apply_async") as redeliver, 				mock.patch("channels_app.memory.update_contact_memory.apply_async"):
 			with self.captureOnCommitCallbacks(execute=True):
 				self.run_reply(self.inbound("hi"))
 		out = self.outbound()[0]

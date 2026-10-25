@@ -259,6 +259,10 @@ def recover_stuck_replies() -> None:
 
 
 def schedule_memory_update(conversation) -> None:
+	"""One delayed extraction per contact per MEMORY_UPDATE_DELAY_SECONDS: it reads every message since
+	memory_through, so it covers all replies made while it waited."""
 	if conversation.contact_id:
 		contact_id = str(conversation.contact_id)
-		transaction.on_commit(lambda: memory.update_contact_memory.delay(contact_id))
+		delay = settings.MEMORY_UPDATE_DELAY_SECONDS
+		if cache.add(f"memory-update:{contact_id}", 1, timeout=delay):
+			transaction.on_commit(lambda: memory.update_contact_memory.apply_async(args=[contact_id], countdown=delay))

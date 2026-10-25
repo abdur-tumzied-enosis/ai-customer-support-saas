@@ -1,9 +1,11 @@
 import os
 import threading
 from typing import Optional, List
+import requests
 from django.conf import settings
 from qdrant_client import QdrantClient, models
 from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
 
@@ -40,6 +42,9 @@ def get_default_embeddings():
 	if _embeddings is None:
 		with _embeddings_lock:
 			if _embeddings is None:  # re-check after acquiring lock
+				if settings.EMBEDDINGS_URL:
+					_embeddings = TEIEmbeddings(settings.EMBEDDINGS_URL)
+					return _embeddings
 				model_name = getattr(settings, 'EMBEDDING_MODEL', 'intfloat/multilingual-e5-base')
 				logger.info(f"Load pretrained SentenceTransformer: {model_name}; it should only be load once when celery get start")
 				_embeddings = HuggingFaceEmbeddings(
@@ -48,6 +53,50 @@ def get_default_embeddings():
 					query_encode_kwargs={"normalize_embeddings": True, "prompt": "query: "},
 				)
 	return _embeddings
+
+
+TEI_TIMEOUT = 30
+TEI_BATCH = 32  # text-embeddings-inference's default --max-client-batch-size
+
+
+class TEIEmbeddings(Embeddings):
+	"""The e5 model served by text-embeddings-inference (EMBEDDINGS_URL), with the same prompts and
+	normalization as the in-process HuggingFaceEmbeddings above, so existing vectors stay valid."""
+
+	def __init__(self, url: str):
+		self.url = url.rstrip("/")
+
+	def _embed(self, texts: list[str]) -> list[list[float]]:
+		vectors = []
+		for i in range(0, len(texts), TEI_BATCH):
+			r = requests.post(
+				f"{self.url}/embed", json={"inputs": texts[i:i + TEI_BATCH], "normalize": True, "truncate": True},
+				timeout=TEI_TIMEOUT,
+			)
+			r.raise_for_status()
+			vectors += r.json()
+		return vectors
+
+	def embed_documents(self, texts: list[str]) -> list[list[float]]:
+		return self._embed(["passage: " + t for t in texts])
+
+	def embed_query(self, text: str) -> list[float]:
+		return self._embed(["query: " + text])[0]
+
+
+def _tei_rerank_scores(query: str, texts: list[str]) -> list[float]:
+	"""Cross-encoder logits from text-embeddings-inference (RERANKER_URL), in `texts` order.
+	raw_scores: logits like CrossEncoder.predict, which RERANK_MIN_SCORE is tuned on (not sigmoid 0..1)."""
+	r = requests.post(
+		f"{settings.RERANKER_URL.rstrip('/')}/rerank",
+		json={"query": query, "texts": texts, "raw_scores": True, "truncate": True},
+		timeout=TEI_TIMEOUT,
+	)
+	r.raise_for_status()
+	scores = [0.0] * len(texts)
+	for item in r.json():
+		scores[item["index"]] = item["score"]
+	return scores
 
 
 def get_sparse_embeddings() -> FastEmbedSparse:
@@ -72,16 +121,19 @@ def rerank_docs(query: str, docs: List[Document], top_k: int = 4, min_score: Opt
 	if not docs:
 		return docs
 	try:
-		if _reranker is None:
-			with _reranker_lock:
-				if _reranker is None:  # re-check after acquiring lock
-					from sentence_transformers import CrossEncoder
-					# Multilingual (Bengali etc.), same speed as the English ms-marco-MiniLM-L-6-v2.
-					# ponytail: BAAI/bge-reranker-v2-m3 ranks better but took ~3.5s per query on CPU; use it with a GPU.
-					reranker_model = getattr(settings, 'RERANKER_MODEL', 'cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')
-					_reranker = CrossEncoder(reranker_model)
-		pairs = [(query, doc.page_content) for doc in docs]
-		scores = _reranker.predict(pairs)
+		texts = [doc.page_content for doc in docs]
+		if settings.RERANKER_URL:
+			scores = _tei_rerank_scores(query, texts)
+		else:
+			if _reranker is None:
+				with _reranker_lock:
+					if _reranker is None:  # re-check after acquiring lock
+						from sentence_transformers import CrossEncoder
+						# Multilingual (Bengali etc.), same speed as the English ms-marco-MiniLM-L-6-v2.
+						# ponytail: BAAI/bge-reranker-v2-m3 ranks better but took ~3.5s per query on CPU; use it with a GPU.
+						reranker_model = getattr(settings, 'RERANKER_MODEL', 'cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')
+						_reranker = CrossEncoder(reranker_model)
+			scores = _reranker.predict([(query, text) for text in texts])
 		ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
 		return [doc for score, doc in ranked[:top_k] if min_score is None or score >= min_score]
 	except Exception as e:

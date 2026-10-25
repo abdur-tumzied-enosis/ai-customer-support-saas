@@ -196,13 +196,13 @@ class StaffReplyTriggersTest(MemoryBase):
 		mock.patch("channels_app.tasks.send_text_message", return_value={"message_id": "mid"}).start()
 		mock.patch("channels_app.api.emit_event").start()
 		mock.patch("channels_app.handoff.emit_event").start()
-		remember = mock.patch("channels_app.memory.update_contact_memory.delay").start()
+		remember = mock.patch("channels_app.memory.update_contact_memory.apply_async").start()
 		draft = mock.patch("channels_app.memory.draft_knowledge_suggestion.delay").start()
 
 		with self.captureOnCommitCallbacks(execute=True):
 			r = client.post(f"/api/channels/conversations/{self.conv.id}/staff-reply", {"text": "30 days"}, format="json")
 		assert r.status_code == 201, r.content
-		remember.assert_called_once_with(str(self.contact.id))
+		remember.assert_called_once_with(args=[str(self.contact.id)], countdown=settings.MEMORY_UPDATE_DELAY_SECONDS)
 		draft.assert_called_once_with(r.json()["data"]["message"]["id"])
 
 

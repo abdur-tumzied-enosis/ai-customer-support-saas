@@ -12,10 +12,14 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-sa.json
       DJANGO_SETTINGS_MODULE: core.settings
       OLLAMA_BASE_URL: http://ollama:11434
+      EMBEDDINGS_URL: http://embeddings
+      RERANKER_URL: http://reranker
     depends_on:
       - postgres
       - redis
       - qdrant
+      - embeddings
+      - reranker
       # - ollama
     ports:
       - "8251:8000"
@@ -34,9 +38,13 @@ services:
       DJANGO_SETTINGS_MODULE: core.settings
       C_FORCE_ROOT: "true"
       OLLAMA_BASE_URL: http://ollama:11434
+      EMBEDDINGS_URL: http://embeddings
+      RERANKER_URL: http://reranker
     depends_on:
       - redis
       - django
+      - embeddings
+      - reranker
       # - ollama
     command: celery -A core worker -l info
     volumes:
@@ -54,11 +62,16 @@ services:
       DJANGO_SETTINGS_MODULE: core.settings
       C_FORCE_ROOT: "true"
       OLLAMA_BASE_URL: http://ollama:11434
+      EMBEDDINGS_URL: http://embeddings
+      RERANKER_URL: http://reranker
     depends_on:
       - redis
       - django
-    # Only customer replies (CELERY_TASK_ROUTES); each process loads its own embedding/reranker models, keep it low
-    command: celery -A core worker -Q replies -l info --concurrency=${REPLY_WORKER_CONCURRENCY:-4}
+      - embeddings
+      - reranker
+    # Only customer replies (CELERY_TASK_ROUTES). The models live in the embeddings/reranker services and a reply
+    # mostly waits on the LLM, so processes are small: concurrency = parallel replies, bounded by RAM and LLM quota
+    command: celery -A core worker -Q replies -l info --concurrency=${REPLY_WORKER_CONCURRENCY:-16}
     volumes:
       - ./backend:/app
       - ./gcp-sa.json:/secrets/gcp-sa.json:ro
@@ -84,6 +97,20 @@ services:
     #     dockerfile: frontend/Dockerfile
     #   ports:
     #     - "3000:3000"
+
+  # Model servers for agents/vector_store.py (EMBEDDINGS_URL / RERANKER_URL), loaded once here instead of in every
+  # worker process. Changing the embedding model means changing --model-id here and re-indexing.
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    command: --model-id intfloat/multilingual-e5-base
+    volumes:
+      - tei_models:/data
+
+  reranker:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    command: --model-id cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+    volumes:
+      - tei_models:/data
 
   redis:
     image: redis:7
@@ -149,6 +176,7 @@ services:
 volumes:
   pgdata:
   qdrant_storage:
+  tei_models:
   # ollama_models:
   # n8n_data:
 

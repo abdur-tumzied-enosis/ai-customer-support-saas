@@ -114,10 +114,10 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 	llm_kwargs = {"timeout": 30, "max_retries": 1, **llm_kwargs}
 	if settings.LLM_TEMPERATURE is not None:
 		llm_kwargs.setdefault("temperature", settings.LLM_TEMPERATURE)
-	llm = get_llm(provider=provider, model=model, **llm_kwargs)
+	llm = _reply_llm(provider, model, **llm_kwargs)
 	middleware = []
 	if settings.LLM_FALLBACK_MODEL:
-		backup = get_llm(provider=settings.LLM_FALLBACK_PROVIDER, model=settings.LLM_FALLBACK_MODEL, **llm_kwargs)
+		backup = _reply_llm(settings.LLM_FALLBACK_PROVIDER, settings.LLM_FALLBACK_MODEL, **llm_kwargs)
 		middleware.append(fallback_to(backup))
 	system_prompt = build_system_prompt(custom_instructions, memory, search_results)
 	agent = create_agent(
@@ -127,6 +127,13 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 		middleware=middleware,
 	)
 	return agent
+
+
+def _reply_llm(provider: Optional[str], model: Optional[str], **kwargs):
+	"""get_llm with LLM_THINKING_LEVEL applied; Gemini only, OpenRouter has no such setting."""
+	if settings.LLM_THINKING_LEVEL and (provider or settings.LLM_PROVIDER) == "google":
+		kwargs.setdefault("thinking_level", settings.LLM_THINKING_LEVEL)
+	return get_llm(provider=provider, model=model, **kwargs)
 
 
 def fallback_to(backup):
