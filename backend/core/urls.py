@@ -8,6 +8,7 @@ urlpatterns = [
 	path("api/kb/", include("knowledge.urls")),
 	path("api/channels/", include("channels_app.urls_api")),
 	path("api/analytics/", include("analytics.urls")),
+	path("", include("channels_app.urls_widget")),  # public widget endpoints
 ]
 
 

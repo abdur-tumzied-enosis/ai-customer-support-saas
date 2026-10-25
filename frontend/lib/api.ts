@@ -889,3 +889,39 @@ export const webhookApi = {
 			json: { project_slug: projectSlug },
 		}),
 };
+
+export type WidgetAppearance = { title: string; welcome_message: string; primary_color: string; position: "left" | "right" };
+
+export type Widget = {
+	id: string;
+	name: string;
+	public_key: string;
+	knowledge_base: { id: string; name: string };
+	is_active: boolean;
+	allowed_origins: string[];
+	appearance: WidgetAppearance;
+	snippet: string;
+	created_at: string;
+	updated_at: string;
+};
+
+export type WidgetInput = Partial<{
+	name: string;
+	knowledge_base_id: string;
+	is_active: boolean;
+	allowed_origins: string[];
+	appearance: Partial<WidgetAppearance>;
+}>;
+
+export const widgetApi = {
+	list: async (projectSlug: string) =>
+		apiFetch<{ widgets: Widget[] }>(`/api/channels/widgets?project_slug=${encodeURIComponent(projectSlug)}`),
+
+	create: async (projectSlug: string, data: WidgetInput) =>
+		apiFetch<{ widget: Widget }>("/api/channels/widgets", { method: "POST", json: { project_slug: projectSlug, ...data } }),
+
+	update: async (id: string, data: WidgetInput) =>
+		apiFetch<{ widget: Widget }>(`/api/channels/widgets/${id}`, { method: "PATCH", json: data }),
+
+	remove: async (id: string) => apiFetch<Record<string, never>>(`/api/channels/widgets/${id}`, { method: "DELETE" }),
+};

@@ -96,7 +96,8 @@ def build_reply_context(project, knowledge_base: KnowledgeBase, conversation=Non
 		knowledge_base_id=str(knowledge_base.id),
 		vector_collection=knowledge_base.vector_collection,
 		custom_instructions=custom_instructions,
-		api_domains=collect_api_domains(custom_instructions),
+		# ponytail: call_api is off for anonymous website visitors (it can POST orders); per-widget opt-in in milestone 2
+		api_domains=[] if conversation and conversation.channel == "widget" else collect_api_domains(custom_instructions),
 		memory_prompt=memory.memory_prompt(conversation) if conversation else "",
 	)
 	deps = ToolDeps(

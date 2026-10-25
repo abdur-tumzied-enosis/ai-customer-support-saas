@@ -17,6 +17,8 @@ import { getStoredKbId, kbOptionLabel, pickKb } from "@/lib/knowledgeBase";
 import { formatError } from "@/lib/errors";
 import { timeAgo } from "@/lib/utils";
 
+const CHANNEL_LABELS: Record<string, string> = { self: "Test", facebook: "Facebook", instagram: "Instagram", whatsapp: "WhatsApp", widget: "Website" };
+
 export default function ConversationsPage() {
 	const { projects, loading: authLoading } = useAuth();
 	const router = useRouter();
@@ -170,7 +172,7 @@ export default function ConversationsPage() {
 									<div className="flex-1">
 										<div className="font-medium flex flex-wrap items-center gap-2">
 											{conv.name || "Unnamed Conversation"}
-											<Badge variant="outline">{conv.channel === "self" ? "Test" : conv.channel === "facebook" ? "Facebook" : conv.channel}</Badge>
+											<Badge variant="outline">{CHANNEL_LABELS[conv.channel] ?? conv.channel}</Badge>
 											<Badge variant="secondary">{conv.knowledge_base_name}</Badge>
 											{conv.is_paused && <Badge variant="destructive">Needs human</Badge>}
 										</div>

@@ -14,6 +14,7 @@ import { channelApi, platformApi, knowledgeBaseApi, type ChannelCredential, type
 import { kbOptionLabel } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
 import WebhookSettings from "@/components/channels/WebhookSettings";
+import CopyField from "@/components/channels/CopyField";
 import { formatError } from "@/lib/errors";
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
@@ -32,31 +33,6 @@ const WEBHOOK_SETUP_WHERE: Record<string, string> = {
 const VERIFY_TOKEN = "verify_token";
 
 const newVerifyToken = () => crypto.randomUUID().replace(/-/g, "");
-
-function CopyField({ label, value }: { label: string; value: string }) {
-	const [copied, setCopied] = useState(false);
-	return (
-		<div className="space-y-1">
-			<Label className="text-xs text-muted-foreground">{label}</Label>
-			<div className="flex gap-2">
-				<Input readOnly value={value} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
-				<Button
-					type="button"
-					variant="outline"
-					size="icon"
-					aria-label={`Copy ${label}`}
-					onClick={() => {
-						navigator.clipboard?.writeText(value);
-						setCopied(true);
-						setTimeout(() => setCopied(false), 1500);
-					}}
-				>
-					{copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-				</Button>
-			</div>
-		</div>
-	);
-}
 
 export default function ChannelsPage() {
 	const { projects } = useAuth();

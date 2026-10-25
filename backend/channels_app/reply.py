@@ -103,7 +103,8 @@ SENDERS = {
 	"facebook": _send_facebook,
 	"instagram": _send_facebook,
 	"whatsapp": _send_whatsapp,
-	"self": lambda conversation, out_msg, reference_msg: True,  # stored row is the delivery (dashboard, future widget/API)
+	"self": lambda conversation, out_msg, reference_msg: True,  # stored row is the delivery (dashboard)
+	"widget": lambda conversation, out_msg, reference_msg: True,  # the visitor's iframe polls for it
 }
 
 

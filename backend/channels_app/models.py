@@ -1194,3 +1194,44 @@ class ProjectWebhook(models.Model):
 
 	def __str__(self):
 		return f"{self.project.name} webhook ({'on' if self.is_active else 'off'})"
+
+
+def _new_widget_key() -> str:
+	return "wgt_" + secrets.token_urlsafe(18)
+
+
+def normalize_origin(value: str) -> str:
+	"""'https://Shop.com/page' → 'https://shop.com'; also 'https://*.shop.com'. Raises ValidationError otherwise."""
+	import re
+	from urllib.parse import urlsplit
+	parts = urlsplit(value.strip().lower())
+	try:
+		port = parts.port
+	except ValueError:
+		port = None
+		parts = parts._replace(scheme="")  # invalid port: reject below
+	# Strict host charset: the result goes into a CSP header, so ";" or spaces must never get through
+	if (
+		parts.scheme not in ("http", "https") or parts.username or parts.password
+		or not re.fullmatch(r"(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)*", parts.hostname or "")
+	):
+		raise ValidationError(f"Not an origin: {value!r}")
+	return f"{parts.scheme}://{parts.hostname}" + (f":{port}" if port else "")
+
+
+class Widget(models.Model):
+	"""Website chat widget (docs/widget-architecture.md). Visitors are CustomerContact(platform="widget",
+	external_id="<widget id>:<visitor uuid>") and go through the normal reply pipeline."""
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="widgets")
+	name = models.CharField(max_length=255)
+	public_key = models.CharField(max_length=64, unique=True, default=_new_widget_key)  # an identifier, not a secret
+	knowledge_base = models.ForeignKey("knowledge.KnowledgeBase", on_delete=models.PROTECT, related_name="widgets")
+	is_active = models.BooleanField(default=True)
+	allowed_origins = models.JSONField(default=list, blank=True)  # normalized by normalize_origin; CSP frame-ancestors
+	appearance = models.JSONField(default=dict, blank=True)  # see channels_app.widget.APPEARANCE_DEFAULTS
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	def __str__(self):
+		return f"{self.project.name} widget {self.name}"

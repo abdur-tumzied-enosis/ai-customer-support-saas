@@ -174,6 +174,14 @@ EPISODE_GAP_HOURS = env.int("EPISODE_GAP_HOURS", default=12)  # silence that clo
 # Contact memory extraction (one LLM call) runs this long after the first reply of a burst and covers the whole
 # burst, instead of once per reply. Recent turns are in the reply's history anyway, so the delay costs nothing.
 MEMORY_UPDATE_DELAY_SECONDS = env.int("MEMORY_UPDATE_DELAY_SECONDS", default=300)
+# Website widget limits (channels_app.widget), DRF rate strings. The widget cap bounds LLM spend per site: the
+# allowed-origins list can't stop scripts calling the API directly.
+WIDGET_THROTTLE_RATES = {
+	"session": env("WIDGET_SESSION_RATE", default="60/hour"),  # new visitors per IP (mobile carriers share IPs)
+	"visitor_messages": env("WIDGET_VISITOR_MESSAGE_RATE", default="10/min"),
+	"visitor_polls": "120/min",  # the open panel polls every 1-10s
+	"widget_messages": env("WIDGET_MESSAGE_RATE", default="2000/day"),
+}
 REPLY_DEBOUNCE_SECONDS = {  # channels not listed: 0
 	"facebook": env.int("FACEBOOK_REPLY_DEBOUNCE_SECONDS", default=3),
 	"instagram": env.int("INSTAGRAM_REPLY_DEBOUNCE_SECONDS", default=3),

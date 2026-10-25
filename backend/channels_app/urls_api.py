@@ -1,4 +1,5 @@
 from django.urls import path
+from .widget import WidgetDetailView, WidgetListCreateView
 from .api import (
 	PlatformListView,
 	FacebookConfigView,
@@ -42,6 +43,8 @@ urlpatterns = [
 	path("webhook", ProjectWebhookView.as_view(), name="project-webhook"),
 	path("webhook/rotate-secret", ProjectWebhookRotateView.as_view(), name="project-webhook-rotate"),
 	path("webhook/test", ProjectWebhookTestView.as_view(), name="project-webhook-test"),
+	path("widgets", WidgetListCreateView.as_view(), name="widget-list-create"),
+	path("widgets/<uuid:widget_id>", WidgetDetailView.as_view(), name="widget-detail"),
 ]
 
 
