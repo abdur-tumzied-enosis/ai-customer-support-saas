@@ -226,8 +226,8 @@ class IngestionJob(models.Model):
 class CustomInstruction(models.Model):
 	"""
 	Custom instructions that define agent behavior.
-	- If knowledge_base is null: project-level instruction (default for all KBs)
-	- If knowledge_base is set: KB-specific instruction (overrides project-level)
+	- If knowledge_base is null: shared instruction, used by every KB
+	- If knowledge_base is set: used only by that KB, on top of the shared ones
 	"""
 	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="custom_instructions")
@@ -255,6 +255,16 @@ class CustomInstruction(models.Model):
 	def __str__(self) -> str:
 		scope = self.knowledge_base.name if self.knowledge_base else "Project"
 		return f"{self.label} ({scope})"
+
+	@classmethod
+	def effective(cls, project_id, knowledge_base_id=None):
+		"""What the bot follows for a KB: shared instructions, then the KB's own (last, so they win on conflicts)."""
+		scope = models.Q(knowledge_base__isnull=True)
+		if knowledge_base_id:
+			scope |= models.Q(knowledge_base_id=knowledge_base_id)
+		return cls.objects.filter(scope, project_id=project_id).order_by(
+			models.F("knowledge_base_id").asc(nulls_first=True), "-created_at"
+		)
 
 
 class InstructionTemplate(models.Model):

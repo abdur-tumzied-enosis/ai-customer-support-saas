@@ -18,34 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 def get_effective_instructions(project_id: str, knowledge_base_id: str = None) -> list:
-	"""
-	Get effective custom instructions for a project/knowledge base.
-	Returns KB-level instructions if they exist, otherwise project-level.
-	
-	Args:
-		project_id: Project UUID
-		knowledge_base_id: Optional Knowledge Base UUID
-	
-	Returns:
-		List of instruction dicts with 'label', 'message', 'api_tool_enabled' and 'api_domains' keys
-	"""
-	# Try KB-level instructions first
-	if knowledge_base_id:
-		kb_instructions = CustomInstruction.objects.filter(
-			project_id=project_id,
-			knowledge_base_id=knowledge_base_id
-		).order_by('-created_at')
-		
-		if kb_instructions.exists():
-			return [{'label': inst.label, 'message': inst.message, 'api_tool_enabled': inst.api_tool_enabled, 'api_domains': inst.api_domains} for inst in kb_instructions]
-	
-	# Fall back to project-level instructions
-	project_instructions = CustomInstruction.objects.filter(
-		project_id=project_id,
-		knowledge_base__isnull=True
-	).order_by('-created_at')
-	
-	return [{'label': inst.label, 'message': inst.message, 'api_tool_enabled': inst.api_tool_enabled, 'api_domains': inst.api_domains} for inst in project_instructions]
+	"""Shared instructions plus the KB's own, as dicts with 'label', 'message', 'api_tool_enabled' and 'api_domains'."""
+	return [
+		{'label': inst.label, 'message': inst.message, 'api_tool_enabled': inst.api_tool_enabled, 'api_domains': inst.api_domains}
+		for inst in CustomInstruction.effective(project_id, knowledge_base_id)
+	]
 
 
 def format_message_with_context(message: Message) -> str:

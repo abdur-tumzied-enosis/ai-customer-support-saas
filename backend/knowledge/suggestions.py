@@ -54,12 +54,8 @@ def _add_knowledge_document(s: MemorySuggestion) -> str:
 
 
 def _add_instruction(s: MemorySuggestion) -> str:
-	# KB-level instructions replace project-level ones (get_effective_instructions), so join whichever set is live
-	kb_level = CustomInstruction.objects.filter(project_id=s.project_id, knowledge_base_id=s.knowledge_base_id).exists()
-	inst = CustomInstruction.objects.create(
-		project_id=s.project_id, knowledge_base_id=s.knowledge_base_id if kb_level else None,
-		label=s.title[:255], message=s.body,
-	)
+	# Shared: every KB uses shared instructions, and the user can see and edit them on the knowledge page
+	inst = CustomInstruction.objects.create(project_id=s.project_id, label=s.title[:255], message=s.body)
 	return str(inst.id)
 
 

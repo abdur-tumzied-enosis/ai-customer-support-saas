@@ -55,16 +55,12 @@ class SuggestionApiTest(TestCase):
 		s.refresh_from_db()
 		assert (s.status, s.result_id, s.decided_by) == ("approved", str(doc.id), self.user)
 
-	def test_approve_instruction_follows_kb_level_instructions(self):
+	def test_approved_instruction_is_shared_even_when_kb_has_its_own(self):
+		CustomInstruction.objects.create(project=self.project, knowledge_base=self.kb, label="x", message="y")
 		s = self.suggestion(kind="instruction")
 		self.client.post(f"{URL}{s.id}/approve/", {}, format="json")
-		assert CustomInstruction.objects.get().knowledge_base is None  # no KB-level set: project-level
-
-		CustomInstruction.objects.create(project=self.project, knowledge_base=self.kb, label="x", message="y")
-		s2 = self.suggestion(kind="instruction")
-		self.client.post(f"{URL}{s2.id}/approve/", {}, format="json")
-		inst = CustomInstruction.objects.get(id=MemorySuggestion.objects.get(id=s2.id).result_id)
-		assert inst.knowledge_base == self.kb and inst.label == "Refund window?" and inst.message == "30 days."
+		inst = CustomInstruction.objects.get(id=MemorySuggestion.objects.get(id=s.id).result_id)
+		assert inst.knowledge_base is None and inst.label == "Refund window?" and inst.message == "30 days."
 
 	def test_reject_and_no_second_decision(self):
 		s = self.suggestion()

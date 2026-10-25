@@ -354,7 +354,7 @@ export const customInstructionApi = {
 	},
 
 	/**
-	 * Get the effective instructions for a KB (KB-level if exists, else project-level).
+	 * What the bot follows for a KB: shared instructions, then the KB's own (on top).
 	 */
 	resolve: async (projectId: string, knowledgeBaseId?: string) => {
 		const params = new URLSearchParams();

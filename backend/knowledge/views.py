@@ -838,7 +838,7 @@ class CustomInstructionDetailView(APIView):
 class CustomInstructionResolveView(APIView):
     """
     API endpoint to get the effective instructions for a knowledge base.
-    Returns KB-level instructions if they exist, otherwise project-level.
+    Returns the shared instructions plus the KB's own (what the bot follows).
     """
     permission_classes = [IsAuthenticated]
 
@@ -863,28 +863,9 @@ class CustomInstructionResolveView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # Try to get KB-level instructions first if kb_id provided
-            instructions = []
-            source = "project"
-            
-            if kb_id:
-                kb_instructions = CustomInstruction.objects.filter(
-                    project_id=project_id,
-                    knowledge_base_id=kb_id
-                ).select_related('knowledge_base')
-                
-                if kb_instructions.exists():
-                    instructions = list(kb_instructions.order_by('-created_at'))
-                    source = "knowledge_base"
-            
-            # Fall back to project-level if no KB instructions
-            if not instructions:
-                instructions = list(CustomInstruction.objects.filter(
-                    project_id=project_id,
-                    knowledge_base__isnull=True
-                ).order_by('-created_at'))
-                source = "project"
-            
+            instructions = list(CustomInstruction.effective(project_id, kb_id).select_related('knowledge_base'))
+            # "knowledge_base" when the KB adds its own on top of the shared ones
+            source = "knowledge_base" if any(inst.knowledge_base_id for inst in instructions) else "project"
             result = [_instruction_to_dict(inst) for inst in instructions]
             
             return Response({

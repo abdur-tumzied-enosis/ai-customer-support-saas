@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil, Sparkles, Tag, Globe, ChevronRight, ChevronDown, Eye } from "lucide-react";
+import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil, Sparkles, Tag, Globe, ChevronRight, ChevronDown, Eye, Layers, Database } from "lucide-react";
 import { documentApi, customInstructionApi, instructionTemplateApi, knowledgeBaseApi, type ApiDomain, type CustomInstruction, type InstructionTemplate, type KnowledgeBase } from "@/lib/api";
 import { ApiAccessEditor, toApiDomainsPayload } from "@/components/knowledge/ApiAccessEditor";
 import KnowledgeBaseBar from "@/components/knowledge/KnowledgeBaseBar";
@@ -65,6 +65,7 @@ export default function KnowledgePage() {
 	const [editingInstruction, setEditingInstruction] = useState<CustomInstruction | null>(null);
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
 	const [newInstruction, setNewInstruction] = useState(EMPTY_INSTRUCTION);
+	const [newInstructionScope, setNewInstructionScope] = useState<"shared" | "kb">("shared");
 	const [editInstruction, setEditInstruction] = useState(EMPTY_INSTRUCTION);
 	const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 	const [instructionToDelete, setInstructionToDelete] = useState<CustomInstruction | null>(null);
@@ -115,19 +116,19 @@ export default function KnowledgePage() {
 	}, [currentProjectId, selectedKbId]);
 
 	const fetchInstructions = useCallback(async () => {
-		if (!currentProjectId) return;
+		if (!currentProjectId || !selectedKbId) return;
 
 		setInstructionsLoading(true);
 		try {
-			// Fetch project-level instructions (knowledge_base_id = null)
-			const response = await customInstructionApi.list(currentProjectId, null);
+			// What the bot follows for this KB: shared instructions, then the KB's own
+			const response = await customInstructionApi.resolve(currentProjectId, selectedKbId);
 			setInstructions(response.data.instructions);
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
 		} finally {
 			setInstructionsLoading(false);
 		}
-	}, [currentProjectId]);
+	}, [currentProjectId, selectedKbId]);
 
 	const fetchTemplates = useCallback(async () => {
 		setTemplatesLoading(true);
@@ -145,15 +146,15 @@ export default function KnowledgePage() {
 	useEffect(() => {
 		if (!authLoading && currentProjectId) {
 			fetchKnowledgeBases();
-			fetchInstructions();
 			fetchTemplates();
 		}
-	}, [authLoading, currentProjectId, fetchKnowledgeBases, fetchInstructions, fetchTemplates]);
+	}, [authLoading, currentProjectId, fetchKnowledgeBases, fetchTemplates]);
 
-	// Documents follow the selected knowledge base
+	// Documents and instructions follow the selected knowledge base
 	useEffect(() => {
 		fetchDocuments();
-	}, [fetchDocuments]);
+		fetchInstructions();
+	}, [fetchDocuments, fetchInstructions]);
 
 	function handleSelectKb(kb: KnowledgeBase) {
 		setSelectedKb(kb);
@@ -320,6 +321,65 @@ export default function KnowledgePage() {
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
 		}
+	}
+
+	function renderScopeBadge(inst: CustomInstruction) {
+		return inst.knowledge_base_id ? (
+			<Badge variant="secondary" className="gap-1"><Database className="h-3 w-3" />Only {inst.knowledge_base_name}</Badge>
+		) : (
+			<Badge variant="secondary" className="gap-1"><Layers className="h-3 w-3" />Shared · all knowledge bases</Badge>
+		);
+	}
+
+	function renderInstructionGroup(title: React.ReactNode, items: CustomInstruction[], emptyText: string) {
+		return (
+			<div className="space-y-3">
+				<div className="flex items-center gap-2 text-sm font-medium">
+					{title}
+					<Badge variant="outline">{items.length}</Badge>
+				</div>
+				{items.length === 0 ? (
+					<p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">{emptyText}</p>
+				) : (
+					items.map((inst) => (
+						<Card key={inst.id}>
+							<CardHeader className="pb-3">
+								<div className="flex items-start justify-between">
+									<div className="flex items-center gap-2">
+										<Badge variant="outline">{inst.label}</Badge>
+										{inst.api_tool_enabled && <Badge variant="secondary">API</Badge>}
+										<span className="text-xs text-muted-foreground">
+											Added {new Date(inst.created_at).toLocaleDateString()}
+										</span>
+									</div>
+									<div className="flex items-center gap-1">
+										<Button variant="ghost" size="icon" onClick={() => handleEditClick(inst)} title="Edit instruction">
+											<Pencil className="h-4 w-4" />
+										</Button>
+										<Button
+											variant="ghost"
+											size="icon"
+											onClick={() => handleDeleteClick(inst)}
+											disabled={deletingInstructionId === inst.id}
+											title="Delete instruction"
+										>
+											{deletingInstructionId === inst.id ? (
+												<Loader2 className="h-4 w-4 animate-spin" />
+											) : (
+												<Trash2 className="h-4 w-4" />
+											)}
+										</Button>
+									</div>
+								</div>
+							</CardHeader>
+							<CardContent>
+								<p className="text-sm text-muted-foreground line-clamp-2">{inst.message}</p>
+							</CardContent>
+						</Card>
+					))
+				)}
+			</div>
+		);
 	}
 
 	function renderDocumentTable(docs: Document[]) {
@@ -564,20 +624,25 @@ export default function KnowledgePage() {
 
 		setSavingInstruction(true);
 		try {
-			const response = await customInstructionApi.create({
+			const forKb = newInstructionScope === "kb" ? selectedKb : undefined;
+			await customInstructionApi.create({
 				project_id: currentProjectId,
-				knowledge_base_id: null, // Project-level instruction
+				knowledge_base_id: forKb?.id ?? null, // null: shared by every knowledge base
 				label: newInstruction.label.trim(),
 				message: newInstruction.message.trim(),
 				api_tool_enabled: newInstruction.api_tool_enabled,
 				api_domains: newDomains,
 			});
 
-			setInstructions((prev) => [response.data.instruction, ...prev]);
+			await fetchInstructions(); // keeps the shared / KB grouping and order
 			setNewInstruction(EMPTY_INSTRUCTION);
+			setNewInstructionScope("shared");
 			setInstructionDialogOpen(false);
 			setShowTemplates(false);
-			setAlert({ type: "success", message: "Custom instruction added successfully" });
+			setAlert({
+				type: "success",
+				message: forKb ? `Instruction added for ${forKb.name} only` : "Instruction added for every knowledge base",
+			});
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
 		} finally {
@@ -720,85 +785,6 @@ export default function KnowledgePage() {
 				/>
 			)}
 
-			{/* Web Crawl Section */}
-			<Card>
-				<CardHeader>
-					<CardTitle className="flex items-center gap-2">
-						<Globe className="h-5 w-5" />
-						Crawl Website
-					</CardTitle>
-					<CardDescription>
-						Submit a URL to crawl and extract content. Specify depth to crawl linked pages.
-					</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<form onSubmit={handleCrawlSubmit} className="space-y-4">
-						<div className="flex gap-4">
-							<div className="flex-1">
-								<Label htmlFor="crawl-url">Website URL</Label>
-								<Input
-									id="crawl-url"
-									type="url"
-									placeholder="https://example.com"
-									value={crawlUrl}
-									onChange={(e) => setCrawlUrl(e.target.value)}
-									disabled={crawling}
-								/>
-							</div>
-							<div className="w-32">
-								<Label htmlFor="crawl-depth">Depth</Label>
-								<select
-									id="crawl-depth"
-									className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-									value={crawlDepth}
-									onChange={(e) => setCrawlDepth(e.target.value)}
-									disabled={crawling}
-								>
-									<option value="1">1</option>
-									<option value="2">2</option>
-									<option value="3">3</option>
-								</select>
-								<p className="text-xs text-muted-foreground mt-1">
-									Pages deep
-								</p>
-							</div>
-							<div className="flex items-end">
-								<Button type="submit" disabled={crawling}>
-									{crawling ? (
-										<>
-											<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-											Crawling...
-										</>
-									) : (
-										<>
-											<Globe className="mr-2 h-4 w-4" />
-											Start Crawl
-										</>
-									)}
-								</Button>
-							</div>
-						</div>
-						<div>
-							<Label htmlFor="crawl-search-query">
-								What are you looking for?{" "}
-								<span className="text-muted-foreground font-normal">(optional)</span>
-							</Label>
-							<Input
-								id="crawl-search-query"
-								type="text"
-								placeholder="e.g., pricing plans, API documentation, contact information"
-								value={crawlSearchQuery}
-								onChange={(e) => setCrawlSearchQuery(e.target.value)}
-								disabled={crawling}
-							/>
-							<p className="text-xs text-muted-foreground mt-1">
-								Only content relevant to this query will be saved to the knowledge base.
-							</p>
-						</div>
-					</form>
-				</CardContent>
-			</Card>
-
 			{/* Custom Instructions Section */}
 			<Card>
 				<CardHeader>
@@ -807,7 +793,8 @@ export default function KnowledgePage() {
 						Custom Instructions
 					</CardTitle>
 					<CardDescription>
-						Define how your agent should behave, act, and take actions with customers. These apply to every knowledge base.
+						Define how your agent should behave, act, and take actions with customers. Shared instructions apply to every
+						knowledge base; instructions for one knowledge base are added on top of them.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
@@ -888,6 +875,34 @@ export default function KnowledgePage() {
 										</div>
 									)}
 
+									{/* Scope */}
+									<div className="space-y-2">
+										<Label>Applies to</Label>
+										<div className="grid gap-2 sm:grid-cols-2">
+											{([
+												["shared", "Shared", "Every knowledge base"],
+												["kb", `Only ${selectedKb?.name ?? "this knowledge base"}`, "Added on top of the shared instructions"],
+											] as const).map(([value, title, hint]) => (
+												<button
+													key={value}
+													type="button"
+													aria-pressed={newInstructionScope === value}
+													disabled={value === "kb" && !selectedKb}
+													onClick={() => setNewInstructionScope(value)}
+													className={`rounded-md border p-3 text-left transition-colors disabled:opacity-50 ${
+														newInstructionScope === value ? "border-primary bg-primary/5" : "hover:bg-muted"
+													}`}
+												>
+													<span className="flex items-center gap-2 text-sm font-medium">
+														{value === "shared" ? <Layers className="h-4 w-4" /> : <Database className="h-4 w-4" />}
+														{title}
+													</span>
+													<span className="text-xs text-muted-foreground">{hint}</span>
+												</button>
+											))}
+										</div>
+									</div>
+
 									{/* Form Fields */}
 									<div className="space-y-2">
 										<Label htmlFor="instruction-label">Label</Label>
@@ -926,6 +941,7 @@ export default function KnowledgePage() {
 											onClick={() => {
 												setInstructionDialogOpen(false);
 												setNewInstruction(EMPTY_INSTRUCTION);
+												setNewInstructionScope("shared");
 												setShowTemplates(false);
 											}}
 											disabled={savingInstruction}
@@ -963,6 +979,12 @@ export default function KnowledgePage() {
 									</DialogDescription>
 								</DialogHeader>
 								<div className="space-y-4 py-4">
+									{editingInstruction && (
+										<p className="flex items-center gap-2 text-sm text-muted-foreground">
+											Applies to:
+											{renderScopeBadge(editingInstruction)}
+										</p>
+									)}
 									<div className="space-y-2">
 										<Label htmlFor="edit-instruction-label">Label</Label>
 										<Input
@@ -1072,48 +1094,17 @@ export default function KnowledgePage() {
 							<p>Loading instructions...</p>
 						</div>
 					) : instructions.length > 0 ? (
-						<div className="space-y-3">
-							{instructions.map((inst) => (
-								<Card key={inst.id}>
-									<CardHeader className="pb-3">
-										<div className="flex items-start justify-between">
-											<div className="flex items-center gap-2">
-												<Badge variant="outline">{inst.label}</Badge>
-												{inst.api_tool_enabled && <Badge variant="secondary">API</Badge>}
-												<span className="text-xs text-muted-foreground">
-													Added {new Date(inst.created_at).toLocaleDateString()}
-												</span>
-											</div>
-											<div className="flex items-center gap-1">
-												<Button
-													variant="ghost"
-													size="icon"
-													onClick={() => handleEditClick(inst)}
-												>
-													<Pencil className="h-4 w-4" />
-												</Button>
-												<Button
-													variant="ghost"
-													size="icon"
-													onClick={() => handleDeleteClick(inst)}
-													disabled={deletingInstructionId === inst.id}
-												>
-													{deletingInstructionId === inst.id ? (
-														<Loader2 className="h-4 w-4 animate-spin" />
-													) : (
-														<Trash2 className="h-4 w-4" />
-													)}
-												</Button>
-											</div>
-										</div>
-									</CardHeader>
-									<CardContent>
-										<p className="text-sm text-muted-foreground line-clamp-2">
-											{inst.message}
-										</p>
-									</CardContent>
-								</Card>
-							))}
+						<div className="space-y-6">
+							{renderInstructionGroup(
+								<><Layers className="h-4 w-4" /> Shared · all knowledge bases</>,
+								instructions.filter((inst) => !inst.knowledge_base_id),
+								"No shared instructions yet.",
+							)}
+							{selectedKb && renderInstructionGroup(
+								<><Database className="h-4 w-4" /> Only {selectedKb.name}</>,
+								instructions.filter((inst) => inst.knowledge_base_id === selectedKb.id),
+								`Nothing just for ${selectedKb.name} yet. Add an instruction and choose "Only ${selectedKb.name}".`,
+							)}
 						</div>
 					) : (
 						<div className="text-center py-8 text-muted-foreground">
@@ -1219,6 +1210,85 @@ export default function KnowledgePage() {
 							</DialogFooter>
 						</DialogContent>
 					</Dialog>
+				</CardContent>
+			</Card>
+
+			{/* Web Crawl Section */}
+			<Card>
+				<CardHeader>
+					<CardTitle className="flex items-center gap-2">
+						<Globe className="h-5 w-5" />
+						Crawl Website
+					</CardTitle>
+					<CardDescription>
+						Submit a URL to crawl and extract content. Specify depth to crawl linked pages.
+					</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<form onSubmit={handleCrawlSubmit} className="space-y-4">
+						<div className="flex gap-4">
+							<div className="flex-1">
+								<Label htmlFor="crawl-url">Website URL</Label>
+								<Input
+									id="crawl-url"
+									type="url"
+									placeholder="https://example.com"
+									value={crawlUrl}
+									onChange={(e) => setCrawlUrl(e.target.value)}
+									disabled={crawling}
+								/>
+							</div>
+							<div className="w-32">
+								<Label htmlFor="crawl-depth">Depth</Label>
+								<select
+									id="crawl-depth"
+									className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+									value={crawlDepth}
+									onChange={(e) => setCrawlDepth(e.target.value)}
+									disabled={crawling}
+								>
+									<option value="1">1</option>
+									<option value="2">2</option>
+									<option value="3">3</option>
+								</select>
+								<p className="text-xs text-muted-foreground mt-1">
+									Pages deep
+								</p>
+							</div>
+							<div className="flex items-end">
+								<Button type="submit" disabled={crawling}>
+									{crawling ? (
+										<>
+											<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+											Crawling...
+										</>
+									) : (
+										<>
+											<Globe className="mr-2 h-4 w-4" />
+											Start Crawl
+										</>
+									)}
+								</Button>
+							</div>
+						</div>
+						<div>
+							<Label htmlFor="crawl-search-query">
+								What are you looking for?{" "}
+								<span className="text-muted-foreground font-normal">(optional)</span>
+							</Label>
+							<Input
+								id="crawl-search-query"
+								type="text"
+								placeholder="e.g., pricing plans, API documentation, contact information"
+								value={crawlSearchQuery}
+								onChange={(e) => setCrawlSearchQuery(e.target.value)}
+								disabled={crawling}
+							/>
+							<p className="text-xs text-muted-foreground mt-1">
+								Only content relevant to this query will be saved to the knowledge base.
+							</p>
+						</div>
+					</form>
 				</CardContent>
 			</Card>
 
