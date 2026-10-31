@@ -13,8 +13,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from agents.image_search import MAX_IMAGE_BYTES, NotAnImage, image_format, load_image
-from .models import MAX_IMAGES_PER_PRODUCT, Product, ProductImage, product_image_path
+from agents.image_search import NotAnImage, image_format, load_image
+from .models import MAX_IMAGES_PER_PRODUCT, MAX_PRODUCT_IMAGE_BYTES, Product, ProductImage, product_image_path
 from .tasks import embed_product_image
 from .views import _kb_error, _project_user, _resolve_kb
 
@@ -68,11 +68,12 @@ def _clean_files(request, existing: int):
 		return None, _kb_error("too_many_images", f"A product can have at most {MAX_IMAGES_PER_PRODUCT} photos", status.HTTP_400_BAD_REQUEST)
 	out = []
 	for f in files:
+		if f.size > MAX_PRODUCT_IMAGE_BYTES:  # before reading it into memory
+			mb = MAX_PRODUCT_IMAGE_BYTES // (1024 * 1024)
+			return None, _kb_error("image_too_large", f"{f.name} is larger than {mb} MB", status.HTTP_400_BAD_REQUEST)
 		try:
-			if f.size > MAX_IMAGE_BYTES:  # before reading it into memory
-				raise NotAnImage("image too large")
 			data = f.read()
-			load_image(data)
+			load_image(data, MAX_PRODUCT_IMAGE_BYTES)
 			out.append((data, image_format(data), f.name))
 		except NotAnImage:
 			return None, _kb_error("invalid_image", f"{f.name} is not a valid image", status.HTTP_400_BAD_REQUEST)

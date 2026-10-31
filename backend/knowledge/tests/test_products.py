@@ -8,7 +8,7 @@ from django.core.files.storage import default_storage
 from django.test import TestCase, override_settings
 
 from accounts.models import Project
-from knowledge.models import KnowledgeBase, Product, ProductImage, product_image_path
+from knowledge.models import MAX_PRODUCT_IMAGE_BYTES, KnowledgeBase, Product, ProductImage, product_image_path
 from knowledge.tasks import embed_product_image
 from usage.models import UsageEvent
 
@@ -41,7 +41,7 @@ class ProductImageTest(TestCase):
 		embed_product_image(str(self.image.id))
 		self.image.refresh_from_db()
 		self.assertEqual(self.image.status, "ready")
-		self.load.assert_called_once_with(b"img")
+		self.load.assert_called_once_with(b"img", MAX_PRODUCT_IMAGE_BYTES)
 		self.embed.assert_called_once_with("IMG")
 		self.upsert.assert_called_once_with(self.kb.image_collection, str(self.image.id), [1, 0, 0, 0], str(self.product.id))
 		self.assertEqual(UsageEvent.objects.filter(kind="image", metadata__op="index").count(), 1)

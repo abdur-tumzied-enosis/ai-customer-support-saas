@@ -23,10 +23,10 @@ class NotAnImage(ValueError):
 	pass
 
 
-def load_image(data: bytes) -> Image.Image:
+def load_image(data: bytes, max_bytes: int = MAX_IMAGE_BYTES) -> Image.Image:
 	"""Decode an uploaded JPEG/PNG/WEBP as upright RGB (EXIF rotation applied, transparency on white);
-	anything else, or too big, raises NotAnImage."""
-	if len(data) > MAX_IMAGE_BYTES:
+	anything else, or over max_bytes, raises NotAnImage."""
+	if len(data) > max_bytes:
 		raise NotAnImage("image too large")
 	try:
 		img = Image.open(BytesIO(data))

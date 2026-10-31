@@ -205,6 +205,7 @@ class Document(models.Model):
 
 
 MAX_IMAGES_PER_PRODUCT = 10
+MAX_PRODUCT_IMAGE_BYTES = 10 * 1024 * 1024  # full-size stock/phone photos; customer uploads keep image_search.MAX_IMAGE_BYTES
 
 
 def product_image_path(kb, image_id: str, ext: str) -> str:

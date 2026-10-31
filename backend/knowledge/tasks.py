@@ -12,7 +12,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, ProductImage
+from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, MAX_PRODUCT_IMAGE_BYTES, ProductImage
 from agents.vector_store import add_texts_to_collection
 from agents.image_search import delete_images, embed_image, load_image, upsert_image
 from usage.utils import record_image_usage
@@ -763,7 +763,7 @@ def embed_product_image(image_id: str) -> None:
     try:
         with default_storage.open(image.file.name, "rb") as f:
             data = f.read()
-        vector = embed_image(load_image(data))
+        vector = embed_image(load_image(data, MAX_PRODUCT_IMAGE_BYTES))
         upsert_image(kb.image_collection, image_id, vector, str(image.product_id))
     except Exception as exc:
         logger.warning(f"Embedding product image {image_id} failed: {exc}")

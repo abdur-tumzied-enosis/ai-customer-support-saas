@@ -11,6 +11,7 @@ from PIL import Image
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
+from agents.image_search import MAX_IMAGE_BYTES
 from knowledge.models import KnowledgeBase, Product, ProductImage
 
 User = get_user_model()
@@ -71,12 +72,22 @@ class ProductApiTests(TestCase):
 
 	def test_oversize_file_rejected_before_reading(self):
 		data = png()
-		with patch("knowledge.products.MAX_IMAGE_BYTES", len(data) - 1):
+		with patch("knowledge.products.MAX_PRODUCT_IMAGE_BYTES", len(data) - 1):
 			r = self.create(images=[upload("big.png", data)])
 		self.assertEqual(r.status_code, 400, r.content)
-		self.assertEqual(r.json()["error"]["code"], "invalid_image")
-		self.assertIn("big.png", r.json()["error"]["message"])
+		self.assertEqual(r.json()["error"]["code"], "image_too_large")
+		self.assertIn("big.png is larger than", r.json()["error"]["message"])
 		self.assertEqual(Product.objects.count(), 0)
+
+	def test_catalog_accepts_photo_over_customer_limit(self):
+		# Full-size stock and phone photos are often 5-10 MB; the 5 MB cap is for customer uploads only
+		noise = Image.frombytes("RGB", (1400, 1400), os.urandom(3 * 1400 * 1400))
+		buf = BytesIO()
+		noise.save(buf, "PNG")
+		data = buf.getvalue()
+		self.assertGreater(len(data), MAX_IMAGE_BYTES)
+		r = self.create(images=[upload("big.png", data)])
+		self.assertEqual(r.status_code, 201, r.content)
 
 	def test_invalid_image_rejects_whole_upload(self):
 		before = len(files_under_media())
