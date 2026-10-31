@@ -69,6 +69,15 @@ class ProductApiTests(TestCase):
 		self.assertEqual(self.embed.delay.call_count, 2)
 		self.assertEqual(len(r.json()["data"]["images"]), 2)
 
+	def test_oversize_file_rejected_before_reading(self):
+		data = png()
+		with patch("knowledge.products.MAX_IMAGE_BYTES", len(data) - 1):
+			r = self.create(images=[upload("big.png", data)])
+		self.assertEqual(r.status_code, 400, r.content)
+		self.assertEqual(r.json()["error"]["code"], "invalid_image")
+		self.assertIn("big.png", r.json()["error"]["message"])
+		self.assertEqual(Product.objects.count(), 0)
+
 	def test_invalid_image_rejects_whole_upload(self):
 		before = len(files_under_media())
 		r = self.create(images=[upload("ok.png"), upload("bad.png", b"not an image")])
