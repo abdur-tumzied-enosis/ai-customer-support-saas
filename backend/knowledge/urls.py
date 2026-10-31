@@ -1,4 +1,8 @@
 from django.urls import path
+from .products import (
+	FeaturesView, ProductListCreateView, ProductDetailView, ProductImagesAddView,
+	ProductImageDetailView, ProductImageFileView,
+)
 from .suggestions import SuggestionDecisionView, SuggestionListView
 from .views import (
 	KnowledgeBaseListView, KnowledgeBaseDetailView,
@@ -31,6 +35,14 @@ urlpatterns = [
 	path("instructions/", CustomInstructionListCreateView.as_view(), name="instruction-list-create"),
 	path("instructions/resolve/", CustomInstructionResolveView.as_view(), name="instruction-resolve"),
 	path("instructions/<uuid:instruction_id>/", CustomInstructionDetailView.as_view(), name="instruction-detail"),
+
+	# Product catalog (image search)
+	path("features/", FeaturesView.as_view(), name="kb-features"),
+	path("products/", ProductListCreateView.as_view(), name="product-list-create"),
+	path("products/<uuid:product_id>/", ProductDetailView.as_view(), name="product-detail"),
+	path("products/<uuid:product_id>/images/", ProductImagesAddView.as_view(), name="product-images-add"),
+	path("products/images/<uuid:image_id>/", ProductImageDetailView.as_view(), name="product-image-detail"),
+	path("products/images/<uuid:image_id>/file/", ProductImageFileView.as_view(), name="product-image-file"),
 
 	# Agent memory review queue
 	path("suggestions/", SuggestionListView.as_view(), name="suggestion-list"),
