@@ -158,7 +158,13 @@ def _reply(task, conversation, msg: Message) -> None:
 		_complete(turn)  # staff answer these
 		return
 
-	image_reply.annotate_turn(conversation, turn)
+	try:
+		image_reply.annotate_turn(conversation, turn)
+		photos_timed_out = False
+	except SoftTimeLimitExceeded:
+		# Too little time left for the agent before the hard kill: send the fallback now
+		logger.warning(f"Out of time checking photos for conversation {conversation.id}; sending the fallback reply")
+		photos_timed_out = True
 	question = "\n".join(tasks.format_message_with_context(m) for m in turn)
 	api_calls: list = []
 	trace: dict = {}
@@ -166,6 +172,8 @@ def _reply(task, conversation, msg: Message) -> None:
 	if any(wants_human(m.text) for m in turn):  # raw text only: quoted bot messages must not trigger it
 		reply_text = ""
 		handoff_reason = "customer asked for a person"
+	elif photos_timed_out:
+		reply_text = ""
 	else:
 		try:
 			reply_text, ctx = tasks.generate_agent_reply(turn[0], conversation.knowledge_base, question=question)

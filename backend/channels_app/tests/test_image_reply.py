@@ -1,10 +1,13 @@
 import io
 from unittest import mock
 
+from celery.exceptions import SoftTimeLimitExceeded
+from django.conf import settings
 from django.test import SimpleTestCase, override_settings
 from PIL import Image
 
 from agents.llm import build_system_prompt
+from channels_app.tasks import FALLBACK_REPLY
 from channels_app.media import MediaError
 from channels_app.models import ChannelCredential, Message
 from channels_app.service.facebook_messing import handle_facebook_message
@@ -158,6 +161,25 @@ class ImageReplyTest(PipelineBase):
 		self.answer_all()
 		assert UNCHECKED in self.questions[0]
 		assert not self.searches().exists()
+
+	def test_soft_time_limit_sends_fallback(self):
+		self.fetch.side_effect = SoftTimeLimitExceeded()
+		handle_facebook_message(fb_payload("m1"))
+		with self.assertLogs("channels_app.reply", "WARNING"):
+			self.answer_all()
+		self.gen.assert_not_called()
+		out = self.outbound()
+		assert len(out) == 1 and out[0].text == FALLBACK_REPLY
+		self.send.assert_called_once()
+		assert Message.objects.get(external_message_id="m1").status == "completed"
+		assert not self.searches().exists()
+
+	def test_soft_time_limit_still_hands_off(self):
+		self.fetch.side_effect = SoftTimeLimitExceeded()
+		handle_facebook_message(fb_payload("m1", text="can I talk to a person"))
+		self.answer_all()
+		self.gen.assert_not_called()
+		assert self.outbound()[0].text == settings.HANDOFF_MESSAGE
 
 	def test_at_most_three_photos_per_message(self):
 		handle_facebook_message(fb_payload("m1", photos=4))
