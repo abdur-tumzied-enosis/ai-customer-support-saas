@@ -62,7 +62,8 @@ class ProductApiTests(TestCase):
 		return self.client.get("/api/kb/products/", {"project_id": str(self.project.id), "kb_id": str(self.kb.id)})
 
 	def test_create_product_with_images(self):
-		r = self.create()
+		with self.captureOnCommitCallbacks(execute=True):
+			r = self.create()
 		self.assertEqual(r.status_code, 201, r.content)
 		self.assertEqual(ProductImage.objects.filter(status="pending").count(), 2)
 		self.assertEqual(self.embed.delay.call_count, 2)
@@ -147,6 +148,75 @@ class ProductApiTests(TestCase):
 		self.assertEqual(self.create().status_code, 403)
 		self.assertEqual(self.client.delete(f"/api/kb/products/{pid}/").status_code, 403)
 		self.assertEqual(self.list_products().status_code, 200)
+
+	def test_failed_save_leaves_no_rows_or_files(self):
+		orig = ProductImage.save
+		calls = []
+
+		def flaky(img, *a, **kw):
+			calls.append(1)
+			if len(calls) == 2:
+				raise RuntimeError("boom")
+			return orig(img, *a, **kw)
+
+		before = len(files_under_media())
+		with patch.object(ProductImage, "save", autospec=True, side_effect=flaky):
+			with self.captureOnCommitCallbacks(execute=True):
+				r = self.create()
+		self.assertEqual(r.status_code, 500)
+		self.assertEqual(Product.objects.count(), 0)
+		self.assertEqual(ProductImage.objects.count(), 0)
+		self.assertEqual(len(files_under_media()), before)
+		self.embed.delay.assert_not_called()
+
+	def test_failed_add_images_leaves_existing_product_intact(self):
+		pid = self.make_product()["id"]
+		files_before = len(files_under_media())
+		orig = ProductImage.save
+		calls = []
+
+		def flaky(img, *a, **kw):
+			calls.append(1)
+			if len(calls) == 2:
+				raise RuntimeError("boom")
+			return orig(img, *a, **kw)
+
+		with patch.object(ProductImage, "save", autospec=True, side_effect=flaky):
+			r = self.client.post(f"/api/kb/products/{pid}/images/", {"images": [upload("c.png"), upload("d.png")]}, format="multipart")
+		self.assertEqual(r.status_code, 500)
+		self.assertEqual(ProductImage.objects.filter(product_id=pid).count(), 2)
+		self.assertEqual(len(files_under_media()), files_before)
+
+	def test_tenant_off_gates_every_route(self):
+		pid = self.make_product()["id"]
+		img = ProductImage.objects.first()
+		self.project.image_search_enabled = False
+		self.project.save()
+		pj = str(self.project.id)
+		calls = {
+			"create": lambda: self.create(),
+			"patch": lambda: self.client.patch(f"/api/kb/products/{pid}/", {"name": "x"}, format="json"),
+			"delete": lambda: self.client.delete(f"/api/kb/products/{pid}/"),
+			"add_images": lambda: self.client.post(f"/api/kb/products/{pid}/images/", {"images": [upload("c.png")]}, format="multipart"),
+			"delete_image": lambda: self.client.delete(f"/api/kb/products/images/{img.id}/"),
+			"file": lambda: self.client.get(f"/api/kb/products/images/{img.id}/file/"),
+		}
+		for name, call in calls.items():
+			with self.subTest(route=name):
+				r = call()
+				self.assertEqual(r.status_code, 404)
+				self.assertEqual(r.json()["error"]["code"], "feature_disabled")
+		self.assertEqual(Product.objects.count(), 1)
+
+	def test_non_admin_cannot_add_or_delete_images(self):
+		pid = self.make_product()["id"]
+		img = ProductImage.objects.first()
+		self.pu.role = "member"
+		self.pu.save()
+		r = self.client.post(f"/api/kb/products/{pid}/images/", {"images": [upload("c.png")]}, format="multipart")
+		self.assertEqual(r.status_code, 403)
+		self.assertEqual(self.client.delete(f"/api/kb/products/images/{img.id}/").status_code, 403)
+		self.assertEqual(ProductImage.objects.count(), 2)
 
 	def test_tenant_off_hides_endpoints(self):
 		self.project.image_search_enabled = False

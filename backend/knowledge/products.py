@@ -6,6 +6,7 @@ import mimetypes
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.db import transaction
 from django.http import FileResponse
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -76,17 +77,27 @@ def _clean_files(request, existing: int):
 	return out, None
 
 
-def _store(product: Product, files) -> list:
-	"""Save validated files as pending ProductImage rows and queue embedding."""
-	images = []
-	for data, ext, _name in files:
-		img = ProductImage(product=product)
-		img.file.name = default_storage.save(product_image_path(product.kb, str(img.id), ext), ContentFile(data))
-		img.save()
-		images.append(img)
-	for img in images:
-		embed_product_image.delay(str(img.id))
-	return images
+def _store(product: Product, files) -> None:
+	"""Atomically save the product (if new) and validated files as pending ProductImage rows; embeds are queued on commit.
+	Files already written are removed if anything fails."""
+	saved = []
+	ids = []
+	try:
+		with transaction.atomic():
+			if product._state.adding:
+				product.save()
+			for data, ext, _name in files:
+				img = ProductImage(product=product)
+				img.file.name = default_storage.save(product_image_path(product.kb, str(img.id), ext), ContentFile(data))
+				saved.append(img.file.name)
+				img.save()
+				ids.append(str(img.id))
+	except Exception:
+		for name in saved:
+			default_storage.delete(name)
+		raise
+	for image_id in ids:
+		transaction.on_commit(lambda i=image_id: embed_product_image.delay(i))
 
 
 class FeaturesView(APIView):
@@ -146,12 +157,8 @@ class ProductListCreateView(APIView):
 			return err
 		if not files:
 			return _kb_error("no_images", "At least one photo is required", status.HTTP_400_BAD_REQUEST)
-		product = Product.objects.create(kb=kb, name=name, description=request.data.get("description") or "")
-		try:
-			_store(product, files)
-		except Exception:
-			product.delete()
-			raise
+		product = Product(kb=kb, name=name, description=request.data.get("description") or "")
+		_store(product, files)
 		return Response(_product_dict(product), status=status.HTTP_201_CREATED)
 
 
