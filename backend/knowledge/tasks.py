@@ -14,7 +14,7 @@ from django.core.files.storage import default_storage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, ProductImage
 from agents.vector_store import add_texts_to_collection
-from agents.image_search import embed_image, load_image, upsert_image
+from agents.image_search import delete_images, embed_image, load_image, upsert_image
 from usage.utils import record_image_usage
 
 logger = logging.getLogger(__name__)
@@ -769,5 +769,8 @@ def embed_product_image(image_id: str) -> None:
         logger.warning(f"Embedding product image {image_id} failed: {exc}")
         ProductImage.objects.filter(id=image_id).update(status="failed", error=type(exc).__name__)
         return
-    ProductImage.objects.filter(id=image_id).update(status="ready", error="")
+    if not ProductImage.objects.filter(id=image_id).update(status="ready", error=""):
+        # Deleted while being embedded: drop the point we just wrote, and do not meter it
+        delete_images(kb.image_collection, [image_id])
+        return
     record_image_usage(str(kb.project_id), "index", image_id=image_id)

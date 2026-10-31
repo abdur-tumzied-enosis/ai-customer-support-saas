@@ -57,6 +57,14 @@ class ProductImageTest(TestCase):
 		embed_product_image(str(uuid.uuid4()))
 		self.upsert.assert_not_called()
 
+	def test_image_deleted_during_embed_removes_point_and_skips_metering(self):
+		image_id = str(self.image.id)
+		self.upsert.side_effect = lambda *a: ProductImage.objects.filter(id=image_id).delete()
+		with mock.patch("knowledge.tasks.delete_images") as task_delete:
+			embed_product_image(image_id)
+		task_delete.assert_called_once_with(self.kb.image_collection, [image_id])
+		self.assertEqual(UsageEvent.objects.filter(kind="image").count(), 0)
+
 	def test_product_delete_removes_points_and_files(self):
 		path = self.image.file.name
 		self.product.delete()
