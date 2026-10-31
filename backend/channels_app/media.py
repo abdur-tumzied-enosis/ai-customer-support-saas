@@ -1,8 +1,10 @@
-"""Fetch customer photos from each channel and store uploaded ones. This is an SSRF boundary: only Meta CDN hosts are fetched."""
+"""Fetch customer photos from each channel and store uploaded ones. This is an SSRF boundary: only Meta CDN hosts are fetched.
+Failures become MediaError, except celery's SoftTimeLimitExceeded (an Exception subclass), which must reach reply._reply."""
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import requests
+from celery.exceptions import SoftTimeLimitExceeded
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
@@ -23,6 +25,11 @@ class MediaError(Exception):
 
 def is_photo(att: dict) -> bool:
 	return att.get("type") == "image" and not (att.get("payload") or {}).get("sticker_id")
+
+
+def has_photo(msg: Message) -> bool:
+	"""A real photo among the attachments (not a sticker, voice note, like or document)."""
+	return any(isinstance(a, dict) and is_photo(a) for a in msg.attachment_info or [])
 
 
 def store_photo(data: bytes, folder: str) -> str:
@@ -49,7 +56,7 @@ def _get(url: str, **kwargs) -> requests.Response:
 			raise MediaError("unexpected redirect")
 		resp.raise_for_status()
 		return resp
-	except MediaError:
+	except (MediaError, SoftTimeLimitExceeded):
 		raise
 	except Exception as e:
 		raise MediaError(f"download failed: {e}") from e
@@ -68,7 +75,7 @@ def _download(url: str, **kwargs) -> bytes:
 	resp = _get(url, **kwargs)
 	try:
 		return _read_capped(resp.iter_content(chunk_size=64 * 1024))
-	except MediaError:
+	except (MediaError, SoftTimeLimitExceeded):
 		raise
 	except Exception as e:
 		raise MediaError(f"download failed: {e}") from e
@@ -84,7 +91,7 @@ def _fetch_whatsapp(msg: Message, att: dict) -> bytes:
 	headers = {"Authorization": f"Bearer {cred.get_credentials().access_token}"}
 	try:
 		url = _get(f"{GRAPH_API_URL}/{media_id}", headers=headers).json().get("url")
-	except MediaError:
+	except (MediaError, SoftTimeLimitExceeded):
 		raise
 	except Exception as e:
 		raise MediaError(f"media lookup failed: {e}") from e
@@ -97,6 +104,8 @@ def _read_upload(path) -> bytes:
 	try:
 		with default_storage.open(path) as f:
 			data = f.read(MAX_IMAGE_BYTES + 1)
+	except SoftTimeLimitExceeded:
+		raise
 	except Exception as e:
 		raise MediaError(f"cannot read upload: {e}") from e
 	if len(data) > MAX_IMAGE_BYTES:

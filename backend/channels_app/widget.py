@@ -31,7 +31,7 @@ from rest_framework.views import APIView
 from knowledge.models import KnowledgeBase
 from agents.image_search import NotAnImage
 from .api import _error, _get_project, _iso, _verify_project_access, read_photo_upload
-from .media import store_photo
+from .media import has_photo, store_photo
 from .models import CustomerContact, Widget, normalize_origin
 from .reply import schedule_reply
 from .service.conversation_service import ensure_contact_conversation
@@ -282,7 +282,7 @@ def _visitor_message(msg) -> dict:
 		"sender": msg.sender,  # customer / bot / staff
 		"text": msg.text,
 		"client_id": (msg.meta or {}).get("client_id") if msg.direction == "in" else None,
-		"has_photo": bool(msg.has_attachments),
+		"has_photo": has_photo(msg),
 		"created_at": _iso(msg.created_at),
 	}
 

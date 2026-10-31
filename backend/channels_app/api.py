@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
 from agents.image_search import MAX_IMAGE_BYTES, NotAnImage
-from .media import store_photo
+from .media import has_photo, store_photo
 from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
 from .service.conversation_service import create_conversation
 from .service.message_service import create_ui_message
@@ -224,7 +224,7 @@ def _message_dict(msg: Message) -> dict:
 		"text": msg.text,
 		"created_at": msg.created_at.isoformat(),
 		"agent_reply_id": str(msg.agent_reply_id) if msg.agent_reply_id else None,
-		"has_photo": bool(msg.has_attachments),
+		"has_photo": has_photo(msg),
 		"photo_matches": (msg.meta or {}).get("photo_matches", "") if msg.direction == "in" else "",
 	}
 

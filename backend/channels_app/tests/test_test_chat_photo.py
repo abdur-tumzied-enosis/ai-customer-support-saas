@@ -72,8 +72,23 @@ class TestChatPhotoTest(TestCase):
 
 	def test_message_dict_exposes_photo_matches(self):
 		msg = Message.objects.create(project=self.project, contact=self.conv.contact, conversation=self.conv,
-			direction="in", text="t", has_attachments=True, meta={"photo_matches": "Red shirt"})
+			direction="in", text="t", has_attachments=True, attachment_info=[{"type": "image", "path": "chat_uploads/x.png"}],
+			meta={"photo_matches": "Red shirt"})
 		d = _message_dict(msg)
 		assert d["has_photo"] is True and d["photo_matches"] == "Red shirt"
 		plain = Message.objects.create(project=self.project, contact=self.conv.contact, conversation=self.conv, direction="in", text="t")
 		assert _message_dict(plain)["has_photo"] is False and _message_dict(plain)["photo_matches"] == ""
+
+	def test_has_photo_only_for_photo_attachments(self):
+		from channels_app.widget import _visitor_message
+		cases = [
+			([{"type": "image", "payload": {"url": "https://scontent.xx.fbcdn.net/x", "sticker_id": 369239263222822}}], False),
+			([{"type": "audio", "payload": {"url": "https://cdn.fbsbx.com/a.mp4"}}], False),
+			([{"type": "file", "payload": {}}, "junk"], False),
+			([{"type": "audio"}, {"type": "image", "payload": {"url": "https://scontent.xx.fbcdn.net/x"}}], True),
+		]
+		for info, expected in cases:
+			msg = Message.objects.create(project=self.project, contact=self.conv.contact, conversation=self.conv,
+				direction="in", text="", has_attachments=True, attachment_info=info)
+			assert _message_dict(msg)["has_photo"] is expected, info
+			assert _visitor_message(msg)["has_photo"] is expected, info

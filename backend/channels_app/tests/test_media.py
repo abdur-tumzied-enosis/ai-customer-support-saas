@@ -2,6 +2,7 @@ import tempfile
 from types import SimpleNamespace
 from unittest import mock
 
+from celery.exceptions import SoftTimeLimitExceeded
 from django.core.files.storage import FileSystemStorage
 from django.test import SimpleTestCase
 
@@ -103,6 +104,26 @@ class FetchRemoteTest(SimpleTestCase):
 		with self.assertRaises(MediaError):
 			fetch_photo(msg("facebook"), {"type": "image", "url": "https://x.fbcdn.net/x"})
 
+	def test_soft_time_limit_is_not_swallowed(self, get):
+		url = {"type": "image", "url": "https://x.fbcdn.net/x"}
+		get.side_effect = SoftTimeLimitExceeded()
+		with self.assertRaises(SoftTimeLimitExceeded):
+			fetch_photo(msg("facebook"), url)
+		get.side_effect = None
+		slow = response(b"abc")
+		slow.iter_content.side_effect = SoftTimeLimitExceeded()
+		get.return_value = slow
+		with self.assertRaises(SoftTimeLimitExceeded):
+			fetch_photo(msg("facebook"), url)
+		lookup = response(json={"url": "https://lookaside.fbsbx.com/m"})
+		lookup.json.side_effect = SoftTimeLimitExceeded()
+		get.return_value = lookup
+		cred = mock.Mock()
+		cred.get_credentials.return_value = SimpleNamespace(access_token="tok")
+		with mock.patch("channels_app.media.tasks.get_whatsapp_credential", return_value=cred):
+			with self.assertRaises(SoftTimeLimitExceeded):
+				fetch_photo(msg("whatsapp"), {"type": "image", "payload": {"id": "MID1"}})
+
 	def test_unsupported_channel(self, get):
 		with self.assertRaises(MediaError):
 			fetch_photo(msg("telegram"), {"type": "image"})
@@ -140,6 +161,12 @@ class StoreTest(SimpleTestCase):
 	def test_missing_file_is_media_error(self):
 		with self.assertRaises(MediaError):
 			fetch_photo(msg("self"), {"type": "image", "path": "chat_uploads/none.png"})
+
+	def test_soft_time_limit_reading_upload_is_not_swallowed(self):
+		import channels_app.media as media
+		with mock.patch.object(media.default_storage, "open", side_effect=SoftTimeLimitExceeded()):
+			with self.assertRaises(SoftTimeLimitExceeded):
+				fetch_photo(msg("self"), {"type": "image", "path": "chat_uploads/x.png"})
 
 	def test_oversize_stored_file_raises(self):
 		from django.core.files.base import ContentFile

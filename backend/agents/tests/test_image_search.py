@@ -2,6 +2,7 @@ import io
 import uuid
 from unittest import mock
 
+from celery.exceptions import SoftTimeLimitExceeded
 from django.test import SimpleTestCase, override_settings
 from PIL import Image
 from qdrant_client import QdrantClient, models
@@ -67,6 +68,40 @@ class ImageSearchTest(SimpleTestCase):
 		data = buf.getvalue()
 		self.assertEqual(image_format(data), "jpg")
 		self.assertEqual(load_image(data).mode, "RGB")
+
+	def test_exif_rotation_is_applied(self):
+		img = Image.new("RGB", (40, 20), "red")
+		exif = img.getexif()
+		exif[0x0112] = 6  # Orientation: rotate 90 CW to display
+		buf = io.BytesIO()
+		img.save(buf, "JPEG", exif=exif)
+		self.assertEqual(load_image(buf.getvalue()).size, (20, 40))
+
+	def test_transparency_becomes_white(self):
+		for img in (Image.new("RGBA", (4, 4), (0, 0, 0, 0)), Image.new("LA", (4, 4), (0, 0))):
+			buf = io.BytesIO()
+			img.save(buf, "PNG")
+			out = load_image(buf.getvalue())
+			self.assertEqual(out.mode, "RGB")
+			self.assertEqual(out.getpixel((0, 0)), (255, 255, 255), img.mode)
+
+	def test_palette_transparency_becomes_white(self):
+		img = Image.new("P", (4, 4), 0)
+		img.putpalette([0, 0, 0] * 256)
+		buf = io.BytesIO()
+		img.save(buf, "PNG", transparency=0)
+		self.assertEqual(load_image(buf.getvalue()).getpixel((0, 0)), (255, 255, 255))
+
+	def test_soft_time_limit_is_not_swallowed(self):
+		with mock.patch.object(image_search.Image, "open", side_effect=SoftTimeLimitExceeded()):
+			with self.assertRaises(SoftTimeLimitExceeded):
+				load_image(_png_bytes(4, 4))
+
+	def test_model_limits_onnx_threads(self):
+		fake = mock.Mock()
+		with mock.patch.object(image_search, "_model", None), mock.patch("fastembed.ImageEmbedding", fake):
+			image_search._get_model()
+		self.assertEqual(fake.call_args.kwargs["threads"], 1)
 
 	def test_upsert_survives_concurrent_collection_create(self):
 		client = image_search.get_qdrant_client()

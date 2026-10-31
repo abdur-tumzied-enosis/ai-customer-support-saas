@@ -2,8 +2,9 @@ import os
 import threading
 from io import BytesIO
 
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
-from PIL import Image
+from PIL import Image, ImageOps
 from qdrant_client import models
 
 from agents.vector_store import get_qdrant_client
@@ -23,7 +24,8 @@ class NotAnImage(ValueError):
 
 
 def load_image(data: bytes) -> Image.Image:
-	"""Decode an uploaded JPEG/PNG/WEBP as RGB; anything else, or too big, raises NotAnImage."""
+	"""Decode an uploaded JPEG/PNG/WEBP as upright RGB (EXIF rotation applied, transparency on white);
+	anything else, or too big, raises NotAnImage."""
 	if len(data) > MAX_IMAGE_BYTES:
 		raise NotAnImage("image too large")
 	try:
@@ -32,8 +34,14 @@ def load_image(data: bytes) -> Image.Image:
 			raise NotAnImage("unsupported image format")
 		if img.width * img.height > MAX_IMAGE_PIXELS:
 			raise NotAnImage("image has too many pixels")
+		img = ImageOps.exif_transpose(img)  # phone photos are stored sideways with an orientation tag
+		if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+			rgba = img.convert("RGBA")
+			background = Image.new("RGB", rgba.size, (255, 255, 255))
+			background.paste(rgba, mask=rgba.getchannel("A"))
+			return background
 		return img.convert("RGB")
-	except NotAnImage:
+	except (NotAnImage, SoftTimeLimitExceeded):  # SoftTimeLimitExceeded is an Exception too: let the reply task see it
 		raise
 	except Exception as e:  # Pillow raises SyntaxError, ValueError, struct.error, zlib.error, EOFError... on corrupt data
 		raise NotAnImage("not a valid image") from e
@@ -51,8 +59,12 @@ def _get_model():
 		with _model_lock:
 			if _model is None:
 				from fastembed import ImageEmbedding
-				# Baked into the image (Dockerfile); without local_files_only fastembed asks the hub first and fails offline
-				_model = ImageEmbedding(settings.IMAGE_EMBEDDING_MODEL, local_files_only=os.environ.get("HF_HUB_OFFLINE") == "1")
+				# Baked into the image (Dockerfile); without local_files_only fastembed asks the hub first and fails offline.
+				# threads=1: every worker process loads its own copy (~650 MB), and ONNX's default of one thread per core
+				# across many processes oversubscribes the CPU.
+				_model = ImageEmbedding(
+					settings.IMAGE_EMBEDDING_MODEL, threads=1, local_files_only=os.environ.get("HF_HUB_OFFLINE") == "1",
+				)
 	return _model
 
 
