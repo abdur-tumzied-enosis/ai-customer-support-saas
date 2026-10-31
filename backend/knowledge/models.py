@@ -7,6 +7,7 @@ from django.db.models.functions import Lower
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from accounts.models import Project
+from agents.image_search import delete_images
 
 
 class IngestionJobStatus(str, Enum):
@@ -95,6 +96,10 @@ class KnowledgeBase(models.Model):
 		if not self.vector_collection:
 			self.vector_collection = f"kb_{self.project.slug}_{self.id.hex}"
 		super().save(*args, **kwargs)
+
+	@property
+	def image_collection(self) -> str:
+		return f"{self.vector_collection}_images"
 
 	@classmethod
 	def get_default(cls, project) -> "KnowledgeBase":
@@ -197,6 +202,55 @@ class Document(models.Model):
 			if default_storage.exists(self.file.name):
 				default_storage.delete(self.file.name)
 		super().delete(*args, **kwargs)
+
+
+MAX_IMAGES_PER_PRODUCT = 10
+
+
+def product_image_path(kb, image_id: str, ext: str) -> str:
+	return f"products/{kb.project.slug}/{kb.id.hex}/{image_id}.{ext}"
+
+
+# ponytail: no reindex_vectors support for image collections; re-queue embed_product_image for all images if the CLIP model changes.
+class Product(models.Model):
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="products")
+	name = models.CharField(max_length=255)
+	description = models.TextField(blank=True, default="")
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	def __str__(self) -> str:
+		return self.name
+
+	def delete(self, *args, **kwargs):
+		# The cascade skips ProductImage.delete(), so remove points and files here
+		images = list(self.images.all())
+		if images:
+			delete_images(self.kb.image_collection, [str(i.id) for i in images])
+		for image in images:
+			image._delete_file()
+		return super().delete(*args, **kwargs)
+
+
+class ProductImage(models.Model):
+	STATUS_CHOICES = [("pending", "Pending"), ("ready", "Ready"), ("failed", "Failed")]
+
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="images")
+	file = models.FileField(max_length=255)
+	status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending")
+	error = models.CharField(max_length=255, blank=True, default="")
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	def _delete_file(self):
+		if self.file and default_storage.exists(self.file.name):
+			default_storage.delete(self.file.name)
+
+	def delete(self, *args, **kwargs):
+		delete_images(self.product.kb.image_collection, [str(self.id)])
+		self._delete_file()
+		return super().delete(*args, **kwargs)
 
 
 class IngestionJob(models.Model):

@@ -12,8 +12,10 @@ from django.conf import settings
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase
+from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, ProductImage
 from agents.vector_store import add_texts_to_collection
+from agents.image_search import embed_image, load_image, upsert_image
+from usage.utils import record_image_usage
 
 logger = logging.getLogger(__name__)
 
@@ -749,3 +751,23 @@ def recover_stuck_jobs() -> None:
             job.status = IngestionJobStatus.FAILED.value
             job.error = f"Recovery failed: {e}"
             job.save(update_fields=['status', 'error'])
+
+
+@shared_task
+def embed_product_image(image_id: str) -> None:
+    """Embed one product photo into the KB's image collection. A row deleted while queued is a no-op."""
+    image = ProductImage.objects.select_related("product__kb__project").filter(id=image_id).first()
+    if image is None:
+        return
+    kb = image.product.kb
+    try:
+        with default_storage.open(image.file.name, "rb") as f:
+            data = f.read()
+        vector = embed_image(load_image(data))
+        upsert_image(kb.image_collection, image_id, vector, str(image.product_id))
+    except Exception as exc:
+        logger.warning(f"Embedding product image {image_id} failed: {exc}")
+        ProductImage.objects.filter(id=image_id).update(status="failed", error=type(exc).__name__)
+        return
+    ProductImage.objects.filter(id=image_id).update(status="ready", error="")
+    record_image_usage(str(kb.project_id), "index", image_id=image_id)
