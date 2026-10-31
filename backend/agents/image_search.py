@@ -1,10 +1,9 @@
 import os
-import tempfile
 import threading
 from io import BytesIO
 
 from django.conf import settings
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from qdrant_client import models
 
 from agents.vector_store import get_qdrant_client
@@ -13,7 +12,7 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
 IMAGE_SEARCH_TOP_K = 3
 
-_FORMATS = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp"}
+_FORMATS = {"JPEG": "jpg", "MPO": "jpg", "PNG": "png", "WEBP": "webp"}  # MPO: multi-picture JPEG from phones
 
 _model = None
 _model_lock = threading.Lock()
@@ -34,7 +33,9 @@ def load_image(data: bytes) -> Image.Image:
 		if img.width * img.height > MAX_IMAGE_PIXELS:
 			raise NotAnImage("image has too many pixels")
 		return img.convert("RGB")
-	except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as e:
+	except NotAnImage:
+		raise
+	except Exception as e:  # Pillow raises SyntaxError, ValueError, struct.error, zlib.error, EOFError... on corrupt data
 		raise NotAnImage("not a valid image") from e
 
 
@@ -56,23 +57,20 @@ def _get_model():
 
 
 def embed_image(img: Image.Image) -> list[float]:
-	model = _get_model()
-	try:
-		return list(model.embed([img]))[0].tolist()
-	except Exception:  # fastembed versions that only take file paths
-		with tempfile.NamedTemporaryFile(suffix=".png") as f:
-			img.save(f, "PNG")
-			f.flush()
-			return list(model.embed([f.name]))[0].tolist()
+	return list(_get_model().embed([img]))[0].tolist()
 
 
 def upsert_image(collection: str, image_id: str, vector: list[float], product_id: str) -> None:
 	client = get_qdrant_client()
 	if not client.collection_exists(collection):
-		client.create_collection(
-			collection_name=collection,
-			vectors_config=models.VectorParams(size=len(vector), distance=models.Distance.COSINE),
-		)
+		try:
+			client.create_collection(
+				collection_name=collection,
+				vectors_config=models.VectorParams(size=len(vector), distance=models.Distance.COSINE),
+			)
+		except Exception:
+			if not client.collection_exists(collection):  # else another worker created it first
+				raise
 	client.upsert(collection, points=[models.PointStruct(
 		id=image_id, vector=vector, payload={"product_id": product_id, "image_id": image_id},
 	)])

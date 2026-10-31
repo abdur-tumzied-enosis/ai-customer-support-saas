@@ -4,7 +4,7 @@ from unittest import mock
 
 from django.test import SimpleTestCase, override_settings
 from PIL import Image
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models
 
 from agents import image_search
 from agents.image_search import (
@@ -55,3 +55,31 @@ class ImageSearchTest(SimpleTestCase):
 		png = _png_bytes(4, 4)
 		self.assertEqual(load_image(png).mode, "RGB")
 		self.assertEqual(image_format(png), "png")
+
+	def test_truncated_png_is_not_an_image(self):
+		png = _png_bytes(64, 64)
+		with self.assertRaises(NotAnImage):
+			load_image(png[:len(png) // 2])
+
+	def test_mpo_is_accepted_as_jpg(self):
+		buf = io.BytesIO()
+		Image.new("RGB", (8, 8), "red").save(buf, "MPO")
+		data = buf.getvalue()
+		self.assertEqual(image_format(data), "jpg")
+		self.assertEqual(load_image(data).mode, "RGB")
+
+	def test_upsert_survives_concurrent_collection_create(self):
+		client = image_search.get_qdrant_client()
+		real = client.collection_exists
+		calls = []
+
+		def racy(name):
+			if not calls:
+				calls.append(1)
+				client.create_collection(name, vectors_config=models.VectorParams(size=4, distance=models.Distance.COSINE))
+				return False
+			return real(name)
+
+		with mock.patch.object(client, "collection_exists", side_effect=racy):
+			upsert_image("c_images", self.A1, [1, 0, 0, 0], "pA")
+		self.assertEqual(search_products("c_images", [1, 0, 0, 0])[0][0], "pA")
