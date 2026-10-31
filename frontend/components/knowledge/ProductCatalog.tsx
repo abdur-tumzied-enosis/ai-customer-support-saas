@@ -14,10 +14,18 @@ import { formatError } from "@/lib/errors";
 const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp";
 const POLL_MS = 3000;
 
-type Props = { projectId: string; kbId: string; isAdmin: boolean };
+type Props = {
+	projectId: string;
+	kbId: string;
+	isAdmin: boolean;
+	/** Each freshly loaded list (after load, a change or a poll) */
+	onProductsChange?: (products: Product[]) => void;
+};
 
-export default function ProductCatalog({ projectId, kbId, isAdmin }: Props) {
+export default function ProductCatalog({ projectId, kbId, isAdmin, onProductsChange }: Props) {
 	const [products, setProducts] = useState<Product[]>([]);
+	const onProductsChangeRef = useRef(onProductsChange);
+	onProductsChangeRef.current = onProductsChange;
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +42,9 @@ export default function ProductCatalog({ projectId, kbId, isAdmin }: Props) {
 
 	const load = useCallback(async () => {
 		try {
-			setProducts(await productApi.list(projectId, kbId));
+			const list = await productApi.list(projectId, kbId);
+			setProducts(list);
+			onProductsChangeRef.current?.(list);
 		} catch (err) {
 			setError(formatError(err));
 		} finally {
