@@ -70,7 +70,9 @@ services:
       - embeddings
       - reranker
     # Only customer replies (CELERY_TASK_ROUTES). The models live in the embeddings/reranker services and a reply
-    # mostly waits on the LLM, so processes are small: concurrency = parallel replies, bounded by RAM and LLM quota
+    # mostly waits on the LLM, so processes are small: concurrency = parallel replies, bounded by RAM and LLM quota.
+    # Except with IMAGE_SEARCH_ENABLED: each process that answers a photo loads CLIP in-process (~650 MB), so budget
+    # ~650 MB x REPLY_WORKER_CONCURRENCY, or lower the concurrency or add --max-memory-per-child.
     command: celery -A core worker -Q replies -l info --concurrency=${REPLY_WORKER_CONCURRENCY:-16}
     volumes:
       - ./backend:/app

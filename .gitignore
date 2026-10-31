@@ -1,5 +1,9 @@
 .env
 documents/
+# Catalog and customer photos: default_storage writes under /app, the bind-mounted ./backend in dev
+backend/products/
+backend/widget_uploads/
+backend/chat_uploads/
 gcp-sa.json
 backend/celerybeat-schedule*
 .playwright-mcp/
