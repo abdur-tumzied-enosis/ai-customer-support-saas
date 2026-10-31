@@ -22,13 +22,16 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
 from knowledge.models import KnowledgeBase
-from .api import _error, _get_project, _iso, _verify_project_access
+from agents.image_search import NotAnImage
+from .api import _error, _get_project, _iso, _verify_project_access, read_photo_upload
+from .media import store_photo
 from .models import CustomerContact, Widget, normalize_origin
 from .reply import schedule_reply
 from .service.conversation_service import ensure_contact_conversation
@@ -196,6 +199,7 @@ def embed(request, key):
 		**widget.appearance,
 		"site_url": settings.SITE_URL,  # "Powered by" and the fallback privacy link
 		"product_name": settings.PRODUCT_NAME,
+		"image_upload": _image_upload(widget),
 	}
 	response = render(request, "widget/embed.html", {"config": config})
 	ancestors = " ".join(widget.allowed_origins) or "'none'"
@@ -278,12 +282,17 @@ def _visitor_message(msg) -> dict:
 		"sender": msg.sender,  # customer / bot / staff
 		"text": msg.text,
 		"client_id": (msg.meta or {}).get("client_id") if msg.direction == "in" else None,
+		"has_photo": bool(msg.has_attachments),
 		"created_at": _iso(msg.created_at),
 	}
 
 
 def _external_id(widget: Widget, visitor: str) -> str:
 	return f"{widget.id}:{visitor}"
+
+
+def _image_upload(widget: Widget) -> bool:
+	return bool(widget.project.image_search_on and widget.image_search_enabled)
 
 
 class WidgetSessionView(APIView):
@@ -296,7 +305,10 @@ class WidgetSessionView(APIView):
 		if not widget:
 			return _error("not_found", "Widget not found", status.HTTP_404_NOT_FOUND)
 		# Nothing is stored until the visitor's first message
-		return Response({"success": True, "data": {"token": issue_token(widget, uuid.uuid4().hex)}}, status=status.HTTP_201_CREATED)
+		return Response({"success": True, "data": {
+			"token": issue_token(widget, uuid.uuid4().hex),
+			"image_upload": _image_upload(widget),
+		}}, status=status.HTTP_201_CREATED)
 
 
 class WidgetMessagesView(APIView):
@@ -349,6 +361,43 @@ class WidgetMessagesView(APIView):
 		msg = create_inbound_message(
 			project=widget.project, contact=contact, text=text, conversation=conversation,
 			meta={"client_id": client_id} if client_id else {}, status="pending",
+		)
+		schedule_reply(msg)
+		return Response({"success": True, "data": {"message": _visitor_message(msg)}}, status=status.HTTP_201_CREATED)
+
+
+class WidgetPhotoView(WidgetMessagesView):
+	"""A visitor's photo plus optional text: same auth, throttles and client_id dedupe as the text send."""
+	parser_classes = [MultiPartParser]
+	http_method_names = ["post", "options"]
+
+	def post(self, request):
+		widget, visitor = request.auth
+		if not _image_upload(widget):
+			return _error("photo_disabled", "Photo upload is not available", status.HTTP_403_FORBIDDEN)
+		text = str(request.data.get("text") or "").strip()
+		if len(text) > MAX_MESSAGE_CHARS:
+			return _error("message_too_long", f"Messages are limited to {MAX_MESSAGE_CHARS} characters", status.HTTP_400_BAD_REQUEST)
+		client_id = str(request.data.get("client_id") or "")[:64]
+		label = f"Visitor {visitor[:6]}"
+		contact, _ = CustomerContact.objects.get_or_create(
+			project=widget.project, platform="widget", external_id=_external_id(widget, visitor),
+			defaults={"display_name": label},
+		)
+		conversation = ensure_contact_conversation(contact, widget.knowledge_base, name=label)
+		if client_id:
+			existing = conversation.messages.filter(direction="in", meta__client_id=client_id).first()
+			if existing:
+				return Response({"success": True, "data": {"message": _visitor_message(existing)}})
+		try:
+			path = store_photo(read_photo_upload(request), f"widget_uploads/{widget.id}")
+		except NotAnImage:
+			return _error("invalid_image", "Send a JPEG, PNG or WebP image up to 5 MB", status.HTTP_400_BAD_REQUEST)
+		# ponytail: widget and test-chat uploads are kept forever; add a cleanup beat task if disk use matters
+		msg = create_inbound_message(
+			project=widget.project, contact=contact, text=text, conversation=conversation,
+			has_attachments=True, attachment_info=[{"type": "image", "path": path}],
+			meta={"photo_reply": True, **({"client_id": client_id} if client_id else {})}, status="pending",
 		)
 		schedule_reply(msg)
 		return Response({"success": True, "data": {"message": _visitor_message(msg)}}, status=status.HTTP_201_CREATED)

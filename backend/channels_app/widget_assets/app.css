@@ -52,3 +52,4 @@ header h1 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; overflow: hid
 
 .notice { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; padding: 0 12px 10px; font-size: 11.5px; color: var(--muted); }
 .notice a { color: inherit; }
+.photo { padding: 0 8px; border: 0; background: none; font-size: 20px; line-height: 1; }

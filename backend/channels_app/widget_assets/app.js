@@ -16,6 +16,7 @@
 	const messages = []; // from the server, oldest first
 	const seen = new Set();
 	let outbox = []; // {client_id, text, failed} not yet confirmed by the server
+	let imageUpload = false; // from the session response; the camera button shows once it is true
 
 	document.documentElement.style.setProperty("--primary", config.primary_color);
 	document.documentElement.classList.toggle("left", config.position === "left");
@@ -27,7 +28,9 @@
 	const error = el("div", { class: "error", role: "alert", hidden: "" });
 	const input = el("textarea", { rows: "1", maxlength: "2000", placeholder: "Type a message…", "aria-label": "Message" });
 	const sendButton = el("button", { class: "send", type: "submit", text: "Send" });
-	const form = el("form", { class: "composer" }, [input, sendButton]);
+	const photoInput = el("input", { type: "file", accept: "image/jpeg,image/png,image/webp", hidden: "" });
+	const photoButton = el("button", { class: "photo", type: "button", "aria-label": "Send a photo", text: "\u{1F4F7}", hidden: "" });
+	const form = el("form", { class: "composer" }, [photoButton, photoInput, input, sendButton]);
 	// AI disclosure (EU AI Act art. 50): always shown, not configurable
 	const notice = el("footer", { class: "notice" }, [
 		el("span", { text: "You're chatting with an AI assistant. Replies can be inaccurate." }),
@@ -44,12 +47,24 @@
 		notice,
 	]);
 	document.body.append(launcher, panel);
+	setImageUpload(config.image_upload); // a stored session skips the session call; the server also reports it there
 
 	launcher.addEventListener("click", () => setOpen(true));
 	closeButton.addEventListener("click", () => setOpen(false));
 	document.addEventListener("keydown", (e) => { if (e.key === "Escape" && open) setOpen(false); });
 	input.addEventListener("keydown", (e) => {
 		if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+	});
+	photoButton.addEventListener("click", () => photoInput.click());
+	photoInput.addEventListener("change", () => {
+		const file = photoInput.files[0];
+		photoInput.value = "";
+		if (!file) return;
+		const text = input.value.trim();
+		input.value = "";
+		const item = { client_id: uid(), text: text, file: file, failed: false };
+		outbox.push(item);
+		deliver(item);
 	});
 	form.addEventListener("submit", (e) => {
 		e.preventDefault();
@@ -93,8 +108,9 @@
 		if (!token) await newSession();
 		const res = await fetch(path, {
 			method: (options && options.method) || "GET",
-			headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-			body: options && options.body ? JSON.stringify(options.body) : undefined,
+			// FormData sets its own multipart Content-Type (with the boundary)
+			headers: options && options.form ? { Authorization: "Bearer " + token } : { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+			body: options && options.form ? options.form : options && options.body ? JSON.stringify(options.body) : undefined,
 		});
 		if (res.status === 401 && !retried) { // expired, or the widget's key was rotated: start a fresh session
 			token = null;
@@ -108,7 +124,9 @@
 	async function newSession() {
 		const res = await fetch("/api/widget/" + encodeURIComponent(config.key) + "/session", { method: "POST" });
 		if (!res.ok) throw new Error("HTTP " + res.status);
-		token = (await res.json()).data.token;
+		const data = (await res.json()).data;
+		token = data.token;
+		setImageUpload(data.image_upload);
 		save(token);
 	}
 
@@ -134,7 +152,7 @@
 		item.failed = false;
 		render();
 		try {
-			const data = await api("/api/widget/messages", { method: "POST", body: { text: item.text, client_id: item.client_id } });
+			const data = await api(item.file ? "/api/widget/messages/photo" : "/api/widget/messages", item.file ? { method: "POST", form: photoForm(item) } : { method: "POST", body: { text: item.text, client_id: item.client_id } });
 			add(data.message);
 			pending = true;
 		} catch (e) {
@@ -142,6 +160,19 @@
 		}
 		render();
 		schedule();
+	}
+
+	function photoForm(item) {
+		const form = new FormData();
+		form.append("image", item.file);
+		form.append("text", item.text);
+		form.append("client_id", item.client_id);
+		return form;
+	}
+
+	function setImageUpload(value) {
+		imageUpload = !!value;
+		photoButton.hidden = !imageUpload;
 	}
 
 	async function tick() {
@@ -166,9 +197,9 @@
 	function render() {
 		const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
 		log.replaceChildren(bubble("bot", config.welcome_message));
-		messages.forEach((m) => log.append(bubble(m.sender === "customer" ? "me" : m.sender, m.text)));
+		messages.forEach((m) => log.append(bubble(m.sender === "customer" ? "me" : m.sender, m.text, m.has_photo)));
 		outbox.forEach((item) => {
-			const b = bubble("me sending", item.text);
+			const b = bubble("me sending", item.text, !!item.file);
 			if (item.failed) {
 				const retry = el("button", { class: "retry", type: "button", text: "Not sent. Tap to retry" });
 				retry.addEventListener("click", () => deliver(item));
@@ -180,8 +211,9 @@
 		if (atBottom) log.scrollTop = log.scrollHeight;
 	}
 
-	function bubble(kind, text) {
+	function bubble(kind, text, photo) {
 		const b = el("div", { class: "bubble " + kind });
+		if (photo) b.append("\u{1F4F7} Photo" + (text ? "\n" : "")); // no thumbnail: the CSP img-src stays as is
 		b.append(format(text || ""));
 		return b;
 	}

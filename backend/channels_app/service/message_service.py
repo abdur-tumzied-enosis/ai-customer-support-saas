@@ -77,7 +77,9 @@ def create_inbound_message(
 
 def create_ui_message(
 	conversation: Conversation,
-	text: str
+	text: str,
+	attachment_info: list | None = None,
+	meta: dict | None = None,
 ) -> Message:
 	"""
 	Create a message for UI conversations.
@@ -107,9 +109,9 @@ def create_ui_message(
 		reply_to_message=None,
 		agent_reply_id=agent_reply_uuid,
 		is_reply=False,
-		has_attachments=False,
-		attachment_info=[],
-		meta={},
+		has_attachments=bool(attachment_info),
+		attachment_info=attachment_info or [],
+		meta=meta or {},
 	)
 	
 	logger.info(f"UI message created: id={msg.id}, conversation={conversation.id}, agent_reply_id={agent_reply_uuid}, text={text[:50]}")

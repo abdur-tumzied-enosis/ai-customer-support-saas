@@ -6,6 +6,8 @@ from rest_framework.exceptions import ValidationError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
+from agents.image_search import MAX_IMAGE_BYTES, NotAnImage
+from .media import store_photo
 from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
 from .service.conversation_service import create_conversation
 from .service.message_service import create_ui_message
@@ -222,7 +224,17 @@ def _message_dict(msg: Message) -> dict:
 		"text": msg.text,
 		"created_at": msg.created_at.isoformat(),
 		"agent_reply_id": str(msg.agent_reply_id) if msg.agent_reply_id else None,
+		"has_photo": bool(msg.has_attachments),
+		"photo_matches": (msg.meta or {}).get("photo_matches", "") if msg.direction == "in" else "",
 	}
+
+
+def read_photo_upload(request) -> bytes:
+	"""Bytes of the multipart `image` field. Raises NotAnImage when it is missing or over the size cap (checked before reading)."""
+	upload = request.FILES.get("image")
+	if not upload or upload.size > MAX_IMAGE_BYTES:
+		raise NotAnImage("missing or too large")
+	return upload.read()
 
 
 def _error(code: str, message: str, http_status: int) -> Response:
@@ -517,6 +529,32 @@ class ConversationMessageListView(APIView):
 				"message": _message_dict(msg)
 			}
 		}, status=status.HTTP_201_CREATED)
+
+
+class ConversationPhotoView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, conversation_id):
+		"""Send a photo (and optional text) in a test conversation."""
+		conversation = Conversation.objects.filter(id=conversation_id).select_related("knowledge_base", "project", "contact").first()
+		if not conversation or not ProjectUser.objects.filter(project=conversation.project, user=request.user).exists():
+			return _error("not_found", "Conversation not found", status.HTTP_404_NOT_FOUND)  # other projects look the same as unknown ones
+		if conversation.channel != "self":
+			return _error("not_a_test_conversation", "Use staff reply for customer conversations", status.HTTP_400_BAD_REQUEST)
+		project = conversation.project
+		if not project.image_search_on:
+			return _error("feature_disabled", "Image search is not enabled", status.HTTP_404_NOT_FOUND)
+		try:
+			path = store_photo(read_photo_upload(request), f"chat_uploads/{project.slug}")
+		except NotAnImage:
+			return _error("invalid_image", "Send a JPEG, PNG or WebP image up to 5 MB", status.HTTP_400_BAD_REQUEST)
+		# ponytail: widget and test-chat uploads are kept forever; add a cleanup beat task if disk use matters
+		msg = create_ui_message(
+			conversation=conversation, text=str(request.data.get("text") or "").strip(),
+			attachment_info=[{"type": "image", "path": path}], meta={"photo_reply": True},
+		)
+		schedule_reply(msg)
+		return Response({"success": True, "data": {"message": _message_dict(msg)}}, status=status.HTTP_201_CREATED)
 
 
 class MessageStatusView(APIView):

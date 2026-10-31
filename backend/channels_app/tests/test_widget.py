@@ -235,3 +235,84 @@ class WidgetReplyTest(WidgetBase):
 		ui_conv = create_conversation(project=self.project, knowledge_base=self.kb, user_id=str(self.user.id))
 		assert build_reply_context(self.project, self.kb, widget_conv)[0].api_domains == []
 		assert build_reply_context(self.project, self.kb, ui_conv)[0].api_domains
+
+
+def png_upload(name="p.png", size=4):
+	import io
+	from django.core.files.uploadedfile import SimpleUploadedFile
+	from PIL import Image
+	buf = io.BytesIO()
+	Image.new("RGB", (size, size), "red").save(buf, "PNG")
+	return SimpleUploadedFile(name, buf.getvalue(), content_type="image/png")
+
+
+@override_settings(IMAGE_SEARCH_ENABLED=True)
+class WidgetPhotoTest(WidgetBase):
+	def setUp(self):
+		super().setUp()
+		import tempfile
+		tmp = tempfile.TemporaryDirectory()
+		self.addCleanup(tmp.cleanup)
+		self.media = override_settings(MEDIA_ROOT=tmp.name)
+		self.media.enable()
+		self.addCleanup(self.media.disable)
+		Project.objects.filter(id=self.project.id).update(image_search_allowed=True, image_search_enabled=True)
+		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=True)
+		self.project.refresh_from_db()
+		self.as_visitor(self.token())
+
+	def photo(self, **extra):
+		return self.visitor.post("/api/widget/messages/photo", {"image": png_upload(), **extra}, format="multipart")
+
+	def test_session_reports_image_upload(self):
+		r = self.visitor.post(f"/api/widget/{self.widget.public_key}/session")
+		assert r.json()["data"]["image_upload"] is True
+		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=False)
+		r = self.visitor.post(f"/api/widget/{self.widget.public_key}/session")
+		assert r.json()["data"]["image_upload"] is False
+
+	def test_photo_upload_schedules_reply(self):
+		r = self.photo(text="like this?", client_id="c1")
+		assert r.status_code == 201, r.content
+		assert r.json()["data"]["message"]["has_photo"] is True
+		msg = Message.objects.get(id=r.json()["data"]["message"]["id"])
+		assert msg.has_attachments and msg.status == "pending" and msg.text == "like this?"
+		assert msg.meta["photo_reply"] is True and msg.meta["client_id"] == "c1"
+		info = msg.attachment_info[0]
+		assert info["type"] == "image" and info["path"].startswith(f"widget_uploads/{self.widget.id}/")
+		self.schedule.assert_called_once()
+		# a retry with the same client_id returns the same message
+		again = self.photo(client_id="c1")
+		assert again.status_code == 200 and again.json()["data"]["message"]["id"] == str(msg.id)
+		self.schedule.assert_called_once()
+
+	def test_photo_upload_disabled_403(self):
+		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=False)
+		r = self.photo()
+		assert r.status_code == 403 and r.json()["error"]["code"] == "photo_disabled"
+		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=True)
+		Project.objects.filter(id=self.project.id).update(image_search_enabled=False)
+		r = self.photo()
+		assert r.status_code == 403 and r.json()["error"]["code"] == "photo_disabled"
+		self.schedule.assert_not_called()
+
+	def test_photo_upload_invalid_image_400(self):
+		from django.core.files.uploadedfile import SimpleUploadedFile
+		bad = SimpleUploadedFile("x.png", b"not an image", content_type="image/png")
+		r = self.visitor.post("/api/widget/messages/photo", {"image": bad}, format="multipart")
+		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
+		r = self.visitor.post("/api/widget/messages/photo", {}, format="multipart")
+		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
+		self.schedule.assert_not_called()
+
+	def test_photo_upload_requires_token(self):
+		r = APIClient().post("/api/widget/messages/photo", {"image": png_upload()}, format="multipart")
+		assert r.status_code == 401
+
+
+@override_settings(IMAGE_SEARCH_ENABLED=True)
+class EmbedImageUploadTest(WidgetBase):
+	def test_embed_config_reports_image_upload(self):
+		Project.objects.filter(id=self.project.id).update(image_search_allowed=True)
+		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=True)
+		assert b'"image_upload": true' in self.visitor.get(f"/embed/{self.widget.public_key}/").content.replace(b'":true', b'": true')

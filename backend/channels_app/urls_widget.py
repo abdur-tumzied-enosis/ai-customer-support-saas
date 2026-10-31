@@ -6,4 +6,5 @@ urlpatterns = [
 	path("embed/<str:key>/", widget.embed, name="widget-embed"),
 	path("api/widget/<str:key>/session", widget.WidgetSessionView.as_view(), name="widget-session"),
 	path("api/widget/messages", widget.WidgetMessagesView.as_view(), name="widget-messages"),
+	path("api/widget/messages/photo", widget.WidgetPhotoView.as_view(), name="widget-photo"),
 ]
