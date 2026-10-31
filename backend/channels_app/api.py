@@ -606,6 +606,7 @@ class ChannelListCreateView(APIView):
 				"platform": platform_data,
 				"knowledge_base": kb_data,
 				"is_active": channel.is_active,
+				"image_search_enabled": channel.image_search_enabled,
 				"is_configured": channel.is_configured(),
 				"created_at": channel.created_at.isoformat(),
 				"updated_at": channel.updated_at.isoformat(),
@@ -699,6 +700,8 @@ class ChannelListCreateView(APIView):
 					"platform": platform_data,
 					"knowledge_base": kb_data,
 					"is_active": channel_cred.is_active,
+					"image_search_enabled": channel_cred.image_search_enabled,
+				"image_search_enabled": channel_cred.image_search_enabled,
 					"is_configured": channel_cred.is_configured(),
 					"created_at": channel_cred.created_at.isoformat(),
 					"updated_at": channel_cred.updated_at.isoformat(),
@@ -755,6 +758,8 @@ class ChannelDetailView(APIView):
 					"knowledge_base": kb_data,
 					"credentials": channel.credentials,
 					"is_active": channel.is_active,
+					"image_search_enabled": channel.image_search_enabled,
+				"image_search_enabled": channel.image_search_enabled,
 					"is_configured": channel.is_configured(),
 					"created_at": channel.created_at.isoformat(),
 					"updated_at": channel.updated_at.isoformat(),
@@ -793,6 +798,10 @@ class ChannelDetailView(APIView):
 		if "is_active" in request.data:
 			channel.is_active = request.data["is_active"]
 			update_fields.append("is_active")
+
+		if "image_search_enabled" in request.data:
+			channel.image_search_enabled = bool(request.data["image_search_enabled"])
+			update_fields.append("image_search_enabled")
 
 		if "knowledge_base_id" in request.data:
 			kb_id = request.data["knowledge_base_id"]
@@ -843,6 +852,8 @@ class ChannelDetailView(APIView):
 					"platform": platform_data,
 					"knowledge_base": kb_data,
 					"is_active": channel.is_active,
+					"image_search_enabled": channel.image_search_enabled,
+				"image_search_enabled": channel.image_search_enabled,
 					"is_configured": channel.is_configured(),
 					"created_at": channel.created_at.isoformat(),
 					"updated_at": channel.updated_at.isoformat(),

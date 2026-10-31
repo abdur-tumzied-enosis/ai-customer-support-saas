@@ -580,6 +580,8 @@ class ChannelCredential(models.Model):
 		default=True,
 		help_text="Whether this channel connection is currently active"
 	)
+
+	image_search_enabled = models.BooleanField(default=False)
 	
 	# Legacy fields - kept for backward compatibility during migration
 	# TODO: Remove after migrating existing data to credentials JSON
@@ -1228,6 +1230,7 @@ class Widget(models.Model):
 	public_key = models.CharField(max_length=64, unique=True, default=_new_widget_key)  # an identifier, not a secret
 	knowledge_base = models.ForeignKey("knowledge.KnowledgeBase", on_delete=models.PROTECT, related_name="widgets")
 	is_active = models.BooleanField(default=True)
+	image_search_enabled = models.BooleanField(default=False)
 	allowed_origins = models.JSONField(default=list, blank=True)  # normalized by normalize_origin; CSP frame-ancestors
 	appearance = models.JSONField(default=dict, blank=True)  # see channels_app.widget.APPEARANCE_DEFAULTS
 	created_at = models.DateTimeField(auto_now_add=True)

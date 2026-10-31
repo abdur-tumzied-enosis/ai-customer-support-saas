@@ -67,6 +67,7 @@ def _widget_dict(widget: Widget, request) -> dict:
 		"public_key": widget.public_key,
 		"knowledge_base": {"id": str(widget.knowledge_base.id), "name": widget.knowledge_base.name},
 		"is_active": widget.is_active,
+		"image_search_enabled": widget.image_search_enabled,
 		"allowed_origins": widget.allowed_origins,
 		"appearance": {**APPEARANCE_DEFAULTS, **widget.appearance},
 		"snippet": f'<script src="{_public_base(request)}/widget/loader.js" data-widget-key="{widget.public_key}" async></script>',
@@ -118,6 +119,8 @@ def _apply(widget: Widget, data, project) -> None:
 		widget.knowledge_base = KnowledgeBase.get_default(project)
 	if "is_active" in data:
 		widget.is_active = bool(data["is_active"])
+	if "image_search_enabled" in data:
+		widget.image_search_enabled = bool(data["image_search_enabled"])
 	if "allowed_origins" in data:
 		origins = data["allowed_origins"]
 		if not isinstance(origins, list) or len(origins) > MAX_ORIGINS:
