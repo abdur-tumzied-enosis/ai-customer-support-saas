@@ -17,6 +17,8 @@ export default function ProductsSection() {
 			<CardContent>
 				{imageSearchOn === false ? (
 					<p className="text-center py-4 text-muted-foreground">Image search is turned off for this project.</p>
+				) : imageSearchOn && !selectedKb ? (
+					<p className="text-center py-4 text-muted-foreground">No knowledge base selected</p>
 				) : imageSearchOn && projectId && selectedKb ? (
 					<ProductCatalog
 						projectId={projectId}

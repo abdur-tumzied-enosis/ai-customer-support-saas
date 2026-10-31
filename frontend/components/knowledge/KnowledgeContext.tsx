@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { documentApi, featuresApi, customInstructionApi, knowledgeBaseApi, productApi, suggestionApi, type CustomInstruction, type KnowledgeBase, type Product } from "@/lib/api";
 import { getStoredKbId, pickKb, storeKbId } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
@@ -30,8 +30,14 @@ export type KbDocument = {
 	} | null;
 };
 
+/** Still being ingested (pending or processing) */
+export const isProcessing = (doc: KbDocument) => doc.status !== "completed" && doc.status !== "failed";
+
 export type KnowledgeAlert = { type: "success" | "error"; message: string } | null;
-type ProductStats = { products: number; photos: number };
+/** null while loading, "unavailable" if the count couldn't be fetched */
+export type ProductStats = { products: number; photos: number } | "unavailable" | null;
+
+const DOCUMENT_POLL_MS = 5000;
 
 type KnowledgeState = {
 	authLoading: boolean;
@@ -51,8 +57,8 @@ type KnowledgeState = {
 	setInstructions: Dispatch<SetStateAction<CustomInstruction[]>>;
 	instructionsLoading: boolean;
 	fetchInstructions: () => Promise<void>;
-	/** For the section summary; null until loaded */
-	productStats: ProductStats | null;
+	/** For the section summary */
+	productStats: ProductStats;
 	reportProducts: (products: Product[]) => void;
 	suggestionCount: number | null;
 	setSuggestionCount: (count: number) => void;
@@ -78,12 +84,15 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 	const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
 	const [selectedKb, setSelectedKb] = useState<KnowledgeBase | undefined>();
 	const selectedKbId = selectedKb?.id;
+	// Answers for a KB that is no longer selected are dropped
+	const currentKbId = useRef(selectedKbId);
+	currentKbId.current = selectedKbId;
 	const [imageSearchOn, setImageSearchOn] = useState<boolean | null>(null);
 	const [documents, setDocuments] = useState<KbDocument[]>([]);
 	const [documentsLoading, setDocumentsLoading] = useState(false);
 	const [instructions, setInstructions] = useState<CustomInstruction[]>([]);
 	const [instructionsLoading, setInstructionsLoading] = useState(false);
-	const [productStats, setProductStats] = useState<ProductStats | null>(null);
+	const [productStats, setProductStats] = useState<ProductStats>(null);
 	const [suggestionCount, setSuggestionCount] = useState<number | null>(null);
 	const [alert, setAlert] = useState<KnowledgeAlert>(null);
 
@@ -109,37 +118,48 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 		}
 	}, [projectId]);
 
-	const fetchDocuments = useCallback(async () => {
-		if (!projectId || !selectedKbId) return;
+	// silent: a background poll, so no spinner and no error banner
+	const loadDocuments = useCallback(async (silent: boolean) => {
+		const kbId = selectedKbId;
+		if (!projectId || !kbId) return;
 
-		setDocumentsLoading(true);
+		if (!silent) setDocumentsLoading(true);
 		try {
-			const response = await documentApi.list(projectId, selectedKbId);
-			setDocuments(response.data.documents);
+			const response = await documentApi.list(projectId, kbId);
+			if (currentKbId.current === kbId) setDocuments(response.data.documents);
 		} catch (error) {
-			setAlert({ type: "error", message: formatError(error) });
+			if (!silent && currentKbId.current === kbId) setAlert({ type: "error", message: formatError(error) });
 		} finally {
-			setDocumentsLoading(false);
+			if (!silent && currentKbId.current === kbId) setDocumentsLoading(false);
 		}
 	}, [projectId, selectedKbId]);
 
+	const fetchDocuments = useCallback(() => loadDocuments(false), [loadDocuments]);
+
 	const fetchInstructions = useCallback(async () => {
-		if (!projectId || !selectedKbId) return;
+		const kbId = selectedKbId;
+		if (!projectId || !kbId) return;
 
 		setInstructionsLoading(true);
 		try {
 			// What the bot follows for this KB: shared instructions, then the KB's own
-			const response = await customInstructionApi.resolve(projectId, selectedKbId);
-			setInstructions(response.data.instructions);
+			const response = await customInstructionApi.resolve(projectId, kbId);
+			if (currentKbId.current === kbId) setInstructions(response.data.instructions);
 		} catch (error) {
-			setAlert({ type: "error", message: formatError(error) });
+			if (currentKbId.current === kbId) setAlert({ type: "error", message: formatError(error) });
 		} finally {
-			setInstructionsLoading(false);
+			if (currentKbId.current === kbId) setInstructionsLoading(false);
 		}
 	}, [projectId, selectedKbId]);
 
 	const reportProducts = useCallback((products: Product[]) => {
-		setProductStats({ products: products.length, photos: products.reduce((n, p) => n + p.images.length, 0) });
+		const photos = products.reduce((n, p) => n + p.images.length, 0);
+		// The catalog polls every few seconds; an unchanged count must not re-render the tree
+		setProductStats((prev) =>
+			prev && prev !== "unavailable" && prev.products === products.length && prev.photos === photos
+				? prev
+				: { products: products.length, photos }
+		);
 	}, []);
 
 	useEffect(() => {
@@ -148,11 +168,21 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 		}
 	}, [authLoading, projectId, fetchKnowledgeBases]);
 
-	// Documents and instructions follow the selected knowledge base
+	// Documents and instructions follow the selected knowledge base; the old KB's lists go so the counts show loading
 	useEffect(() => {
+		setDocuments([]);
+		setInstructions([]);
 		fetchDocuments();
 		fetchInstructions();
 	}, [fetchDocuments, fetchInstructions]);
+
+	// Ingestion runs in the background: refresh while anything is still pending or processing
+	const hasProcessing = documents.some(isProcessing);
+	useEffect(() => {
+		if (!hasProcessing) return;
+		const timer = setInterval(() => loadDocuments(true), DOCUMENT_POLL_MS);
+		return () => clearInterval(timer);
+	}, [hasProcessing, loadDocuments]);
 
 	// Product counts for the summary; the catalog reports fresh lists itself while it is open
 	useEffect(() => {
@@ -162,7 +192,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 		productApi
 			.list(projectId, selectedKbId)
 			.then((products) => !cancelled && reportProducts(products))
-			.catch(() => {});
+			.catch(() => !cancelled && setProductStats("unavailable"));
 		return () => {
 			cancelled = true;
 		};
@@ -186,34 +216,34 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 		if (projectId) storeKbId(projectId, kb.id);
 	}, [projectId]);
 
-	return (
-		<KnowledgeContext.Provider
-			value={{
-				authLoading,
-				projectId,
-				isAdmin,
-				knowledgeBases,
-				selectedKb,
-				selectKb,
-				fetchKnowledgeBases,
-				imageSearchOn,
-				documents,
-				setDocuments,
-				documentsLoading,
-				fetchDocuments,
-				instructions,
-				setInstructions,
-				instructionsLoading,
-				fetchInstructions,
-				productStats,
-				reportProducts,
-				suggestionCount,
-				setSuggestionCount,
-				alert,
-				setAlert,
-			}}
-		>
-			{children}
-		</KnowledgeContext.Provider>
-	);
+	const value = useMemo<KnowledgeState>(() => ({
+		authLoading,
+		projectId,
+		isAdmin,
+		knowledgeBases,
+		selectedKb,
+		selectKb,
+		fetchKnowledgeBases,
+		imageSearchOn,
+		documents,
+		setDocuments,
+		documentsLoading,
+		fetchDocuments,
+		instructions,
+		setInstructions,
+		instructionsLoading,
+		fetchInstructions,
+		productStats,
+		reportProducts,
+		suggestionCount,
+		setSuggestionCount,
+		alert,
+		setAlert,
+	}), [
+		authLoading, projectId, isAdmin, knowledgeBases, selectedKb, selectKb, fetchKnowledgeBases, imageSearchOn,
+		documents, documentsLoading, fetchDocuments, instructions, instructionsLoading, fetchInstructions,
+		productStats, reportProducts, suggestionCount, alert,
+	]);
+
+	return <KnowledgeContext.Provider value={value}>{children}</KnowledgeContext.Provider>;
 }

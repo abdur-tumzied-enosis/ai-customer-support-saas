@@ -26,6 +26,9 @@ export default function ProductCatalog({ projectId, kbId, isAdmin, onProductsCha
 	const [products, setProducts] = useState<Product[]>([]);
 	const onProductsChangeRef = useRef(onProductsChange);
 	onProductsChangeRef.current = onProductsChange;
+	// A list that arrives after the KB changed belongs to the old KB: drop it
+	const currentKbId = useRef(kbId);
+	currentKbId.current = kbId;
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
@@ -43,12 +46,13 @@ export default function ProductCatalog({ projectId, kbId, isAdmin, onProductsCha
 	const load = useCallback(async () => {
 		try {
 			const list = await productApi.list(projectId, kbId);
+			if (currentKbId.current !== kbId) return;
 			setProducts(list);
 			onProductsChangeRef.current?.(list);
 		} catch (err) {
-			setError(formatError(err));
+			if (currentKbId.current === kbId) setError(formatError(err));
 		} finally {
-			setLoading(false);
+			if (currentKbId.current === kbId) setLoading(false);
 		}
 	}, [projectId, kbId]);
 

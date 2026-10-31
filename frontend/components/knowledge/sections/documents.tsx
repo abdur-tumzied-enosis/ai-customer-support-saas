@@ -47,7 +47,8 @@ export function useDeleteDocument() {
 
 		try {
 			await documentApi.delete(documentToDelete.id);
-			setDocuments((prev) => prev.filter((doc) => doc.id !== documentToDelete.id));
+			// Deleting a crawled site deletes its pages too (backend cascade)
+			setDocuments((prev) => prev.filter((doc) => doc.id !== documentToDelete.id && doc.parent_crawl_id !== documentToDelete.id));
 			setAlert({ type: "success", message: "Document deleted successfully" });
 			fetchKnowledgeBases();
 		} catch (error) {

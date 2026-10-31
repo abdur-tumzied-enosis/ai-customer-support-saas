@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ChevronRight, FileText, Globe, Lightbulb, ScrollText, Tag, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useKnowledge } from "@/components/knowledge/KnowledgeContext";
+import { isProcessing, useKnowledge } from "@/components/knowledge/KnowledgeContext";
 import { cn } from "@/lib/utils";
 
 export const KNOWLEDGE_SECTIONS = [
@@ -35,7 +35,7 @@ export default function KnowledgeSectionNav({ active, activeOnDesktopOnly = fals
 
 	const docsPending = !selectedKb || (documentsLoading && documents.length === 0);
 	const files = documents.filter((d) => d.source_type !== "url");
-	const processing = files.filter((d) => d.status !== "completed" && d.status !== "failed").length;
+	const processing = files.filter(isProcessing).length;
 	const sites = documents.filter((d) => d.source_type === "url" && d.parent_crawl_id === null).length;
 	const pages = documents.filter((d) => d.source_type === "url" && d.parent_crawl_id !== null).length;
 
@@ -45,7 +45,7 @@ export default function KnowledgeSectionNav({ active, activeOnDesktopOnly = fals
 			: `${plural(instructions.length, "instruction")} · API access ${instructions.some((i) => i.api_tool_enabled) ? "on" : "off"}`,
 		documents: docsPending ? LOADING : `${plural(files.length, "file")}${processing > 0 ? ` · ${processing} processing` : ""}`,
 		websites: docsPending ? LOADING : `${plural(sites, "site")}${pages > 0 ? ` · ${plural(pages, "page")}` : ""}`,
-		products: productStats ? `${plural(productStats.products, "product")} · ${plural(productStats.photos, "photo")}` : LOADING,
+		products: productStats === null ? LOADING : productStats === "unavailable" ? "—" : `${plural(productStats.products, "product")} · ${plural(productStats.photos, "photo")}`,
 		suggestions: suggestionCount === null ? LOADING : `${suggestionCount} waiting for review`,
 	};
 
