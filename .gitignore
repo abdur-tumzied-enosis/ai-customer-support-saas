@@ -2,3 +2,4 @@
 documents/
 gcp-sa.json
 backend/celerybeat-schedule*
+.playwright-mcp/
