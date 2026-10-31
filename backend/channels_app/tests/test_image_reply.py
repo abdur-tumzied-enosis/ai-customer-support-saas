@@ -8,6 +8,7 @@ from PIL import Image
 
 from agents.llm import build_system_prompt
 from channels_app.tasks import FALLBACK_REPLY
+from channels_app import media, tasks
 from channels_app.media import MediaError
 from channels_app.models import ChannelCredential, Message
 from channels_app.service.facebook_messing import handle_facebook_message
@@ -174,6 +175,19 @@ class ImageReplyTest(PipelineBase):
 		assert Message.objects.get(external_message_id="m1").status == "completed"
 		assert not self.searches().exists()
 
+	def test_soft_time_limit_in_download_sends_fallback(self):
+		# The real fetch path: the soft limit raised inside requests must not become a MediaError
+		with mock.patch("channels_app.image_reply.fetch_photo", media.fetch_photo), \
+				mock.patch("channels_app.media.requests.get", side_effect=SoftTimeLimitExceeded()):
+			handle_facebook_message(fb_payload("m1"))
+			with self.assertLogs("channels_app.reply", "WARNING"):
+				self.answer_all()
+		self.gen.assert_not_called()
+		out = self.outbound()
+		assert len(out) == 1 and out[0].text == FALLBACK_REPLY
+		self.send.assert_called_once()
+		assert not UsageEvent.objects.exists()
+
 	def test_soft_time_limit_still_hands_off(self):
 		self.fetch.side_effect = SoftTimeLimitExceeded()
 		handle_facebook_message(fb_payload("m1", text="can I talk to a person"))
@@ -186,6 +200,57 @@ class ImageReplyTest(PipelineBase):
 		self.answer_all()
 		assert self.fetch.call_count == 3 and self.searches().count() == 3
 		assert self.questions[0].count('"Red Kurta"') == 3
+
+	def test_at_most_five_photos_per_turn(self):
+		for i in range(7):
+			handle_facebook_message(fb_payload(f"m{i}"))
+		self.answer_all()
+		assert self.gen.call_count == 1
+		assert self.fetch.call_count == 5 and self.searches().count() == 5
+		assert self.questions[0].count('"Red Kurta"') == 5 and self.questions[0].count(UNCHECKED) == 2
+
+	def assert_answered_without_photo_check(self):
+		self.fetch.assert_not_called()
+		assert not UsageEvent.objects.exists()
+		assert self.gen.call_count == 1 and "[Message includes attachments: image]" in self.questions[0], self.questions
+		assert len(self.outbound()) == 1
+		self.send.assert_called_once()
+
+	def test_operator_revoked_before_reply_skips_photo_check(self):
+		handle_facebook_message(fb_payload("m1"))
+		self.project.image_search_allowed = False
+		self.project.save()
+		self.answer_all()
+		self.assert_answered_without_photo_check()
+
+	def test_channel_turned_off_before_reply_skips_photo_check(self):
+		handle_facebook_message(fb_payload("m1"))
+		tasks.get_facebook_credential.return_value.image_search_enabled = False
+		self.answer_all()
+		self.assert_answered_without_photo_check()
+
+	def test_channel_toggle_error_counts_as_off(self):
+		handle_facebook_message(fb_payload("m1"))
+		cred = tasks.get_facebook_credential.return_value
+		tasks.get_facebook_credential.side_effect = [RuntimeError("db down"), cred]  # the toggle check, then the send
+		with self.assertLogs("channels_app.image_reply", "WARNING"):
+			self.answer_all()
+		self.assert_answered_without_photo_check()
+
+	@mock.patch("channels_app.tasks.send_whatsapp_text", return_value={"message_id": "wamid.out"})
+	def test_whatsapp_turned_off_before_reply_skips_photo_check(self, send_wa):
+		wa = ChannelCredential.objects.create(
+			project=self.project, channel="whatsapp", knowledge_base=self.kb, image_search_enabled=True,
+			credentials={"phone_number_id": "pn-1", "access_token": "wa-tok", "verify_token": "v", "app_secret": "s"},
+		)
+		handle_whatsapp_message(wa_payload("wamid.1", caption="price?"))
+		wa.image_search_enabled = False
+		wa.save()
+		self.answer_all()
+		self.fetch.assert_not_called()
+		assert not UsageEvent.objects.exists()
+		assert self.gen.call_count == 1
+		send_wa.assert_called_once()
 
 	def test_sticker_is_ignored(self):
 		handle_facebook_message(fb_payload("m1", sticker=True))

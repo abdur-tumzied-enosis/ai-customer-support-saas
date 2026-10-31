@@ -7,11 +7,14 @@ from agents.image_search import embed_image, load_image, search_products
 from knowledge.models import Product
 from usage.utils import record_image_usage
 
+from . import tasks
 from .media import fetch_photo, is_photo
+from .models import Widget
 
 logger = logging.getLogger(__name__)
 
 MAX_PHOTOS_PER_MESSAGE = 3
+MAX_PHOTOS_PER_TURN = 5  # WhatsApp sends one photo per message, so an album is many messages
 NO_MATCH_NOTE = "[Customer sent a photo. No catalog product looks similar.]"
 UNCHECKED_NOTE = "[Customer sent a photo, but it could not be checked against the catalog.]"
 
@@ -39,16 +42,48 @@ def _photo_note(conversation, msg, att) -> str:
 	return f"[Customer sent a photo. Closest catalog products: {listed}]"
 
 
+def _channel_enabled(conversation, msg) -> bool:
+	"""The connection's own image-search toggle, read now (it may have changed since the message was flagged).
+	The test chat ("self") has none. Any error counts as off."""
+	try:
+		channel = conversation.channel
+		if channel == "self":
+			return True
+		if channel in ("facebook", "instagram"):
+			conn = tasks.get_facebook_credential(msg, channel)
+		elif channel == "whatsapp":
+			conn = tasks.get_whatsapp_credential(msg)
+		elif channel == "widget":
+			widget_id = conversation.contact.external_id.split(":")[0]
+			conn = Widget.objects.filter(id=widget_id, project_id=conversation.project_id).first()
+		else:
+			return False
+		return bool(conn and conn.image_search_enabled)
+	except SoftTimeLimitExceeded:
+		raise
+	except Exception as e:
+		logger.warning(f"Could not read the image search toggle for conversation {conversation.id}: {type(e).__name__}")
+		return False
+
+
 def annotate_turn(conversation, turn: list) -> None:
 	"""Store a catalog-match note in meta["photo_matches"] on each photo message of the turn.
-	Never raises, except celery's SoftTimeLimitExceeded. A retry finds the saved note and does not fetch,
-	search or meter again."""
-	for m in turn:
+	Skipped entirely (no fetch, no meter) when image search was switched off for the project or the connection
+	after the messages were flagged; they then get the generic attachment note. At most MAX_PHOTOS_PER_TURN photos
+	are checked; photo messages past that get UNCHECKED_NOTE. Never raises, except celery's SoftTimeLimitExceeded.
+	A retry finds the saved notes and does not fetch, search or meter again."""
+	pending = [m for m in turn if (m.meta or {}).get("photo_reply") and "photo_matches" not in m.meta]
+	if not pending or not conversation.project.image_search_on or not _channel_enabled(conversation, pending[0]):
+		return
+	budget = MAX_PHOTOS_PER_TURN
+	for m in pending:
 		try:
-			if not (m.meta or {}).get("photo_reply") or "photo_matches" in m.meta:
-				continue
 			photos = [a for a in m.attachment_info or [] if isinstance(a, dict) and is_photo(a)]
-			m.meta["photo_matches"] = " ".join(_photo_note(conversation, m, a) for a in photos[:MAX_PHOTOS_PER_MESSAGE])
+			checked = photos[:min(MAX_PHOTOS_PER_MESSAGE, budget)]
+			budget -= len(checked)
+			# Past the turn's cap: one "could not be checked" note, so the agent still knows a photo came in
+			notes = [_photo_note(conversation, m, a) for a in checked] or ([UNCHECKED_NOTE] if photos else [])
+			m.meta["photo_matches"] = " ".join(notes)
 			m.save(update_fields=["meta"])
 		except SoftTimeLimitExceeded:
 			raise

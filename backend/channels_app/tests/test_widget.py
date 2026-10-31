@@ -7,6 +7,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
+from channels_app.media import MediaError
 from channels_app.models import CustomerContact, Message, Widget, normalize_origin
 from channels_app.reply import process_reply
 from channels_app.service.conversation_service import create_conversation
@@ -304,6 +305,25 @@ class WidgetPhotoTest(WidgetBase):
 		r = self.visitor.post("/api/widget/messages/photo", {}, format="multipart")
 		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
 		self.schedule.assert_not_called()
+
+	def reply_to_photo(self):
+		mock.patch("channels_app.tasks.generate_reply", return_value="ok").start()
+		fetch = mock.patch("channels_app.image_reply.fetch_photo", side_effect=MediaError("x")).start()
+		msg = Message.objects.get(id=self.photo().json()["data"]["message"]["id"])
+		return msg, fetch
+
+	def test_reply_checks_photo_while_widget_toggle_on(self):
+		msg, fetch = self.reply_to_photo()
+		with self.assertLogs("channels_app.image_reply", "WARNING"):
+			process_reply.apply(args=[str(msg.conversation_id), str(msg.id)])
+		fetch.assert_called_once()
+
+	def test_reply_skips_photo_check_once_widget_toggle_off(self):
+		msg, fetch = self.reply_to_photo()
+		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=False)
+		process_reply.apply(args=[str(msg.conversation_id), str(msg.id)])
+		fetch.assert_not_called()
+		assert Message.objects.get(direction="out").text == "ok"
 
 	def test_photo_upload_requires_token(self):
 		r = APIClient().post("/api/widget/messages/photo", {"image": png_upload()}, format="multipart")
