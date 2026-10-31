@@ -497,7 +497,12 @@ export default function ChannelsPage() {
 									{!channel.is_active && (
 										<Badge variant="outline">Inactive</Badge>
 									)}
-									{imageSearchOn && (
+									{imageSearchOn && projects[0]?.role !== "admin" && (
+										<span className="ml-auto text-xs text-muted-foreground">
+											Image search: {channel.image_search_enabled ? "On" : "Off"}
+										</span>
+									)}
+									{imageSearchOn && projects[0]?.role === "admin" && (
 										<Button
 											variant={channel.image_search_enabled ? "default" : "outline"}
 											size="sm"

@@ -107,7 +107,7 @@ class FeaturesView(APIView):
 		pu = _project_user(request.user, request.query_params.get("project_id"))
 		if not pu:
 			return _denied()
-		return Response(_features(pu.project))
+		return Response({"success": True, "data": _features(pu.project)})
 
 	def patch(self, request):
 		pu = _project_user(request.user, request.data.get("project_id"), admin=True)
@@ -121,7 +121,7 @@ class FeaturesView(APIView):
 			return _kb_error("not_allowed", "Image search is not available for this project", status.HTTP_403_FORBIDDEN)
 		project.image_search_enabled = value
 		project.save(update_fields=["image_search_enabled"])
-		return Response(_features(project))
+		return Response({"success": True, "data": _features(project)})
 
 
 class ProductListCreateView(APIView):
@@ -137,7 +137,7 @@ class ProductListCreateView(APIView):
 		kb = _resolve_kb(pu.project, request.query_params.get("kb_id"))
 		if not kb:
 			return _not_found()
-		return Response([_product_dict(p) for p in kb.products.all().order_by("-created_at", "id")])
+		return Response({"success": True, "data": [_product_dict(p) for p in kb.products.all().order_by("-created_at", "id")]})
 
 	def post(self, request):
 		pu = _project_user(request.user, request.data.get("project_id"))
@@ -159,7 +159,7 @@ class ProductListCreateView(APIView):
 			return _kb_error("no_images", "At least one photo is required", status.HTTP_400_BAD_REQUEST)
 		product = Product(kb=kb, name=name, description=request.data.get("description") or "")
 		_store(product, files)
-		return Response(_product_dict(product), status=status.HTTP_201_CREATED)
+		return Response({"success": True, "data": _product_dict(product)}, status=status.HTTP_201_CREATED)
 
 
 def _product_or_error(request, product_id, admin: bool):
@@ -185,14 +185,14 @@ class ProductDetailView(APIView):
 		if "description" in request.data:
 			product.description = request.data.get("description") or ""
 		product.save()
-		return Response(_product_dict(product))
+		return Response({"success": True, "data": _product_dict(product)})
 
 	def delete(self, request, product_id):
 		product, err = _product_or_error(request, product_id, admin=True)
 		if err:
 			return err
 		product.delete()
-		return Response(status=status.HTTP_204_NO_CONTENT)
+		return Response({"success": True, "data": None})
 
 
 class ProductImagesAddView(APIView):
@@ -208,7 +208,7 @@ class ProductImagesAddView(APIView):
 		if not files:
 			return _kb_error("no_images", "At least one photo is required", status.HTTP_400_BAD_REQUEST)
 		_store(product, files)
-		return Response(_product_dict(product), status=status.HTTP_201_CREATED)
+		return Response({"success": True, "data": _product_dict(product)}, status=status.HTTP_201_CREATED)
 
 
 def _image_or_error(request, image_id, admin: bool):
@@ -227,7 +227,7 @@ class ProductImageDetailView(APIView):
 		if err:
 			return err
 		img.delete()
-		return Response(status=status.HTTP_204_NO_CONTENT)
+		return Response({"success": True, "data": None})
 
 
 class ProductImageFileView(APIView):

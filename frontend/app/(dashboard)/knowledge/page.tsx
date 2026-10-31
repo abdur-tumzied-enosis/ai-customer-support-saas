@@ -1215,7 +1215,11 @@ export default function KnowledgePage() {
 					title={<><Tag className="h-5 w-5" /> Product Catalog</>}
 					description="Products with photos, so the assistant can recognise them when customers send a picture"
 				>
-					<ProductCatalog projectId={currentProjectId} kbId={selectedKb.id} />
+					<ProductCatalog
+						projectId={currentProjectId}
+						kbId={selectedKb.id}
+						isAdmin={projects[0]?.role === "admin"}
+					/>
 				</CollapsibleCard>
 			)}
 

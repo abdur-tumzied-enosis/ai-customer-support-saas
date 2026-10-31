@@ -241,7 +241,12 @@ export default function WidgetsPage() {
 									<Button variant="outline" size="sm" onClick={() => toggleActive(widget)}>
 										{widget.is_active ? "Disable" : "Enable"}
 									</Button>
-									{imageSearchOn && (
+									{imageSearchOn && projects[0]?.role !== "admin" && (
+										<span className="self-center text-xs text-muted-foreground">
+											Image search: {widget.image_search_enabled ? "On" : "Off"}
+										</span>
+									)}
+									{imageSearchOn && projects[0]?.role === "admin" && (
 										<Button
 											variant={widget.image_search_enabled ? "default" : "outline"}
 											size="sm"

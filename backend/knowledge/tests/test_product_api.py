@@ -56,7 +56,7 @@ class ProductApiTests(TestCase):
 		return self.client.post("/api/kb/products/", data, format="multipart")
 
 	def make_product(self):
-		return self.create().json()
+		return self.create().json()["data"]
 
 	def list_products(self):
 		return self.client.get("/api/kb/products/", {"project_id": str(self.project.id), "kb_id": str(self.kb.id)})
@@ -67,7 +67,7 @@ class ProductApiTests(TestCase):
 		self.assertEqual(r.status_code, 201, r.content)
 		self.assertEqual(ProductImage.objects.filter(status="pending").count(), 2)
 		self.assertEqual(self.embed.delay.call_count, 2)
-		self.assertEqual(len(r.json()["images"]), 2)
+		self.assertEqual(len(r.json()["data"]["images"]), 2)
 
 	def test_invalid_image_rejects_whole_upload(self):
 		before = len(files_under_media())
@@ -94,13 +94,13 @@ class ProductApiTests(TestCase):
 		self.assertEqual(r.json()["error"]["code"], "too_many_images")
 		r = self.client.post(f"/api/kb/products/{pid}/images/", {"images": [upload("c.png")]}, format="multipart")
 		self.assertEqual(r.status_code, 201)
-		self.assertEqual(len(r.json()["images"]), 3)
+		self.assertEqual(len(r.json()["data"]["images"]), 3)
 
 	def test_list_shows_images_with_url(self):
 		self.make_product()
 		r = self.list_products()
 		self.assertEqual(r.status_code, 200)
-		prod = r.json()[0]
+		prod = r.json()["data"][0]
 		img = prod["images"][0]
 		self.assertEqual(img["url"], f"/api/kb/products/images/{img['id']}/file/")
 		self.assertEqual(img["status"], "pending")
@@ -113,10 +113,10 @@ class ProductApiTests(TestCase):
 		self.assertEqual(Product.objects.get(id=pid).name, "Boot")
 		img_id = ProductImage.objects.filter(product_id=pid).first().id
 		r = self.client.delete(f"/api/kb/products/images/{img_id}/")
-		self.assertEqual(r.status_code, 204)
+		self.assertEqual(r.status_code, 200)
 		self.assertFalse(ProductImage.objects.filter(id=img_id).exists())
 		r = self.client.delete(f"/api/kb/products/{pid}/")
-		self.assertEqual(r.status_code, 204)
+		self.assertEqual(r.status_code, 200)
 		self.assertEqual(Product.objects.count(), 0)
 
 	def test_image_file_served_to_member(self):
@@ -225,17 +225,17 @@ class ProductApiTests(TestCase):
 		self.assertEqual(r.status_code, 404)
 		self.assertEqual(r.json()["error"]["code"], "feature_disabled")
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
-		self.assertEqual(r.json(), {"image_search_available": True, "image_search": False})
+		self.assertEqual(r.json()["data"], {"image_search_available": True, "image_search": False})
 
 	def test_tenant_admin_toggles_feature(self):
 		body = {"project_id": str(self.project.id), "image_search": False}
 		r = self.client.patch("/api/kb/features/", body, format="json")
 		self.assertEqual(r.status_code, 200)
-		self.assertEqual(r.json(), {"image_search_available": True, "image_search": False})
+		self.assertEqual(r.json()["data"], {"image_search_available": True, "image_search": False})
 		self.project.refresh_from_db()
 		self.assertFalse(self.project.image_search_enabled)
 		r = self.client.patch("/api/kb/features/", {**body, "image_search": True}, format="json")
-		self.assertEqual(r.json()["image_search"], True)
+		self.assertEqual(r.json()["data"]["image_search"], True)
 		self.project.refresh_from_db()
 		self.assertTrue(self.project.image_search_enabled)
 
@@ -264,7 +264,7 @@ class ProductApiTests(TestCase):
 		self.assertEqual(r.status_code, 404)
 		self.assertEqual(r.json()["error"]["code"], "feature_disabled")
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
-		self.assertEqual(r.json(), {"image_search_available": False, "image_search": False})
+		self.assertEqual(r.json()["data"], {"image_search_available": False, "image_search": False})
 
 	@override_settings(IMAGE_SEARCH_ENABLED=False)
 	def test_master_off_hides_endpoints(self):
@@ -272,4 +272,4 @@ class ProductApiTests(TestCase):
 		self.assertEqual(r.status_code, 404)
 		self.assertEqual(r.json()["error"]["code"], "feature_disabled")
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
-		self.assertEqual(r.json(), {"image_search_available": False, "image_search": False})
+		self.assertEqual(r.json()["data"], {"image_search_available": False, "image_search": False})

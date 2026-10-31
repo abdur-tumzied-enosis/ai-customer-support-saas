@@ -208,6 +208,7 @@ export default function ConversationThreadPage() {
 						];
 					});
 					fetchConversation(); // the reply may have been a handoff
+					refreshPhotoMatches(messageId);
 				} else if (msg.status === "completed") {
 					// Answered as part of a later message's batch, or bot paused: nothing to add
 					const interval = pollingIntervals.current.get(messageId);
@@ -217,6 +218,7 @@ export default function ConversationThreadPage() {
 					}
 					setWaitingForReply(pollingIntervals.current.size > 0);
 					fetchConversation();
+					refreshPhotoMatches(messageId);
 				} else if (msg.status === "failed") {
 					// Stop polling on failure
 					const interval = pollingIntervals.current.get(messageId);
@@ -263,6 +265,18 @@ export default function ConversationThreadPage() {
 			setError(formatError(err));
 		} finally {
 			setSending(false);
+		}
+	}
+
+	// The photo-match note is written while the reply is processed, so pick it up once the reply has landed
+	async function refreshPhotoMatches(messageId: string) {
+		try {
+			const res = await conversationApi.getMessages(conversationId, 20);
+			const fresh = res.data.messages.find((m) => m.id === messageId);
+			if (!fresh?.photo_matches) return;
+			setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, photoMatches: fresh.photo_matches } : m)));
+		} catch {
+			// the note is optional: leave the message as it is
 		}
 	}
 

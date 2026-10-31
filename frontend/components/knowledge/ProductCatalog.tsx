@@ -14,9 +14,9 @@ import { formatError } from "@/lib/errors";
 const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp";
 const POLL_MS = 3000;
 
-type Props = { projectId: string; kbId: string };
+type Props = { projectId: string; kbId: string; isAdmin: boolean };
 
-export default function ProductCatalog({ projectId, kbId }: Props) {
+export default function ProductCatalog({ projectId, kbId, isAdmin }: Props) {
 	const [products, setProducts] = useState<Product[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -118,6 +118,7 @@ export default function ProductCatalog({ projectId, kbId }: Props) {
 				</Alert>
 			)}
 
+			{isAdmin && (
 			<form onSubmit={handleCreate} className="space-y-3 rounded-md border p-4">
 				<div className="space-y-2">
 					<Label htmlFor="product-name">Product name</Label>
@@ -148,6 +149,7 @@ export default function ProductCatalog({ projectId, kbId }: Props) {
 					{creating ? "Adding..." : "Add product"}
 				</Button>
 			</form>
+			)}
 
 			{loading ? (
 				<div className="flex justify-center py-4">
@@ -159,7 +161,7 @@ export default function ProductCatalog({ projectId, kbId }: Props) {
 				<div className="space-y-3">
 					{products.map((p) => (
 						<div key={p.id} className="rounded-md border p-4 space-y-3">
-							{editingId === p.id ? (
+							{isAdmin && editingId === p.id ? (
 								<div className="space-y-2">
 									<Input value={editName} onChange={(e) => setEditName(e.target.value)} />
 									<Textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={2} />
@@ -178,6 +180,7 @@ export default function ProductCatalog({ projectId, kbId }: Props) {
 										<p className="font-medium">{p.name}</p>
 										{p.description && <p className="text-sm text-muted-foreground">{p.description}</p>}
 									</div>
+									{isAdmin && (
 									<div className="flex gap-1">
 										<Button size="sm" variant="ghost" aria-label="Edit product" onClick={() => startEdit(p)}>
 											<Pencil className="h-4 w-4" />
@@ -192,6 +195,7 @@ export default function ProductCatalog({ projectId, kbId }: Props) {
 											<Trash2 className="h-4 w-4" />
 										</Button>
 									</div>
+									)}
 								</div>
 							)}
 
@@ -206,6 +210,7 @@ export default function ProductCatalog({ projectId, kbId }: Props) {
 										/>
 										<div className="flex items-center justify-between">
 											<Badge variant={statusVariant(img.status)}>{img.status}</Badge>
+											{isAdmin && (
 											<button
 												type="button"
 												aria-label="Delete photo"
@@ -215,9 +220,11 @@ export default function ProductCatalog({ projectId, kbId }: Props) {
 											>
 												<X className="h-4 w-4" />
 											</button>
+											)}
 										</div>
 									</div>
 								))}
+								{isAdmin && (
 								<Label className="cursor-pointer self-center">
 									<Button type="button" variant="outline" size="sm" asChild disabled={busyId === p.id}>
 										<span>
@@ -236,6 +243,7 @@ export default function ProductCatalog({ projectId, kbId }: Props) {
 										}}
 									/>
 								</Label>
+								)}
 							</div>
 						</div>
 					))}

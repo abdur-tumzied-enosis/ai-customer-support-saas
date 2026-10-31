@@ -732,20 +732,7 @@ export const conversationApi = {
 		const formData = new FormData();
 		formData.append("image", file);
 		if (text) formData.append("text", text);
-
-		const csrfToken = getCsrfToken();
-		const res = await fetch(`${API_BASE_URL}/api/channels/conversations/${conversationId}/photo`, {
-			method: "POST",
-			headers: csrfToken ? { "X-CSRFToken": csrfToken } : {},
-			credentials: "include",
-			body: formData,
-		});
-		const data = (await res.json()) as ApiResponse<{ message: ConversationMessage }>;
-		if (!res.ok || !data.success) {
-			if (!data.success) throw new ApiError(data.error);
-			throw new ApiError({ code: "upload_failed", message: `Upload failed with status ${res.status}` });
-		}
-		return data;
+		return postForm<{ message: ConversationMessage }>(`/api/channels/conversations/${conversationId}/photo`, formData);
 	},
 
 	getMessageStatus: async (messageId: string) => {
@@ -986,43 +973,44 @@ export type Product = {
 
 export type Features = { image_search_available: boolean; image_search: boolean };
 
-// The kb/features and kb/products routes answer plain JSON on success (204 with no body on delete) and
-// the {success: false, error} envelope on failure, unlike the rest of the API.
-async function kbFetch<T>(path: string, options: FetchOptions = {}): Promise<T> {
-	const isForm = options.body instanceof FormData;
-	const headers: Record<string, string> = isForm ? {} : { "Content-Type": "application/json" };
+// Multipart upload with the CSRF header; a non-JSON error body (e.g. a proxy's 502 page) becomes request_failed.
+async function postForm<T>(path: string, formData: FormData): Promise<ApiSuccessResponse<T>> {
 	const csrfToken = getCsrfToken();
-	if (csrfToken && options.method && options.method !== "GET") headers["X-CSRFToken"] = csrfToken;
-
 	const res = await fetch(`${API_BASE_URL}${path}`, {
-		...options,
-		headers,
+		method: "POST",
+		headers: csrfToken ? { "X-CSRFToken": csrfToken } : {},
 		credentials: "include",
-		body: options.json !== undefined ? JSON.stringify(options.json) : options.body,
+		body: formData,
 	});
-	const text = res.status === 204 ? "" : await res.text();
-	const data = text ? JSON.parse(text) : null;
-
-	if (!res.ok) {
-		if (data && data.success === false) throw new ApiError(data.error);
-		throw new ApiError({ code: "request_failed", message: `Request failed with status ${res.status}` });
+	let data: ApiResponse<T> | null = null;
+	try {
+		data = (await res.json()) as ApiResponse<T>;
+	} catch {
+		// not JSON
 	}
-	return data as T;
+	if (!res.ok || !data || !data.success) {
+		if (data && !data.success) throw new ApiError(data.error);
+		throw new ApiError({ code: "request_failed", message: `Upload failed with status ${res.status}` });
+	}
+	return data;
 }
 
 export const featuresApi = {
-	get: (projectId: string) => kbFetch<Features>(`/api/kb/features/?project_id=${encodeURIComponent(projectId)}`),
+	get: async (projectId: string) =>
+		(await apiFetch<Features>(`/api/kb/features/?project_id=${encodeURIComponent(projectId)}`)).data,
 
-	update: (projectId: string, imageSearch: boolean) =>
-		kbFetch<Features>("/api/kb/features/", {
+	update: async (projectId: string, imageSearch: boolean) =>
+		(await apiFetch<Features>("/api/kb/features/", {
 			method: "PATCH",
 			json: { project_id: projectId, image_search: imageSearch },
-		}),
+		})).data,
 };
 
 export const productApi = {
-	list: (projectId: string, kbId: string) =>
-		kbFetch<Product[]>(`/api/kb/products/?project_id=${encodeURIComponent(projectId)}&kb_id=${encodeURIComponent(kbId)}`),
+	list: async (projectId: string, kbId: string) =>
+		(await apiFetch<Product[]>(
+			`/api/kb/products/?project_id=${encodeURIComponent(projectId)}&kb_id=${encodeURIComponent(kbId)}`
+		)).data,
 
 	create: (projectId: string, kbId: string, name: string, description: string, files: File[]) => {
 		const formData = new FormData();
@@ -1031,19 +1019,19 @@ export const productApi = {
 		formData.append("name", name);
 		formData.append("description", description);
 		files.forEach((f) => formData.append("images", f));
-		return kbFetch<Product>("/api/kb/products/", { method: "POST", body: formData });
+		return postForm<Product>("/api/kb/products/", formData);
 	},
 
 	update: (id: string, data: { name?: string; description?: string }) =>
-		kbFetch<Product>(`/api/kb/products/${id}/`, { method: "PATCH", json: data }),
+		apiFetch<Product>(`/api/kb/products/${id}/`, { method: "PATCH", json: data }),
 
-	remove: (id: string) => kbFetch<null>(`/api/kb/products/${id}/`, { method: "DELETE" }),
+	remove: (id: string) => apiFetch<null>(`/api/kb/products/${id}/`, { method: "DELETE" }),
 
 	addImages: (id: string, files: File[]) => {
 		const formData = new FormData();
 		files.forEach((f) => formData.append("images", f));
-		return kbFetch<Product>(`/api/kb/products/${id}/images/`, { method: "POST", body: formData });
+		return postForm<Product>(`/api/kb/products/${id}/images/`, formData);
 	},
 
-	removeImage: (imageId: string) => kbFetch<null>(`/api/kb/products/images/${imageId}/`, { method: "DELETE" }),
+	removeImage: (imageId: string) => apiFetch<null>(`/api/kb/products/images/${imageId}/`, { method: "DELETE" }),
 };
