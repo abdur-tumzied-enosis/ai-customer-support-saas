@@ -1,6 +1,7 @@
 """Inbound WhatsApp Cloud API webhooks (object="whatsapp_business_account")."""
 from typing import Any, Dict
 
+from channels_app.image_reply import wants_photo_reply
 from channels_app.models import CustomerContact, Message, whatsapp_credentials
 from channels_app.reply import schedule_reply
 from channels_app.service.conversation_service import ensure_contact_conversation
@@ -43,11 +44,15 @@ def _handle_message(phone_number_id: str, message: Dict[str, Any], name: str) ->
 
 	kind = message.get("type", "")
 	text = message.get("text", {}).get("body", "") if kind == "text" else ""
-	# Everything else (image, audio, document, location, reaction...) is stored, not answered, like Messenger attachments
+	# Everything else (audio, document, location, reaction...) is stored, not answered, like Messenger attachments;
+	# so are images unless image search is on for this number
 	attachments = [] if kind == "text" else [{"type": kind, "payload": message.get(kind, {})}]
+	photo_reply = wants_photo_reply(cred.project, attachments, cred.image_search_enabled)
+	if photo_reply:
+		text = (message.get("image") or {}).get("caption", "")
 	reply_to_id = message.get("context", {}).get("id")
 	reply_to = reply_to_id and Message.objects.filter(contact=contact, external_message_id=reply_to_id).first()
-	wants_reply = bool(text)
+	wants_reply = bool(text) or photo_reply
 
 	msg = create_inbound_message(
 		project=cred.project,
@@ -59,7 +64,8 @@ def _handle_message(phone_number_id: str, message: Dict[str, Any], name: str) ->
 		is_reply=bool(reply_to_id),
 		has_attachments=bool(attachments),
 		attachment_info=attachments,
-		meta={**message, "phone_number_id": phone_number_id},  # tasks.get_whatsapp_credential reads it
+		# tasks.get_whatsapp_credential reads phone_number_id
+		meta={**message, "phone_number_id": phone_number_id, **({"photo_reply": True} if photo_reply else {})},
 		conversation=conversation,
 		status="pending" if wants_reply else "completed",
 	)

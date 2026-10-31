@@ -37,8 +37,11 @@ def format_message_with_context(message: Message) -> str:
 	"""
 	content = message.text
 	
-	# Add context about attachments if present
-	if message.has_attachments:
+	# A photo's catalog matches (channels_app.image_reply) replace the generic attachment note
+	photo_matches = (message.meta or {}).get("photo_matches")
+	if photo_matches:
+		content = f"{content} {photo_matches}" if content else photo_matches
+	elif message.has_attachments:
 		att_types = [att.get("type", "unknown") for att in message.attachment_info]
 		content = f"{content} [Message includes attachments: {', '.join(att_types)}]"
 	

@@ -7,6 +7,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from accounts.models import Project
 from channels_app.models import META_CHANNELS, ChannelCredential, CustomerContact, Message, meta_credentials
 from channels_app.facebook_client import get_user_name
+from channels_app.image_reply import wants_photo_reply
 from channels_app.reply import schedule_reply
 from channels_app.service.conversation_service import ensure_contact_conversation
 from channels_app.service.message_service import create_inbound_message
@@ -172,9 +173,9 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 				except Exception as e:
 					logger.warning(f"Error finding reply_to message: {e}")
 
-			# Only trigger agent reply for text messages (no attachments)
-			# Attachments will be handled later
-			wants_reply = bool(text) and not has_attachments
+			# Reply to text messages, and to photos when image search is on for this page; other attachments are only stored
+			photo_reply = wants_photo_reply(project, attachment_info, cred.image_search_enabled)
+			wants_reply = (bool(text) and not has_attachments) or photo_reply
 
 			# Create message record using service
 			msg = create_inbound_message(
@@ -187,7 +188,7 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 				is_reply=is_reply,
 				has_attachments=has_attachments,
 				attachment_info=attachment_info,
-				meta=evt,  # Store full event for reference
+				meta={**evt, "photo_reply": True} if photo_reply else evt,  # Store full event for reference
 				conversation=conversation,
 				status="pending" if wants_reply else "completed",  # pending until answered (recover_stuck_replies)
 			)

@@ -13,10 +13,11 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from . import memory, tasks
+from . import image_reply, memory, tasks
 from .facebook_client import INSTAGRAM_MAX_TEXT_BYTES, WHATSAPP_MAX_TEXT_CHARS, split_text
 from .handoff import start_handoff, wants_human
 from .models import Conversation, Message
@@ -120,10 +121,11 @@ REPLY_LOCK_SECONDS = 120  # longer than process_reply's time_limit, so a killed 
 
 
 def _newer_text_message(conversation, after) -> bool:
-	"""A newer inbound message with its own reply task (attachment-only messages never get one)."""
-	return Message.objects.filter(
-		conversation=conversation, direction="in", created_at__gt=after, has_attachments=False
-	).exclude(text="").exists()
+	"""A newer inbound message with its own reply task: plain text, or a photo flagged for a reply
+	(other attachment messages never get one)."""
+	return Message.objects.filter(conversation=conversation, direction="in", created_at__gt=after).filter(
+		(Q(has_attachments=False) & ~Q(text="")) | Q(meta__photo_reply=True)
+	).exists()
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=5, soft_time_limit=60, time_limit=90)
@@ -156,6 +158,7 @@ def _reply(task, conversation, msg: Message) -> None:
 		_complete(turn)  # staff answer these
 		return
 
+	image_reply.annotate_turn(conversation, turn)
 	question = "\n".join(tasks.format_message_with_context(m) for m in turn)
 	api_calls: list = []
 	trace: dict = {}
