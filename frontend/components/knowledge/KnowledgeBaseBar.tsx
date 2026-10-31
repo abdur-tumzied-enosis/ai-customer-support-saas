@@ -52,9 +52,8 @@ export default function KnowledgeBaseBar({ projectId, knowledgeBases, selected, 
 	}
 
 	return (
-		<div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card p-3">
+		<div className="flex flex-wrap items-center gap-2">
 			<Database className="h-5 w-5 text-primary" />
-			<span className="text-sm font-medium">Knowledge base:</span>
 			<Select
 				value={selected?.id}
 				onValueChange={(id: string) => {

@@ -82,6 +82,8 @@ class DashboardApiTest(WidgetBase):
 			{"allowed_origins": "https://shop.example"},
 			{"appearance": {"primary_color": "red;}"}},
 			{"appearance": {"position": "top"}},
+			{"appearance": {"privacy_url": "javascript:alert(1)"}},
+			{"appearance": {"show_branding": "no"}},
 		]:
 			r = self.dashboard.patch(f"{DASH}/{self.widget.id}", data, format="json")
 			assert r.status_code == 400, (data, r.content)
@@ -105,6 +107,15 @@ class EmbedTest(WidgetBase):
 		assert "X-Frame-Options" not in r
 		body = r.content.decode()
 		assert str(self.kb.id) not in body and "<script>\"" not in body and "Hello \\u003Cscript\\u003E" in body
+
+	def test_embed_config_carries_disclosure_links(self):
+		r = self.dashboard.patch(f"{DASH}/{self.widget.id}", {
+			"appearance": {"privacy_url": "https://shop.example/privacy", "show_branding": False},
+		}, format="json")
+		assert r.status_code == 200, r.content
+		body = self.client.get(f"/embed/{self.widget.public_key}/").content.decode()
+		assert '"privacy_url": "https://shop.example/privacy"' in body and '"show_branding": false' in body
+		assert f'"site_url": "{settings.SITE_URL}"' in body
 
 	def test_no_origins_means_nowhere(self):
 		self.widget.allowed_origins = []

@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { authApi } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { useRedirectIfAuthenticated, useAuth } from "@/hooks/useAuth";
+import { site } from "@/lib/site";
 
 export default function SignUpPage() {
 	const router = useRouter();
@@ -66,6 +67,7 @@ export default function SignUpPage() {
 				// business_name: businessName.trim() || undefined,
 				email: email.trim(),
 				password,
+				terms_version: site.termsVersion, // the checkbox is required, so reaching here means accepted
 			});
 
 			// Refresh auth state in context
@@ -160,6 +162,24 @@ export default function SignUpPage() {
 							disabled={loading}
 						/>
 					</div>
+					<label className="flex items-start gap-2 text-sm text-muted-foreground">
+						<input type="checkbox" required disabled={loading} className="mt-1 h-4 w-4 accent-primary" />
+						<span>
+							I agree to the{" "}
+							<Link href="/terms" target="_blank" className="text-primary hover:underline">
+								Terms of Service
+							</Link>{" "}
+							and{" "}
+							<Link href="/privacy" target="_blank" className="text-primary hover:underline">
+								Privacy Policy
+							</Link>
+							, and to the{" "}
+							<Link href="/dpa" target="_blank" className="text-primary hover:underline">
+								Data Processing Agreement
+							</Link>{" "}
+							for my customers&apos; data.
+						</span>
+					</label>
 					<Button type="submit" className="w-full" disabled={loading}>
 						{loading ? "Creating account..." : "Create account"}
 					</Button>

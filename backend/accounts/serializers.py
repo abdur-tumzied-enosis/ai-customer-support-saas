@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth import authenticate
 from .models import Project, ProjectUser
+from django.utils import timezone
 from django.utils.text import slugify
 from uuid import uuid4
 import logging
@@ -12,8 +13,8 @@ logger = logging.getLogger(__name__)
 class UserSerializer(serializers.ModelSerializer):
 	class Meta:
 		model = User
-		fields = ["id", "first_name"]
-		read_only_fields = ["id", "first_name"]
+		fields = ["id", "first_name", "last_name", "email"]
+		read_only_fields = fields
 
 
 class SignUpSerializer(serializers.Serializer):
@@ -22,6 +23,8 @@ class SignUpSerializer(serializers.Serializer):
 	# project_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
 	email = serializers.EmailField(required=True)
 	password = serializers.CharField(write_only=True, min_length=8, required=True)
+	# Sent only when the terms checkbox is ticked: the version of the terms the user agreed to
+	terms_version = serializers.CharField(max_length=32, required=True)
 
 	def validate_email(self, value):
 		if User.objects.filter(email=value).exists():
@@ -44,6 +47,8 @@ class SignUpSerializer(serializers.Serializer):
 			password=password,
 			first_name=first_name,
 			last_name=last_name,
+			terms_version=validated_data.pop("terms_version"),
+			terms_accepted_at=timezone.now(),
 		)
 
 		# Always create a default project named "my_project"

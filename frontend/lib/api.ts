@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8251/";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8251";
 
 type FetchOptions = RequestInit & { json?: unknown };
 
@@ -94,6 +94,7 @@ export const authApi = {
 		business_name?: string;
 		email: string;
 		password: string;
+		terms_version: string;
 	}) => {
 		return apiFetch<{
 			user: {
@@ -116,6 +117,7 @@ export const authApi = {
 				business_name: data.business_name || "",
 				email: data.email,
 				password: data.password,
+				terms_version: data.terms_version,
 			},
 		});
 	},
@@ -167,6 +169,17 @@ export const authApi = {
 			}>;
 		}>("/api/auth/me/");
 	},
+
+	updateProfile: async (data: { first_name: string; last_name: string }) =>
+		apiFetch("/api/auth/profile/", { method: "PATCH", json: data }),
+
+	changePassword: async (data: { current_password: string; new_password: string }) =>
+		apiFetch("/api/auth/password/", { method: "POST", json: data }),
+
+	deleteAccount: async (password: string) => apiFetch("/api/auth/delete/", { method: "POST", json: { password } }),
+
+	// Top-level navigation: the session cookie goes along and Content-Disposition makes it a download
+	exportUrl: `${API_BASE_URL}/api/auth/export/`,
 };
 
 // Document API functions
@@ -890,7 +903,14 @@ export const webhookApi = {
 		}),
 };
 
-export type WidgetAppearance = { title: string; welcome_message: string; primary_color: string; position: "left" | "right" };
+export type WidgetAppearance = {
+	title: string;
+	welcome_message: string;
+	primary_color: string;
+	position: "left" | "right";
+	privacy_url: string;
+	show_branding: boolean;
+};
 
 export type Widget = {
 	id: string;

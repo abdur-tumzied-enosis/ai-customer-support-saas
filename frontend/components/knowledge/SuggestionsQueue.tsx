@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Check, Lightbulb, Loader2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import CollapsibleCard from "./CollapsibleCard";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { suggestionApi, type MemorySuggestion } from "@/lib/api";
@@ -57,18 +57,11 @@ export default function SuggestionsQueue({ projectId, onApproved }: { projectId:
 	if (items && items.length === 0 && !error) return null;
 
 	return (
-		<Card>
-			<CardHeader>
-				<CardTitle className="flex items-center gap-2">
-					<Lightbulb className="h-5 w-5" />
-					Suggestions from conversations {items ? `(${items.length})` : ""}
-				</CardTitle>
-				<CardDescription>
-					Drafted from staff replies and handoffs. Edit if needed, then approve to teach the bot. Remove anything
-					about one specific customer.
-				</CardDescription>
-			</CardHeader>
-			<CardContent className="space-y-4">
+		<CollapsibleCard
+			title={<><Lightbulb className="h-5 w-5" /> Suggestions from conversations {items ? `(${items.length})` : ""}</>}
+			description="Drafted from staff replies and handoffs. Edit if needed, then approve to teach the bot. Remove anything about one specific customer."
+			contentClassName="space-y-4"
+		>
 				{error && <p className="text-sm text-destructive">{error}</p>}
 				{!items ? (
 					<Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -116,7 +109,6 @@ export default function SuggestionsQueue({ projectId, onApproved }: { projectId:
 						);
 					})
 				)}
-			</CardContent>
-		</Card>
+		</CollapsibleCard>
 	);
 }

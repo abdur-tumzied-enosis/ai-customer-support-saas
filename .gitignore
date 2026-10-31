@@ -1,3 +1,4 @@
 .env
 documents/
 gcp-sa.json
+backend/celerybeat-schedule*

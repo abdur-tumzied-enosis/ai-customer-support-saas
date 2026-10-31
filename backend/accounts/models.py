@@ -8,6 +8,9 @@ class User(AbstractUser):
     Custom User model with UUID primary key
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Consent record: which terms/privacy version (frontend lib/site.ts termsVersion) was accepted, and when
+    terms_version = models.CharField(max_length=32, blank=True, default="")
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'auth_user'

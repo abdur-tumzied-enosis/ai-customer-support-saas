@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, Fragment } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,7 @@ import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil, Sparkles, Tag, G
 import { documentApi, customInstructionApi, instructionTemplateApi, knowledgeBaseApi, type ApiDomain, type CustomInstruction, type InstructionTemplate, type KnowledgeBase } from "@/lib/api";
 import { ApiAccessEditor, toApiDomainsPayload } from "@/components/knowledge/ApiAccessEditor";
 import KnowledgeBaseBar from "@/components/knowledge/KnowledgeBaseBar";
+import CollapsibleCard from "@/components/knowledge/CollapsibleCard";
 import SuggestionsQueue from "@/components/knowledge/SuggestionsQueue";
 import { getStoredKbId, pickKb, storeKbId } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
@@ -735,7 +736,18 @@ export default function KnowledgePage() {
 	return (
 		<div className="space-y-6">
 			<div className="space-y-4">
-				<h1 className="text-2xl font-semibold">Knowledge Base</h1>
+				<div className="flex flex-wrap items-center justify-between gap-4">
+					<h1 className="text-2xl font-semibold">Knowledge Base</h1>
+					{currentProjectId && (
+						<KnowledgeBaseBar
+							projectId={currentProjectId}
+							knowledgeBases={knowledgeBases}
+							selected={selectedKb}
+							onSelect={handleSelectKb}
+							onSaved={(kb) => fetchKnowledgeBases(kb.id)}
+						/>
+					)}
+				</div>
 				<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 					<div className="flex items-start gap-3 p-4 rounded-lg border bg-card">
 						<FileText className="h-5 w-5 text-primary mt-0.5" />
@@ -758,16 +770,6 @@ export default function KnowledgePage() {
 				</div>
 			</div>
 
-			{currentProjectId && (
-				<KnowledgeBaseBar
-					projectId={currentProjectId}
-					knowledgeBases={knowledgeBases}
-					selected={selectedKb}
-					onSelect={handleSelectKb}
-					onSaved={(kb) => fetchKnowledgeBases(kb.id)}
-				/>
-			)}
-
 			{alert && (
 				<Alert className={alert.type === "error" ? "border-destructive" : ""}>
 					<AlertDescription>{alert.message}</AlertDescription>
@@ -786,18 +788,11 @@ export default function KnowledgePage() {
 			)}
 
 			{/* Custom Instructions Section */}
-			<Card>
-				<CardHeader>
-					<CardTitle className="flex items-center gap-2">
-						<FileText className="h-5 w-5" />
-						Custom Instructions
-					</CardTitle>
-					<CardDescription>
-						Define how your agent should behave, act, and take actions with customers. Shared instructions apply to every
-						knowledge base; instructions for one knowledge base are added on top of them.
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
+			<CollapsibleCard
+				title={<><FileText className="h-5 w-5" /> Custom Instructions</>}
+				description="Define how your agent should behave, act, and take actions with customers. Shared instructions apply to every knowledge base; instructions for one knowledge base are added on top of them."
+				contentClassName="space-y-4"
+			>
 					<div className="flex justify-end">
 						<Dialog open={instructionDialogOpen} onOpenChange={setInstructionDialogOpen}>
 							<DialogTrigger asChild>
@@ -1113,22 +1108,15 @@ export default function KnowledgePage() {
 							<p className="text-sm">Add instructions to guide your agent&apos;s behavior</p>
 						</div>
 					)}
-				</CardContent>
-			</Card>
+			</CollapsibleCard>
 
 
 			{/* Documents Section */}
-			<Card>
-				<CardHeader>
-					<CardTitle className="flex items-center gap-2">
-						<FileText className="h-5 w-5" />
-						Documents
-					</CardTitle>
-					<CardDescription>
-						Upload PDF and text files to enhance your agent&apos;s knowledge base
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
+			<CollapsibleCard
+				title={<><FileText className="h-5 w-5" /> Documents</>}
+				description="Upload PDF and text files to enhance your agent's knowledge base"
+				contentClassName="space-y-4"
+			>
 					<div className="flex items-center gap-4">
 						<Label htmlFor="file-upload" className="cursor-pointer">
 							<Button type="button" variant="outline" asChild disabled={uploading}>
@@ -1210,21 +1198,13 @@ export default function KnowledgePage() {
 							</DialogFooter>
 						</DialogContent>
 					</Dialog>
-				</CardContent>
-			</Card>
+			</CollapsibleCard>
 
 			{/* Web Crawl Section */}
-			<Card>
-				<CardHeader>
-					<CardTitle className="flex items-center gap-2">
-						<Globe className="h-5 w-5" />
-						Crawl Website
-					</CardTitle>
-					<CardDescription>
-						Submit a URL to crawl and extract content. Specify depth to crawl linked pages.
-					</CardDescription>
-				</CardHeader>
-				<CardContent>
+			<CollapsibleCard
+				title={<><Globe className="h-5 w-5" /> Crawl Website</>}
+				description="Submit a URL to crawl and extract content. Specify depth to crawl linked pages."
+			>
 					<form onSubmit={handleCrawlSubmit} className="space-y-4">
 						<div className="flex gap-4">
 							<div className="flex-1">
@@ -1289,8 +1269,7 @@ export default function KnowledgePage() {
 							</p>
 						</div>
 					</form>
-				</CardContent>
-			</Card>
+			</CollapsibleCard>
 
 			{/* Markdown Viewer Modal */}
 			<Dialog open={markdownDialogOpen} onOpenChange={setMarkdownDialogOpen}>

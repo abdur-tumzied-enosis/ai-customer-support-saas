@@ -28,11 +28,20 @@
 	const input = el("textarea", { rows: "1", maxlength: "2000", placeholder: "Type a message…", "aria-label": "Message" });
 	const sendButton = el("button", { class: "send", type: "submit", text: "Send" });
 	const form = el("form", { class: "composer" }, [input, sendButton]);
+	// AI disclosure (EU AI Act art. 50): always shown, not configurable
+	const notice = el("footer", { class: "notice" }, [
+		el("span", { text: "You're chatting with an AI assistant. Replies can be inaccurate." }),
+		el("span", { class: "links" }, [
+			link(config.privacy_url || config.site_url + "/privacy", "Privacy"),
+			...(config.show_branding ? [" · ", link(config.site_url, "Powered by " + config.product_name)] : []),
+		]),
+	]);
 	const panel = el("section", { class: "panel", role: "dialog", "aria-label": config.title, hidden: "" }, [
 		el("header", {}, [el("h1", { text: config.title }), closeButton]),
 		log,
 		error,
 		form,
+		notice,
 	]);
 	document.body.append(launcher, panel);
 
@@ -194,6 +203,10 @@
 		}
 		fragment.append(text.slice(index));
 		return fragment;
+	}
+
+	function link(href, text) {
+		return el("a", { href: href, target: "_blank", rel: "noopener noreferrer", text: text });
 	}
 
 	function el(tag, attrs, children) {

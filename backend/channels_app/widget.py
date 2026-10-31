@@ -14,6 +14,7 @@ from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.core import signing
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import URLValidator
 from django.http import FileResponse, Http404, HttpResponseNotFound
 from django.shortcuts import render
 from django.utils.dateparse import parse_datetime
@@ -46,8 +47,11 @@ APPEARANCE_DEFAULTS = {
 	"welcome_message": "Hi! How can we help you today?",
 	"primary_color": "#2563eb",
 	"position": "right",
+	"privacy_url": "",  # the business's own policy (it is the controller); "" → ours
+	"show_branding": True,
 }
-APPEARANCE_LIMITS = {"title": 60, "welcome_message": 500}
+APPEARANCE_LIMITS = {"title": 60, "welcome_message": 500, "privacy_url": 500}
+validate_url = URLValidator(schemes=["http", "https"])
 
 
 # --- Dashboard (session auth, project members) ---------------------------------------------------------------
@@ -78,7 +82,17 @@ def _clean_appearance(data) -> dict:
 	for field, value in data.items():
 		if field not in APPEARANCE_DEFAULTS:
 			continue
+		if field == "show_branding":
+			if not isinstance(value, bool):
+				raise ValidationError({"appearance": "show_branding must be true or false"})
+			clean[field] = value
+			continue
 		value = str(value or "").strip()
+		if field == "privacy_url" and value:
+			try:
+				validate_url(value)
+			except DjangoValidationError:
+				raise ValidationError({"appearance": "privacy_url must be an http(s) URL"})
 		if field == "primary_color" and not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
 			raise ValidationError({"appearance": "primary_color must look like #2563eb"})
 		if field == "position" and value not in ("left", "right"):
@@ -173,7 +187,13 @@ def embed(request, key):
 	widget = Widget.objects.filter(public_key=key, is_active=True).first()
 	if not widget:
 		return HttpResponseNotFound()
-	config = {"key": widget.public_key, **APPEARANCE_DEFAULTS, **widget.appearance}
+	config = {
+		"key": widget.public_key,
+		**APPEARANCE_DEFAULTS,
+		**widget.appearance,
+		"site_url": settings.SITE_URL,  # "Powered by" and the fallback privacy link
+		"product_name": settings.PRODUCT_NAME,
+	}
 	response = render(request, "widget/embed.html", {"config": config})
 	ancestors = " ".join(widget.allowed_origins) or "'none'"
 	response["Content-Security-Policy"] = (

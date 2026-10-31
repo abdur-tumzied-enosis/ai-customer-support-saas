@@ -17,7 +17,8 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { LogOut, User, Settings, Menu } from "lucide-react";
+import Link from "next/link";
+import { LogOut, Settings, Menu } from "lucide-react";
 import { authApi } from "@/lib/api";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -81,20 +82,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 								<DropdownMenuTrigger asChild>
 									<button className="rounded-full focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
 										<Avatar>
-											<AvatarFallback>AM</AvatarFallback>
+											<AvatarFallback>{((user.first_name?.[0] || "") + (user.last_name?.[0] || "")).toUpperCase() || "?"}</AvatarFallback>
 										</Avatar>
 									</button>
 								</DropdownMenuTrigger>
 								<DropdownMenuContent align="end" className="w-56">
-									<DropdownMenuLabel>My Account</DropdownMenuLabel>
+									<DropdownMenuLabel className="font-normal">
+									<div className="truncate font-medium">{user.first_name} {user.last_name}</div>
+									<div className="truncate text-xs text-muted-foreground">{user.email}</div>
+								</DropdownMenuLabel>
 									<DropdownMenuSeparator />
-									<DropdownMenuItem>
-										<User className="mr-2 h-4 w-4" />
-										<span>Profile</span>
-									</DropdownMenuItem>
-									<DropdownMenuItem>
-										<Settings className="mr-2 h-4 w-4" />
-										<span>Settings</span>
+									<DropdownMenuItem asChild>
+										<Link href="/settings">
+											<Settings className="mr-2 h-4 w-4" />
+											<span>Account settings</span>
+										</Link>
 									</DropdownMenuItem>
 									<DropdownMenuSeparator />
 									<DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">

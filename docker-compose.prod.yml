@@ -5,21 +5,19 @@ services:
     image: qdrant/qdrant:v1.15.1
     container_name: qdrant-prod
     restart: unless-stopped
-    ports:
-      - "6333:6333"  # HTTP API
-      - "6334:6334"  # gRPC API (optional, for better performance)
+    # No published ports: only services on qdrant_network reach it
     volumes:
       - qdrant_storage:/qdrant/storage
       - ./qdrant/config:/qdrant/config  # Optional: custom config
     environment:
       # Enable API key authentication (recommended for production)
-      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY}
       # Performance tuning
       QDRANT__LOG_LEVEL: INFO
       # Optional: Set max request size (default: 32MB)
       QDRANT__SERVICE__MAX_REQUEST_SIZE_MB: 32
       # Optional: Enable telemetry (set to false to disable)
-      QDRANT__TELEMETRY_DISABLED: "false"
+      QDRANT__TELEMETRY_DISABLED: "true"
     # Resource limits (adjust based on your needs)
     deploy:
       resources:

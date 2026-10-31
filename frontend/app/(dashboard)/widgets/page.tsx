@@ -24,6 +24,8 @@ const DEFAULT_APPEARANCE: WidgetAppearance = {
 	welcome_message: "Hi! How can we help you today?",
 	primary_color: "#2563eb",
 	position: "right",
+	privacy_url: "",
+	show_branding: true,
 };
 
 type Form = {
@@ -332,6 +334,32 @@ export default function WidgetsPage() {
 										</Select>
 									</div>
 								</div>
+								<div className="space-y-1">
+									<Label htmlFor="widget-privacy">Your privacy policy URL</Label>
+									<Input
+										id="widget-privacy"
+										type="url"
+										maxLength={500}
+										placeholder="https://your-site.com/privacy"
+										value={form.appearance.privacy_url}
+										onChange={(e) => setAppearance({ privacy_url: e.target.value })}
+									/>
+									<p className="text-xs text-muted-foreground">
+										Linked under the chat next to the AI notice. Leave empty to link our privacy policy.
+									</p>
+								</div>
+								<label className="flex items-center gap-2 text-sm">
+									<input
+										type="checkbox"
+										className="h-4 w-4 accent-primary"
+										checked={form.appearance.show_branding}
+										onChange={(e) => setAppearance({ show_branding: e.target.checked })}
+									/>
+									Show &quot;Powered by&quot; link
+								</label>
+								<p className="text-xs text-muted-foreground">
+									The widget always tells visitors they are chatting with an AI assistant (required by the EU AI Act).
+								</p>
 							</TabsContent>
 
 							<TabsContent value="install" className="space-y-4 pt-2 text-sm">

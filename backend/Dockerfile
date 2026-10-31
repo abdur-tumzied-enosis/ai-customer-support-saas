@@ -27,6 +27,8 @@ ENV HF_HUB_OFFLINE=1
 
 COPY backend /app
 
-# CMD ["gunicorn", "-w", "3", "-b", "0.0.0.0:8000", "--log-level", "info", "core.wsgi:application"]
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+# 4 processes x 8 threads = 32 parallel requests (widget polls are short DB reads). Each thread keeps its own
+# Postgres connection (CONN_MAX_AGE), so workers x threads + Celery concurrency must stay under max_connections (100).
+# Local dev: GUNICORN_CMD_ARGS=--reload in .env restores auto-reload.
+CMD ["gunicorn", "-k", "gthread", "-w", "4", "--threads", "8", "--timeout", "60", "-b", "0.0.0.0:8000", "--log-level", "info", "core.wsgi:application"]
 

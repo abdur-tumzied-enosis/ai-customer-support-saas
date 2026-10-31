@@ -1,20 +1,24 @@
 import os
 from pathlib import Path
 import environ
+from django.core.exceptions import ImproperlyConfigured
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 env = environ.Env(
-	DEBUG=(bool, True),
+	DEBUG=(bool, False),
 	SECRET_KEY=(str, "dev-secret-key"),
-	ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1", "*"]),
+	ALLOWED_HOSTS=(list, ["localhost", "127.0.0.1"]),
 )
 environ.Env.read_env(os.path.join(BASE_DIR.parent, ".env"))  # ../.env
 
 DEBUG = env("DEBUG")
 SECRET_KEY = env("SECRET_KEY")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
+# Production must not boot on the dev placeholders
+if not DEBUG and SECRET_KEY in ("dev-secret-key", "change-me"):
+	raise ImproperlyConfigured("Set SECRET_KEY (or DEBUG=true for local dev)")
 
 INSTALLED_APPS = [
 	"django.contrib.admin",
@@ -76,6 +80,8 @@ DATABASES = {
 		"PASSWORD": env("POSTGRES_PASSWORD", default="postgres"),
 		"HOST": env("POSTGRES_HOST", default="localhost"),
 		"PORT": env("POSTGRES_PORT", default="5432"),
+		"CONN_MAX_AGE": 60,  # reuse connections across requests instead of one per request
+		"CONN_HEALTH_CHECKS": True,  # drop a reused connection that died (Postgres restart) instead of erroring
 	}
 }
 
@@ -199,23 +205,43 @@ REST_FRAMEWORK = {
 	"DEFAULT_RENDERER_CLASSES": [
 		"rest_framework.renderers.JSONRenderer",
 	],
+	# Reverse proxies in front of gunicorn (production: 1). Unset, every client shares the proxy's IP and
+	# per-IP throttles (auth, widget sessions) become global.
+	"NUM_PROXIES": env.int("NUM_PROXIES", default=None),
 }
 
 # CORS Settings
-CORS_ALLOWED_ORIGINS = [
-	"http://localhost:3000",
-	"http://localhost:3002",
-	"http://127.0.0.1:3000",
-	"http://127.0.0.1:3002",
-]
+# The dashboard's origin(s), e.g. https://app.example.com. The widget is served from this backend, so it needs none.
+CORS_ALLOWED_ORIGINS = env.list(
+	"CORS_ALLOWED_ORIGINS",
+	default=["http://localhost:3000", "http://localhost:3002", "http://127.0.0.1:3000", "http://127.0.0.1:3002"],
+)
 
 CORS_ALLOW_CREDENTIALS = True
 
 # CSRF Settings for API
-CSRF_TRUSTED_ORIGINS = [
-	"http://localhost:3000",
-	"http://127.0.0.1:3000",
-]
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=CORS_ALLOWED_ORIGINS)
+# The dashboard reads the csrftoken cookie from JS; when it runs on a sibling subdomain (app. vs api.), set this
+# to the shared parent domain (".example.com") so the cookie is visible there.
+CSRF_COOKIE_DOMAIN = env("CSRF_COOKIE_DOMAIN", default=None)
+
+ADMIN_URL = env("ADMIN_URL", default="admin/")  # production: something unguessable
+
+# The public dashboard/marketing site (frontend). Widget "Powered by" + privacy links, emails.
+SITE_URL = env("SITE_URL", default="http://localhost:3000").rstrip("/")
+PRODUCT_NAME = env("PRODUCT_NAME", default="Auto Magic Pro")
+
+# HTTPS hardening; TLS terminates at the reverse proxy, which must set X-Forwarded-Proto
+if not DEBUG:
+	SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+	SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=True)
+	SECURE_REDIRECT_EXEMPT = [r"^health/$"]  # container health checks speak plain http
+	SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=60 * 60 * 24 * 30)
+	SESSION_COOKIE_SECURE = True
+	CSRF_COOKIE_SECURE = True
+
+# Login / signup / password reset attempts per IP (accounts.views)
+AUTH_THROTTLE_RATE = env("AUTH_THROTTLE_RATE", default="10/min")
 
 # Logging Configuration
 LOGGING = {

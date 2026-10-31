@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowRight, Bot, FileText, MessageSquare, Zap, Shield, Users } from "lucide-react";
 import ThemeToggle from "@/components/theme/ThemeToggle";
+import SiteFooter from "@/components/layout/SiteFooter";
 
 export default function LandingPage() {
 	return (
@@ -95,7 +96,7 @@ export default function LandingPage() {
 								<Shield className="h-8 w-8 text-primary mb-2" />
 								<CardTitle>Secure & Private</CardTitle>
 								<CardDescription>
-									Your data is encrypted and secure. We take privacy seriously
+									Your data is never sold or used to train AI models, and you can delete it any time
 								</CardDescription>
 							</CardHeader>
 						</Card>
@@ -117,7 +118,7 @@ export default function LandingPage() {
 				<div className="container mx-auto max-w-4xl text-center space-y-6">
 					<h2 className="text-3xl font-bold">Ready to Get Started?</h2>
 					<p className="text-xl text-muted-foreground">
-						Join thousands of businesses using AI to enhance their customer service
+						Free during the beta. Set up your assistant in minutes.
 					</p>
 					<Button size="lg" asChild>
 						<Link href="/sign-up">
@@ -128,24 +129,7 @@ export default function LandingPage() {
 				</div>
 			</section>
 
-			{/* Footer */}
-			<footer className="border-t border-border py-8 px-6">
-				<div className="container mx-auto max-w-6xl">
-					<div className="flex flex-col md:flex-row items-center justify-between gap-4">
-						<div className="text-sm text-muted-foreground">
-							© 2024 Auto Magic Pro. All rights reserved.
-						</div>
-						<div className="flex items-center gap-6 text-sm">
-							<Link href="/sign-in" className="text-muted-foreground hover:text-foreground">
-								Sign in
-							</Link>
-							<Link href="/sign-up" className="text-muted-foreground hover:text-foreground">
-								Sign up
-							</Link>
-						</div>
-					</div>
-				</div>
-			</footer>
+			<SiteFooter />
 		</div>
 	);
 }
