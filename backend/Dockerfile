@@ -23,6 +23,7 @@ RUN playwright install chrome
 ENV FASTEMBED_CACHE_PATH=/opt/fastembed
 RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('intfloat/multilingual-e5-base'); CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')"
 RUN python -c "from fastembed import SparseTextEmbedding; SparseTextEmbedding('Qdrant/bm25')"
+RUN python -c "from fastembed import ImageEmbedding; ImageEmbedding('Qdrant/clip-ViT-B-32-vision')"
 ENV HF_HUB_OFFLINE=1
 
 COPY backend /app
