@@ -12,10 +12,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Upload, FileText, Plus, Trash2, File, Loader2, Pencil, Sparkles, Tag, Globe, ChevronRight, ChevronDown, Eye, Layers, Database } from "lucide-react";
-import { documentApi, customInstructionApi, instructionTemplateApi, knowledgeBaseApi, type ApiDomain, type CustomInstruction, type InstructionTemplate, type KnowledgeBase } from "@/lib/api";
+import { documentApi, featuresApi, customInstructionApi, instructionTemplateApi, knowledgeBaseApi, type ApiDomain, type CustomInstruction, type InstructionTemplate, type KnowledgeBase } from "@/lib/api";
 import { ApiAccessEditor, toApiDomainsPayload } from "@/components/knowledge/ApiAccessEditor";
 import KnowledgeBaseBar from "@/components/knowledge/KnowledgeBaseBar";
 import CollapsibleCard from "@/components/knowledge/CollapsibleCard";
+import ProductCatalog from "@/components/knowledge/ProductCatalog";
 import SuggestionsQueue from "@/components/knowledge/SuggestionsQueue";
 import { getStoredKbId, pickKb, storeKbId } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
@@ -87,6 +88,15 @@ export default function KnowledgePage() {
 
 	// Get the first project (for now, we'll use the first one)
 	const currentProjectId = projects && projects.length > 0 ? String(projects[0].id) : null;
+
+	const [imageSearchOn, setImageSearchOn] = useState(false);
+	useEffect(() => {
+		if (!currentProjectId) return;
+		featuresApi
+			.get(currentProjectId)
+			.then((f) => setImageSearchOn(f.image_search))
+			.catch(() => setImageSearchOn(false));
+	}, [currentProjectId]);
 
 	const fetchKnowledgeBases = useCallback(async (selectId?: string) => {
 		if (!currentProjectId) return;
@@ -1199,6 +1209,15 @@ export default function KnowledgePage() {
 						</DialogContent>
 					</Dialog>
 			</CollapsibleCard>
+
+			{imageSearchOn && currentProjectId && selectedKb && (
+				<CollapsibleCard
+					title={<><Tag className="h-5 w-5" /> Product Catalog</>}
+					description="Products with photos, so the assistant can recognise them when customers send a picture"
+				>
+					<ProductCatalog projectId={currentProjectId} kbId={selectedKb.id} />
+				</CollapsibleCard>
+			)}
 
 			{/* Web Crawl Section */}
 			<CollapsibleCard

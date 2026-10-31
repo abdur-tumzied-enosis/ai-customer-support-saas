@@ -13,7 +13,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import CopyField from "@/components/channels/CopyField";
-import { knowledgeBaseApi, widgetApi, type KnowledgeBase, type Widget, type WidgetAppearance } from "@/lib/api";
+import { featuresApi, knowledgeBaseApi, widgetApi, type KnowledgeBase, type Widget, type WidgetAppearance } from "@/lib/api";
 import { kbOptionLabel, pickKb } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
@@ -62,6 +62,24 @@ export default function WidgetsPage() {
 			.then((r) => setKnowledgeBases(r.data.knowledge_bases))
 			.catch((err) => setError(formatError(err)));
 	}, [projectSlug, projectId]);
+
+	const [imageSearchOn, setImageSearchOn] = useState(false);
+	useEffect(() => {
+		if (!projectId) return;
+		featuresApi
+			.get(projectId)
+			.then((f) => setImageSearchOn(f.image_search))
+			.catch(() => setImageSearchOn(false));
+	}, [projectId]);
+
+	const toggleImageSearch = async (widget: Widget) => {
+		try {
+			await widgetApi.update(widget.id, { image_search_enabled: !widget.image_search_enabled });
+			load();
+		} catch (err) {
+			setError(formatError(err));
+		}
+	};
 
 	const load = async () => {
 		setLoading(true);
@@ -223,6 +241,15 @@ export default function WidgetsPage() {
 									<Button variant="outline" size="sm" onClick={() => toggleActive(widget)}>
 										{widget.is_active ? "Disable" : "Enable"}
 									</Button>
+									{imageSearchOn && (
+										<Button
+											variant={widget.image_search_enabled ? "default" : "outline"}
+											size="sm"
+											onClick={() => toggleImageSearch(widget)}
+										>
+											Image search: {widget.image_search_enabled ? "On" : "Off"}
+										</Button>
+									)}
 									<Button variant="outline" size="sm" onClick={() => openEditor(widget)}>
 										<Pencil className="mr-1 h-4 w-4" /> Edit
 									</Button>

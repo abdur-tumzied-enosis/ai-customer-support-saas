@@ -7,6 +7,8 @@ export type ChatMessage = {
 	role: "user" | "assistant" | "system";
 	content: string;
 	sender?: "customer" | "bot" | "staff";
+	hasPhoto?: boolean;
+	photoMatches?: string;
 };
 
 type MessageListProps = {
@@ -63,8 +65,10 @@ export default function MessageList({ messages }: MessageListProps) {
 											: "bg-muted text-foreground rounded-bl-md border border-border/50"
 								)}
 							>
+								{m.hasPhoto && <span className="block">📷 Photo</span>}
 								{m.content}
 							</div>
+							{m.photoMatches && <span className="text-xs text-muted-foreground">{m.photoMatches}</span>}
 						</div>
 					</div>
 				);

@@ -13,7 +13,8 @@ import {
 	TrendingUp,
 	Database,
 	Zap,
-	Cpu
+	Cpu,
+	Camera
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -129,7 +130,9 @@ export default function AnalyticsPage() {
 		value: count,
 	}));
 
-	const tokensByKind = Object.entries(data.token_usage.by_kind).map(([kind, total]) => ({
+	const tokensByKind = Object.entries(data.token_usage.by_kind)
+		.filter(([kind]) => kind !== "image") // photo indexing is counted in the tiles, not as token spend
+		.map(([kind, total]) => ({
 		name: kind.replace("chat_", "").replace("_", " "),
 		value: total,
 	}));
@@ -198,6 +201,20 @@ export default function AnalyticsPage() {
 						value={formatTokens(data.token_usage.embedding_tokens)}
 						description="Document embedding tokens"
 						icon={Database}
+					/>
+				</StatsGrid>
+				<StatsGrid columns={2}>
+					<MetricCard
+						title="Photos indexed"
+						value={data.token_usage.photos_indexed ?? 0}
+						description="Product photos added to image search"
+						icon={Camera}
+					/>
+					<MetricCard
+						title="Photo searches"
+						value={data.token_usage.photo_searches ?? 0}
+						description="Customer photos matched against the catalog"
+						icon={Camera}
 					/>
 				</StatsGrid>
 				<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

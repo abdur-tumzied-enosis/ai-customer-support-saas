@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
-import { Bot, Loader2, Send, UserRound } from "lucide-react";
+import { Bot, ImagePlus, Loader2, Send, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,12 +30,14 @@ export default function MessageComposer({
 	onStaffMessage,
 	onSendAsCustomer,
 	sendingAsCustomer,
+	onSendPhoto,
 }: {
 	conversation: Conversation;
 	onConversationChange: (c: Conversation) => void;
 	onStaffMessage: (m: ConversationMessage) => void;
 	onSendAsCustomer: (text: string) => void;
 	sendingAsCustomer: boolean;
+	onSendPhoto?: (file: File, text: string) => void; // set only when image search is on
 }) {
 	// Only test chats can simulate the customer; real channels get their customer messages from the platform
 	const canSimulate = conversation.channel === "self";
@@ -44,6 +46,7 @@ export default function MessageComposer({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const photoInputRef = useRef<HTMLInputElement>(null);
 	const sending = busy || (mode === "ai" && sendingAsCustomer);
 	const current = MODES[mode];
 
@@ -93,6 +96,13 @@ export default function MessageComposer({
 			const fresh = await conversationApi.get(conversation.id).catch(() => null);
 			if (fresh) onConversationChange(fresh.data.conversation);
 		}
+	}
+
+	function onPhotoPicked(file: File | undefined) {
+		if (photoInputRef.current) photoInputRef.current.value = "";
+		if (!file || sending || !onSendPhoto) return;
+		onSendPhoto(file, text.trim());
+		setText("");
 	}
 
 	function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -147,6 +157,28 @@ export default function MessageComposer({
 					onKeyDown={onKeyDown}
 					className="min-h-[44px] max-h-[120px] resize-none rounded-2xl bg-background px-4 py-3"
 				/>
+				{canSimulate && mode === "ai" && onSendPhoto && (
+					<>
+						<input
+							ref={photoInputRef}
+							type="file"
+							accept="image/jpeg,image/png,image/webp"
+							className="hidden"
+							onChange={(e) => onPhotoPicked(e.target.files?.[0])}
+						/>
+						<Button
+							type="button"
+							size="icon"
+							variant="outline"
+							disabled={sending}
+							onClick={() => photoInputRef.current?.click()}
+							className="h-11 w-11 shrink-0 rounded-full"
+						>
+							<ImagePlus className="h-4 w-4" />
+							<span className="sr-only">Send a photo as customer</span>
+						</Button>
+					</>
+				)}
 				<Button
 					type="submit"
 					size="icon"

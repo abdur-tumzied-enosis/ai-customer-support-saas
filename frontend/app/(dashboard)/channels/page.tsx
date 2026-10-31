@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Facebook, Instagram, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle, Copy, Check, ExternalLink, RefreshCw } from "lucide-react";
-import { channelApi, platformApi, knowledgeBaseApi, type ChannelCredential, type KnowledgeBase, type Platform } from "@/lib/api";
+import { channelApi, featuresApi, platformApi, knowledgeBaseApi, type ChannelCredential, type KnowledgeBase, type Platform } from "@/lib/api";
 import { kbOptionLabel } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
 import WebhookSettings from "@/components/channels/WebhookSettings";
@@ -64,6 +64,24 @@ export default function ChannelsPage() {
 
 	const projectSlug = projects.length > 0 ? projects[0].slug : "";
 	const projectId = projects.length > 0 ? String(projects[0].id) : "";
+
+	const [imageSearchOn, setImageSearchOn] = useState(false);
+	useEffect(() => {
+		if (!projectId) return;
+		featuresApi
+			.get(projectId)
+			.then((f) => setImageSearchOn(f.image_search))
+			.catch(() => setImageSearchOn(false));
+	}, [projectId]);
+
+	const toggleImageSearch = async (channel: ChannelCredential) => {
+		try {
+			await channelApi.update(channel.id, { image_search_enabled: !channel.image_search_enabled });
+			fetchChannels();
+		} catch (err) {
+			setError(formatError(err));
+		}
+	};
 
 	// Fetch platforms, channels, and knowledge bases
 	useEffect(() => {
@@ -478,6 +496,16 @@ export default function ChannelsPage() {
 									)}
 									{!channel.is_active && (
 										<Badge variant="outline">Inactive</Badge>
+									)}
+									{imageSearchOn && (
+										<Button
+											variant={channel.image_search_enabled ? "default" : "outline"}
+											size="sm"
+											className="ml-auto"
+											onClick={() => toggleImageSearch(channel)}
+										>
+											Image search: {channel.image_search_enabled ? "On" : "Off"}
+										</Button>
 									)}
 									{!channel.knowledge_base && (
 										<Badge variant="destructive">

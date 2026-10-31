@@ -7,7 +7,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import MessageComposer from "@/components/chat/MessageComposer";
 import MemoryDialog from "@/components/chat/MemoryDialog";
-import { conversationApi, type Conversation, type ConversationMessage } from "@/lib/api";
+import { conversationApi, featuresApi, type Conversation, type ConversationMessage } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
 import { ArrowLeft, Loader2, Bot } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -23,6 +24,9 @@ export default function ConversationThreadPage() {
 	const [sending, setSending] = useState(false);
 	const [waitingForReply, setWaitingForReply] = useState(false);
 	const [conversation, setConversation] = useState<Conversation | null>(null);
+	const { projects } = useAuth();
+	const projectId = projects.length > 0 ? String(projects[0].id) : "";
+	const [imageSearchOn, setImageSearchOn] = useState(false);
 	const pollingIntervals = useRef<Map<string, NodeJS.Timeout>>(new Map());
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -77,8 +81,23 @@ export default function ConversationThreadPage() {
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [currentOffset, setCurrentOffset] = useState<number | null>(null);
 
+	useEffect(() => {
+		if (!projectId) return;
+		featuresApi
+			.get(projectId)
+			.then((f) => setImageSearchOn(f.image_search))
+			.catch(() => setImageSearchOn(false));
+	}, [projectId]);
+
 	function toChatMessage(msg: ConversationMessage): ChatMessage {
-		return { id: msg.id, role: msg.direction === "in" ? "user" : "assistant", content: msg.text, sender: msg.sender };
+		return {
+			id: msg.id,
+			role: msg.direction === "in" ? "user" : "assistant",
+			content: msg.text,
+			sender: msg.sender,
+			hasPhoto: msg.has_photo,
+			photoMatches: msg.photo_matches,
+		};
 	}
 
 	async function fetchConversation() {
@@ -247,6 +266,24 @@ export default function ConversationThreadPage() {
 		}
 	}
 
+	async function handleSendPhoto(file: File, text: string) {
+		if (sending) return;
+
+		setSending(true);
+		setError(null);
+		try {
+			const response = await conversationApi.sendPhoto(conversationId, file, text);
+			setMessages((prev) => [...prev, toChatMessage(response.data.message)]);
+			if (response.data.message.status === "pending" || response.data.message.status === "processing") {
+				startPolling(response.data.message.id);
+			}
+		} catch (err) {
+			setError(formatError(err));
+		} finally {
+			setSending(false);
+		}
+	}
+
 	if (loading) {
 		return (
 			<div className="flex flex-col h-[calc(100vh-80px)]">
@@ -374,6 +411,7 @@ export default function ConversationThreadPage() {
 					onStaffMessage={(m) => setMessages((prev) => [...prev, toChatMessage(m)])}
 					onSendAsCustomer={handleSend}
 					sendingAsCustomer={sending}
+					onSendPhoto={imageSearchOn ? handleSendPhoto : undefined}
 				/>
 			)}
 		</div>
