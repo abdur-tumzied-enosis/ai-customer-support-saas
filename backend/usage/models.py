@@ -141,6 +141,7 @@ class UsageEvent(models.Model):
 		("chat_in", "Chat Input"),
 		("chat_out", "Chat Output"),
 		("embed", "Embedding"),
+		("image", "Image"),
 	]
 	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="usage_events")
 	kind = models.CharField(max_length=16, choices=KIND_CHOICES)

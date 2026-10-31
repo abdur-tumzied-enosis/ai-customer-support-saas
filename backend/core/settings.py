@@ -139,6 +139,10 @@ CELERY_BEAT_SCHEDULE = {
 # Qdrant
 QDRANT_URL = env("QDRANT_URL", default="http://localhost:6333")
 QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production authentication
+# Product image search. Master switch (platform kill switch); per-tenant grant is Project.image_search_allowed.
+IMAGE_SEARCH_ENABLED = env.bool("IMAGE_SEARCH_ENABLED", default=False)
+IMAGE_EMBEDDING_MODEL = env("IMAGE_EMBEDDING_MODEL", default="Qdrant/clip-ViT-B-32-vision")
+IMAGE_SEARCH_MIN_SCORE = env.float("IMAGE_SEARCH_MIN_SCORE", default=0.80)
 # Embedding / reranker model servers (text-embeddings-inference, docker-compose). Set: workers call them over HTTP
 # instead of loading both models (~1.3GB RAM per process), so reply workers can run many more processes.
 # Unset: models load in-process. Same models and outputs either way, so no reindex when switching.

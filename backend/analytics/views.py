@@ -205,6 +205,9 @@ class AnalyticsOverviewView(APIView):
                 total=Sum('tokens')
             )['total'] or 0
             
+            photos_indexed = usage_events_qs.filter(kind='image', metadata__op='index').count()
+            photo_searches = usage_events_qs.filter(kind='image', metadata__op='search').count()
+
             total_tokens = total_input_tokens + total_output_tokens + total_embedding_tokens
             
             # Token usage trend by day
@@ -268,6 +271,8 @@ class AnalyticsOverviewView(APIView):
                         "input_tokens": total_input_tokens,
                         "output_tokens": total_output_tokens,
                         "embedding_tokens": total_embedding_tokens,
+                        "photos_indexed": photos_indexed,
+                        "photo_searches": photo_searches,
                         "by_kind": tokens_by_kind,
                         "trend": tokens_by_day
                     }

@@ -1,4 +1,5 @@
 import uuid
+from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 
@@ -21,6 +22,18 @@ class Project(models.Model):
 	name = models.CharField(max_length=255)
 	slug = models.SlugField(unique=True)
 	created_at = models.DateTimeField(auto_now_add=True)
+	# Product image search: the platform switch is settings.IMAGE_SEARCH_ENABLED; `allowed` is the operator's
+	# per-tenant grant (admin only); `enabled` is the tenant's own switch.
+	image_search_allowed = models.BooleanField(default=False)
+	image_search_enabled = models.BooleanField(default=True)
+
+	@property
+	def image_search_available(self) -> bool:
+		return bool(settings.IMAGE_SEARCH_ENABLED and self.image_search_allowed)
+
+	@property
+	def image_search_on(self) -> bool:
+		return self.image_search_available and self.image_search_enabled
 
 	def __str__(self) -> str:
 		return self.name

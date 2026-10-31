@@ -3,6 +3,7 @@ Utilities for tracking token usage across the application.
 """
 import logging
 from typing import Optional
+from django.db import transaction
 from django.utils import timezone
 from .models import UsageEvent, UsageCounter
 
@@ -38,6 +39,18 @@ def track_token_usage(
     except Exception as e:
         # Don't fail the main operation if usage tracking fails
         logger.error(f"Failed to track token usage: {e}", exc_info=True)
+
+
+def record_image_usage(project_id: str, op: str, **metadata) -> None:
+    """Record one photo operation (op: "index" or "search"). Never raises."""
+    try:
+        # atomic: a failed insert must not poison a caller's open transaction
+        with transaction.atomic():
+            UsageEvent.objects.create(
+                project_id=project_id, kind="image", tokens=0, metadata={"op": op, **metadata}
+            )
+    except Exception as e:
+        logger.error(f"Failed to record image usage: {e}", exc_info=True)
 
 
 def estimate_tokens(text: str) -> int:
