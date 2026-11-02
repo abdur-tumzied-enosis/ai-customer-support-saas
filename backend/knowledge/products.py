@@ -2,21 +2,22 @@
 Product catalog for image search: products with photos, plus the per-project image-search switch.
 Every route except features/ answers 404 feature_disabled unless the master, operator and tenant switches are all on.
 """
-import mimetypes
+import uuid
 
-from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
 from django.db import transaction
-from django.http import FileResponse
+from django.http import HttpResponseRedirect
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from agents.image_search import NotAnImage, image_format, load_image
+from core.storage import delete_keys, object_size, presign_get, presign_put, thumb_key
 from .models import MAX_IMAGES_PER_PRODUCT, MAX_PRODUCT_IMAGE_BYTES, Product, ProductImage, product_image_path
 from .tasks import embed_product_image
 from .views import _kb_error, _project_user, _resolve_kb
+
+# Photos go browser -> R2 directly: presign (rows `uploading`), PUT, confirm (`pending`), worker resizes + embeds
+IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
 
 def _features(project) -> dict:
@@ -24,7 +25,8 @@ def _features(project) -> dict:
 
 
 def _image_dict(img: ProductImage) -> dict:
-	return {"id": str(img.id), "status": img.status, "url": f"/api/kb/products/images/{img.id}/file/"}
+	url = f"/api/kb/products/images/{img.id}/file/"
+	return {"id": str(img.id), "status": img.status, "url": url, "thumb_url": f"{url}?size=thumb"}
 
 
 def _product_dict(p: Product) -> dict:
@@ -61,46 +63,46 @@ def _gate(request, project, admin: bool):
 	return pu, None
 
 
-def _clean_files(request, existing: int):
-	"""(validated [(bytes, ext, filename)], None) or (None, error). Nothing is stored here."""
-	files = request.FILES.getlist("images")
+def _clean_specs(request, existing: int):
+	"""(validated [(filename, ext)], None) or (None, error) from the declared `files`: [{name, size, content_type}].
+	The declared size and type are re-checked at confirm (size) and by the worker (decode)."""
+	files = request.data.get("files")
+	if not isinstance(files, list):
+		return None, _kb_error("invalid_files", "files must be a list", status.HTTP_400_BAD_REQUEST)
 	if existing + len(files) > MAX_IMAGES_PER_PRODUCT:
 		return None, _kb_error("too_many_images", f"A product can have at most {MAX_IMAGES_PER_PRODUCT} photos", status.HTTP_400_BAD_REQUEST)
 	out = []
 	for f in files:
-		if f.size > MAX_PRODUCT_IMAGE_BYTES:  # before reading it into memory
+		size = f.get("size") if isinstance(f, dict) else None
+		if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+			return None, _kb_error("invalid_files", "Each file needs a name, size and content_type", status.HTTP_400_BAD_REQUEST)
+		name = str(f.get("name") or "photo")[:255]
+		if size > MAX_PRODUCT_IMAGE_BYTES:
 			mb = MAX_PRODUCT_IMAGE_BYTES // (1024 * 1024)
-			return None, _kb_error("image_too_large", f"{f.name} is larger than {mb} MB", status.HTTP_400_BAD_REQUEST)
-		try:
-			data = f.read()
-			load_image(data, MAX_PRODUCT_IMAGE_BYTES)
-			out.append((data, image_format(data), f.name))
-		except NotAnImage:
-			return None, _kb_error("invalid_image", f"{f.name} is not a valid image", status.HTTP_400_BAD_REQUEST)
+			return None, _kb_error("image_too_large", f"{name} is larger than {mb} MB", status.HTTP_400_BAD_REQUEST)
+		ext = IMAGE_TYPES.get(f.get("content_type"))
+		if not ext:
+			return None, _kb_error("invalid_image", f"{name} is not a JPEG, PNG or WebP image", status.HTTP_400_BAD_REQUEST)
+		out.append((name, ext))
 	return out, None
 
 
-def _store(product: Product, files) -> None:
-	"""Atomically save the product (if new) and validated files as pending ProductImage rows; embeds are queued on commit.
-	Files already written are removed if anything fails."""
-	saved = []
-	ids = []
-	try:
-		with transaction.atomic():
-			if product._state.adding:
-				product.save()
-			for data, ext, _name in files:
-				img = ProductImage(product=product)
-				img.file.name = default_storage.save(product_image_path(product.kb, str(img.id), ext), ContentFile(data))
-				saved.append(img.file.name)
-				img.save()
-				ids.append(str(img.id))
-	except Exception:
-		for name in saved:
-			default_storage.delete(name)
-		raise
-	for image_id in ids:
-		transaction.on_commit(lambda i=image_id: embed_product_image.delay(i))
+def _reserve(product: Product, specs) -> list:
+	"""Atomically save the product (if new) and one `uploading` row per file under tmp/; returns the presigned uploads."""
+	with transaction.atomic():
+		if product._state.adding:
+			product.save()
+		uploads = []
+		for _name, ext in specs:
+			img = ProductImage(product=product, status="uploading")
+			img.file.name = "tmp/" + product_image_path(product.kb, str(img.id), ext)
+			img.save()
+			uploads.append({"image_id": str(img.id), **presign_put(img.file.name, f"image/{'jpeg' if ext == 'jpg' else ext}")})
+	return uploads
+
+
+def _created(product: Product, uploads: list) -> Response:
+	return Response({"success": True, "data": {"product": _product_dict(product), "uploads": uploads}}, status=status.HTTP_201_CREATED)
 
 
 class FeaturesView(APIView):
@@ -155,14 +157,13 @@ class ProductListCreateView(APIView):
 		name = (request.data.get("name") or "").strip()
 		if not 1 <= len(name) <= 255:
 			return _kb_error("invalid_name", "Name must be 1-255 characters", status.HTTP_400_BAD_REQUEST)
-		files, err = _clean_files(request, 0)
+		specs, err = _clean_specs(request, 0)
 		if err:
 			return err
-		if not files:
+		if not specs:
 			return _kb_error("no_images", "At least one photo is required", status.HTTP_400_BAD_REQUEST)
 		product = Product(kb=kb, name=name, description=request.data.get("description") or "")
-		_store(product, files)
-		return Response({"success": True, "data": _product_dict(product)}, status=status.HTTP_201_CREATED)
+		return _created(product, _reserve(product, specs))
 
 
 def _product_or_error(request, product_id, admin: bool):
@@ -205,16 +206,19 @@ class ProductImagesAddView(APIView):
 		product, err = _product_or_error(request, product_id, admin=True)
 		if err:
 			return err
-		files, err = _clean_files(request, product.images.count())
+		specs, err = _clean_specs(request, product.images.count())
 		if err:
 			return err
-		if not files:
+		if not specs:
 			return _kb_error("no_images", "At least one photo is required", status.HTTP_400_BAD_REQUEST)
-		_store(product, files)
-		return Response({"success": True, "data": _product_dict(product)}, status=status.HTTP_201_CREATED)
+		return _created(product, _reserve(product, specs))
 
 
 def _image_or_error(request, image_id, admin: bool):
+	try:
+		image_id = uuid.UUID(str(image_id))  # confirm takes ids from the JSON body, not a <uuid:> route
+	except ValueError:
+		return None, _not_found()
 	img = ProductImage.objects.filter(id=image_id).select_related("product__kb__project").first()
 	if not img:
 		return None, _not_found()
@@ -233,14 +237,43 @@ class ProductImageDetailView(APIView):
 		return Response({"success": True, "data": None})
 
 
+class ProductImagesConfirmView(APIView):
+	"""The browser finished its PUTs: check each object landed within the size cap, then queue resize + embed."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		ids = request.data.get("image_ids")
+		if not isinstance(ids, list) or not ids or len(ids) > MAX_IMAGES_PER_PRODUCT:
+			return _kb_error("invalid_ids", "image_ids must be a non-empty list", status.HTTP_400_BAD_REQUEST)
+		images = []
+		for image_id in ids:  # all access checks before any change
+			img, err = _image_or_error(request, image_id, admin=True)
+			if err:
+				return err
+			images.append(img)
+		for img in images:
+			if img.status != "uploading":
+				continue  # already confirmed: a retry or double click
+			size = object_size(img.file.name)
+			if size is None or size > MAX_PRODUCT_IMAGE_BYTES:
+				img.status, img.error = "failed", "upload_missing" if size is None else "upload_too_large"
+				delete_keys(img.file.name)
+			else:
+				img.status, img.error = "pending", ""
+				transaction.on_commit(lambda i=str(img.id): embed_product_image.delay(i))
+			img.save(update_fields=["status", "error"])
+		return Response({"success": True, "data": [_image_dict(i) for i in images]})
+
+
 class ProductImageFileView(APIView):
+	"""Redirects to a short-lived presigned R2 URL: the browser fetches the bytes from R2, not through Django."""
 	permission_classes = [IsAuthenticated]
 
 	def get(self, request, image_id):
 		img, err = _image_or_error(request, image_id, admin=False)
 		if err:
 			return err
-		if not img.file or not default_storage.exists(img.file.name):
+		if not img.file or img.status in ("uploading", "failed"):
 			return _not_found()
-		content_type = mimetypes.guess_type(img.file.name)[0] or "application/octet-stream"
-		return FileResponse(default_storage.open(img.file.name, "rb"), content_type=content_type)
+		key = thumb_key(img.file.name) if request.query_params.get("size") == "thumb" and img.status == "ready" else img.file.name
+		return HttpResponseRedirect(presign_get(key))

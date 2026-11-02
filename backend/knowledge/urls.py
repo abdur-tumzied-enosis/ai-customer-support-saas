@@ -1,7 +1,7 @@
 from django.urls import path
 from .products import (
 	FeaturesView, ProductListCreateView, ProductDetailView, ProductImagesAddView,
-	ProductImageDetailView, ProductImageFileView,
+	ProductImageDetailView, ProductImageFileView, ProductImagesConfirmView,
 )
 from .suggestions import SuggestionDecisionView, SuggestionListView
 from .views import (
@@ -41,6 +41,7 @@ urlpatterns = [
 	path("products/", ProductListCreateView.as_view(), name="product-list-create"),
 	path("products/<uuid:product_id>/", ProductDetailView.as_view(), name="product-detail"),
 	path("products/<uuid:product_id>/images/", ProductImagesAddView.as_view(), name="product-images-add"),
+	path("products/images/confirm/", ProductImagesConfirmView.as_view(), name="product-images-confirm"),
 	path("products/images/<uuid:image_id>/", ProductImageDetailView.as_view(), name="product-image-detail"),
 	path("products/images/<uuid:image_id>/file/", ProductImageFileView.as_view(), name="product-image-file"),
 

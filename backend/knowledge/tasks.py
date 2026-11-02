@@ -12,9 +12,11 @@ from django.conf import settings
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, MAX_PRODUCT_IMAGE_BYTES, ProductImage
+from django.core.files.base import ContentFile
+from core.storage import delete_keys, thumb_key
+from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, MAX_PRODUCT_IMAGE_BYTES, Product, ProductImage, product_image_path
 from agents.vector_store import add_texts_to_collection
-from agents.image_search import delete_images, embed_image, load_image, upsert_image
+from agents.image_search import NotAnImage, delete_images, embed_image, load_image, make_variants, upsert_image
 from usage.utils import record_image_usage
 
 logger = logging.getLogger(__name__)
@@ -753,6 +755,24 @@ def recover_stuck_jobs() -> None:
             job.save(update_fields=['status', 'error'])
 
 
+def _finalize_product_image(image: ProductImage) -> bytes | None:
+    """Bytes to embed. A fresh upload (under tmp/) is replaced by its display + thumb WebP variants first;
+    None when the row was deleted meanwhile (its variants are removed again)."""
+    with default_storage.open(image.file.name, "rb") as f:
+        data = f.read()
+    if not image.file.name.startswith("tmp/"):
+        return data  # already final: a re-embed
+    display, thumb = make_variants(data, MAX_PRODUCT_IMAGE_BYTES)
+    name = default_storage.save(product_image_path(image.product.kb, str(image.id), "webp"), ContentFile(display))
+    default_storage.save(thumb_key(name), ContentFile(thumb))
+    if not ProductImage.objects.filter(id=image.id).update(file=name):
+        delete_keys(name, thumb_key(name), image.file.name)
+        return None
+    delete_keys(image.file.name)
+    image.file.name = name
+    return display
+
+
 @shared_task
 def embed_product_image(image_id: str) -> None:
     """Embed one product photo into the KB's image collection. A row deleted while queued is a no-op."""
@@ -761,12 +781,15 @@ def embed_product_image(image_id: str) -> None:
         return
     kb = image.product.kb
     try:
-        with default_storage.open(image.file.name, "rb") as f:
-            data = f.read()
+        data = _finalize_product_image(image)
+        if data is None:
+            return
         vector = embed_image(load_image(data, MAX_PRODUCT_IMAGE_BYTES))
         upsert_image(kb.image_collection, image_id, vector, str(image.product_id))
     except Exception as exc:
         logger.warning(f"Embedding product image {image_id} failed: {exc}")
+        if isinstance(exc, NotAnImage) and image.file.name.startswith("tmp/"):
+            delete_keys(image.file.name)
         ProductImage.objects.filter(id=image_id).update(status="failed", error=type(exc).__name__)
         return
     if not ProductImage.objects.filter(id=image_id).update(status="ready", error=""):
@@ -774,3 +797,22 @@ def embed_product_image(image_id: str) -> None:
         delete_images(kb.image_collection, [image_id])
         return
     record_image_usage(str(kb.project_id), "index", image_id=image_id)
+
+
+@shared_task
+def cleanup_abandoned_uploads() -> None:
+    """Drop uploads presigned over an hour ago and never confirmed (tab closed, PUT failed): their rows, their R2
+    objects, and products left with no photos at all."""
+    cutoff = timezone.now() - timedelta(hours=1)
+    images = list(ProductImage.objects.filter(status="uploading", created_at__lt=cutoff))
+    product_ids = {i.product_id for i in images}
+    for img in images:
+        delete_keys(img.file.name)
+    ProductImage.objects.filter(id__in=[i.id for i in images]).delete()  # queryset delete: no Qdrant points exist yet
+    Product.objects.filter(id__in=product_ids, images__isnull=True).delete()
+    docs = list(Document.objects.filter(status="uploading", created_at__lt=cutoff))
+    for doc in docs:
+        delete_keys(doc.file.name if doc.file else "")
+    Document.objects.filter(id__in=[d.id for d in docs]).delete()
+    if images or docs:
+        logger.info(f"Cleaned up {len(images)} abandoned photo and {len(docs)} document uploads")

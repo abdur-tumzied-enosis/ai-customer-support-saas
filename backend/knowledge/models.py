@@ -8,6 +8,7 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from accounts.models import Project
 from agents.image_search import delete_images
+from core.storage import delete_keys, thumb_key
 
 
 class IngestionJobStatus(str, Enum):
@@ -235,7 +236,8 @@ class Product(models.Model):
 
 
 class ProductImage(models.Model):
-	STATUS_CHOICES = [("pending", "Pending"), ("ready", "Ready"), ("failed", "Failed")]
+	# uploading: presigned, browser PUT not confirmed yet; pending: confirmed, waiting for resize + embed
+	STATUS_CHOICES = [("uploading", "Uploading"), ("pending", "Pending"), ("ready", "Ready"), ("failed", "Failed")]
 
 	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 	product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="images")
@@ -245,8 +247,8 @@ class ProductImage(models.Model):
 	created_at = models.DateTimeField(auto_now_add=True)
 
 	def _delete_file(self):
-		if self.file and default_storage.exists(self.file.name):
-			default_storage.delete(self.file.name)
+		if self.file:
+			delete_keys(self.file.name, thumb_key(self.file.name))
 
 	def delete(self, *args, **kwargs):
 		delete_images(self.product.kb.image_collection, [str(self.id)])

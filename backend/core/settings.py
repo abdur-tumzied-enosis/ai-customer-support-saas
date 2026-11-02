@@ -134,6 +134,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'channels_app.memory.summarize_idle_episodes',
         'schedule': 1800,
     },
+    'cleanup-abandoned-uploads': {
+        'task': 'knowledge.tasks.cleanup_abandoned_uploads',
+        'schedule': 900,
+    },
     'recover-stuck-replies': {
         'task': 'channels_app.reply.recover_stuck_replies',
         'schedule': 300,

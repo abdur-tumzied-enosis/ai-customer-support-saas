@@ -90,9 +90,13 @@ def read_head(key: str, n: int = 32) -> bytes:
 
 
 def delete_keys(*keys: str) -> None:
+	"""Delete each key; empty or missing keys are ignored (S3 ignores missing ones itself)."""
 	for key in keys:
 		if key:
-			default_storage.delete(key)
+			try:
+				default_storage.delete(key)
+			except (FileNotFoundError, KeyError):
+				pass
 
 
 _MAGIC = ((b"\xff\xd8\xff", "jpg"), (b"\x89PNG\r\n\x1a\n", "png"))
