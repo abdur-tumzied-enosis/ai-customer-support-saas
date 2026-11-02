@@ -7,3 +7,4 @@ backend/chat_uploads/
 gcp-sa.json
 backend/celerybeat-schedule*
 .playwright-mcp/
+.superpowers/
