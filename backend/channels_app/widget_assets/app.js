@@ -108,9 +108,8 @@
 		if (!token) await newSession();
 		const res = await fetch(path, {
 			method: (options && options.method) || "GET",
-			// FormData sets its own multipart Content-Type (with the boundary)
-			headers: options && options.form ? { Authorization: "Bearer " + token } : { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-			body: options && options.form ? options.form : options && options.body ? JSON.stringify(options.body) : undefined,
+			headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+			body: options && options.body ? JSON.stringify(options.body) : undefined,
 		});
 		if (res.status === 401 && !retried) { // expired, or the widget's key was rotated: start a fresh session
 			token = null;
@@ -152,7 +151,7 @@
 		item.failed = false;
 		render();
 		try {
-			const data = await api(item.file ? "/api/widget/messages/photo" : "/api/widget/messages", item.file ? { method: "POST", form: photoForm(item) } : { method: "POST", body: { text: item.text, client_id: item.client_id } });
+			const data = item.file ? await sendPhoto(item) : await api("/api/widget/messages", { method: "POST", body: { text: item.text, client_id: item.client_id } });
 			add(data.message);
 			pending = true;
 		} catch (e) {
@@ -162,12 +161,35 @@
 		schedule();
 	}
 
-	function photoForm(item) {
-		const form = new FormData();
-		form.append("image", item.file);
-		form.append("text", item.text);
-		form.append("client_id", item.client_id);
-		return form;
+	// The photo goes straight to storage with a presigned PUT, then the message names its key.
+	// A retry reuses the upload; the client_id dedupes a send whose response was lost.
+	async function sendPhoto(item) {
+		if (!item.key) {
+			const photo = await downscale(item.file);
+			const upload = await api("/api/widget/messages/photo/presign", { method: "POST", body: { content_type: photo.type, size: photo.size } });
+			const put = await fetch(upload.url, { method: "PUT", headers: upload.headers, body: photo });
+			if (!put.ok) throw new Error("HTTP " + put.status);
+			item.key = upload.key;
+		}
+		return api("/api/widget/messages/photo", { method: "POST", body: { key: item.key, text: item.text, client_id: item.client_id } });
+	}
+
+	// Phone photos are often 5-10 MB: shrink to a 2048 px long edge first. On any decode problem send the file as is
+	// (the server checks it either way).
+	async function downscale(file) {
+		try {
+			const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+			const scale = 2048 / Math.max(bitmap.width, bitmap.height);
+			if (scale >= 1) { bitmap.close(); return file; }
+			const canvas = document.createElement("canvas");
+			canvas.width = Math.round(bitmap.width * scale);
+			canvas.height = Math.round(bitmap.height * scale);
+			canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+			bitmap.close();
+			return await new Promise((resolve) => canvas.toBlob((blob) => resolve(blob || file), "image/jpeg", 0.9));
+		} catch (e) {
+			return file;
+		}
 	}
 
 	function setImageUpload(value) {
