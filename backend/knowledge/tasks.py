@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.core.files.storage import default_storage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from django.core.files.base import ContentFile
-from core.storage import delete_keys, thumb_key
+from core.storage import ObjectTooLarge, delete_keys, read_capped, thumb_key
 from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, MAX_PRODUCT_IMAGE_BYTES, Product, ProductImage, product_image_path
 from agents.vector_store import add_texts_to_collection
 from agents.image_search import NotAnImage, delete_images, embed_image, load_image, make_variants, upsert_image
@@ -758,8 +758,10 @@ def recover_stuck_jobs() -> None:
 def _finalize_product_image(image: ProductImage) -> bytes | None:
     """Bytes to embed. A fresh upload (under tmp/) is replaced by its display + thumb WebP variants first;
     None when the row was deleted meanwhile (its variants are removed again)."""
-    with default_storage.open(image.file.name, "rb") as f:
-        data = f.read()
+    try:
+        data = read_capped(image.file.name, MAX_PRODUCT_IMAGE_BYTES)  # never pull an oversized object into memory
+    except ObjectTooLarge as exc:
+        raise NotAnImage("image too large") from exc
     if not image.file.name.startswith("tmp/"):
         return data  # already final: a re-embed
     display, thumb = make_variants(data, MAX_PRODUCT_IMAGE_BYTES)

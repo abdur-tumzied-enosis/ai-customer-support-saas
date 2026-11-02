@@ -1,4 +1,5 @@
 import base64
+import io
 from unittest import mock
 
 from django.core.exceptions import ImproperlyConfigured
@@ -6,7 +7,9 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.test import SimpleTestCase
 
-from core.storage import object_size, presign_put, r2_storages, read_head, sniff_image, thumb_key
+from core.storage import (
+	ObjectTooLarge, delete_prefix, object_size, presign_put, r2_storages, read_capped, read_head, sniff_image, thumb_key,
+)
 
 ENV = {"R2_ACCOUNT_ID": "acc", "R2_ACCESS_KEY_ID": "k", "R2_SECRET_ACCESS_KEY": "s", "R2_BUCKET": "local"}
 
@@ -72,3 +75,39 @@ class HelpersTest(SimpleTestCase):
 			assert read_head(name, 3) == b"abc"
 		finally:
 			default_storage.delete(name)
+
+
+class BoundedReadAndPrefixTest(SimpleTestCase):
+	def test_presign_put_signs_size(self):
+		client = mock.MagicMock()
+		with mock.patch("core.storage._client", return_value=client), mock.patch("core.storage._bucket", return_value="local"):
+			presign_put("tmp/x.jpg", "image/jpeg", size=1234)
+		assert client.generate_presigned_url.call_args.kwargs["Params"]["ContentLength"] == 1234
+
+	def test_read_capped_in_memory(self):
+		name = default_storage.save("t/cap.bin", ContentFile(b"abcdef"))
+		try:
+			assert read_capped(name, 6) == b"abcdef"
+			with self.assertRaises(ObjectTooLarge):
+				read_capped(name, 5)
+		finally:
+			default_storage.delete(name)
+
+	def test_read_capped_s3_reads_only_a_range(self):
+		client = mock.MagicMock()
+		client.get_object.return_value = {"Body": io.BytesIO(b"x" * 11), "ContentRange": "bytes 0-10/999999999"}
+		with mock.patch("core.storage._is_s3", return_value=True), mock.patch("core.storage._client", return_value=client), \
+				mock.patch("core.storage._bucket", return_value="local"):
+			with self.assertRaises(ObjectTooLarge):
+				read_capped("k", 10)
+			assert client.get_object.call_args.kwargs["Range"] == "bytes=0-10"
+			client.get_object.return_value = {"Body": io.BytesIO(b"abc"), "ContentRange": "bytes 0-2/3"}
+			assert read_capped("k", 10) == b"abc"
+
+	def test_delete_prefix_in_memory(self):
+		for name in ("p/a/1.webp", "p/a/sub/2.ogg", "p/b/3.webp"):
+			default_storage.save(name, ContentFile(b"x"))
+		delete_prefix("p/a/")
+		assert not default_storage.exists("p/a/1.webp") and not default_storage.exists("p/a/sub/2.ogg")
+		assert default_storage.exists("p/b/3.webp")
+		default_storage.delete("p/b/3.webp")

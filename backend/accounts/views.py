@@ -255,6 +255,7 @@ def purge_project(project) -> None:
 	"""Delete a project plus what DB cascades miss: Qdrant collections and stored KB files. The outside cleanup runs
 	first, so a Qdrant outage fails the request before any row is gone, and a retry finishes the job."""
 	from agents.vector_store import delete_collection
+	from core.storage import delete_prefix
 	from knowledge.models import Document, ProductImage
 
 	for kb in project.knowledge_bases.all():
@@ -264,7 +265,8 @@ def purge_project(project) -> None:
 	for doc in Document.objects.filter(kb__project=project).exclude(file__isnull=True).exclude(file=""):
 		default_storage.delete(doc.file.name)
 	for img in ProductImage.objects.filter(product__kb__project=project):
-		default_storage.delete(img.file.name)
+		img._delete_file()  # display + thumb
+	delete_prefix(f"chat_media/{project.slug}/")  # customers' photos and voice notes
 	# PROTECT FKs onto KnowledgeBase block the cascade even though these rows would go with the project
 	project.widgets.all().delete()
 	project.conversations.all().delete()

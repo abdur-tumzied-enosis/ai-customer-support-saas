@@ -58,10 +58,17 @@ def _bucket() -> str:
 	return default_storage.bucket_name
 
 
-def presign_put(key: str, content_type: str, sha256_hex: str | None = None) -> dict:
-	"""A URL the browser PUTs the file to, bound to this key and content type (and to the bytes, when sha256_hex is
-	given: R2 rejects a body whose checksum differs). The client must send `headers` exactly."""
+class ObjectTooLarge(ValueError):
+	pass
+
+
+def presign_put(key: str, content_type: str, sha256_hex: str | None = None, size: int | None = None) -> dict:
+	"""A URL the browser PUTs the file to, bound to this key and content type, to exactly `size` bytes when given
+	(the browser sends the real Content-Length, so a bigger body is refused), and to the bytes themselves when
+	sha256_hex is given (R2 rejects a body whose checksum differs). The client must send `headers` exactly."""
 	params = {"Bucket": _bucket(), "Key": key, "ContentType": content_type}
+	if size is not None:
+		params["ContentLength"] = size
 	headers = {"Content-Type": content_type}
 	if sha256_hex:
 		params["ChecksumSHA256"] = headers["x-amz-checksum-sha256"] = base64.b64encode(bytes.fromhex(sha256_hex)).decode()
@@ -87,6 +94,40 @@ def read_head(key: str, n: int = 32) -> bytes:
 		return _client().get_object(Bucket=_bucket(), Key=key, Range=f"bytes=0-{n - 1}")["Body"].read()
 	with default_storage.open(key, "rb") as f:
 		return f.read(n)
+
+
+def read_capped(key: str, cap: int) -> bytes:
+	"""The object's bytes, raising ObjectTooLarge past `cap` without downloading more than cap + 1 bytes
+	(default_storage.open() on S3 would pull the whole object into memory first)."""
+	if _is_s3():
+		obj = _client().get_object(Bucket=_bucket(), Key=key, Range=f"bytes=0-{cap}")
+		total = int(str(obj.get("ContentRange") or "/0").rsplit("/", 1)[1])
+		if total > cap:
+			raise ObjectTooLarge(f"{key} is {total} bytes, over {cap}")
+		return obj["Body"].read()
+	with default_storage.open(key, "rb") as f:
+		data = f.read(cap + 1)
+	if len(data) > cap:
+		raise ObjectTooLarge(f"{key} is over {cap} bytes")
+	return data
+
+
+def delete_prefix(prefix: str) -> None:
+	"""Delete every object whose key starts with `prefix` (a folder, ending in /)."""
+	if _is_s3():
+		pages = _client().get_paginator("list_objects_v2").paginate(Bucket=_bucket(), Prefix=prefix)
+		for page in pages:
+			keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+			if keys:  # at most 1000 per page, the delete_objects limit
+				_client().delete_objects(Bucket=_bucket(), Delete={"Objects": keys, "Quiet": True})
+		return
+	try:
+		dirs, files = default_storage.listdir(prefix)
+	except FileNotFoundError:
+		return
+	delete_keys(*(prefix + f for f in files))
+	for d in dirs:
+		delete_prefix(f"{prefix}{d}/")
 
 
 def delete_keys(*keys: str) -> None:

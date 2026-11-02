@@ -27,7 +27,7 @@ def spec(name="a.jpg", size=1000, content_type="image/jpeg"):
 	return {"name": name, "size": size, "content_type": content_type}
 
 
-def fake_presign(key, content_type, sha256_hex=None):
+def fake_presign(key, content_type, sha256_hex=None, size=None):
 	return {"url": f"https://r2.test/{key}", "headers": {"Content-Type": content_type}}
 
 
@@ -381,3 +381,19 @@ class ProductApiTests(TestCase):
 		self.assertEqual(r.json()["error"]["code"], "feature_disabled")
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
 		self.assertEqual(r.json()["data"], {"image_search_available": False, "image_search": False})
+
+	def test_presign_signs_declared_size(self):
+		self.create(files=[spec(size=4321)])
+		self.assertEqual(self.presign_put.call_args.kwargs["size"], 4321)
+
+	def test_concurrent_confirm_queues_once(self):
+		self.create(files=[spec()])
+		ids = self.put_all()
+
+		def other_confirm_wins(key):  # a second confirm finishes while this one is checking the object
+			ProductImage.objects.filter(id=ids[0]).update(status="pending")
+			return 1000
+		with patch("knowledge.products.object_size", side_effect=other_confirm_wins), self.captureOnCommitCallbacks(execute=True):
+			r = self.confirm(ids)
+		self.assertEqual(r.status_code, 200)
+		self.embed.delay.assert_not_called()

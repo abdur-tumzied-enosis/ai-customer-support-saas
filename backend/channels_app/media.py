@@ -10,14 +10,16 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.core.files.storage import default_storage
 
 from agents.image_search import MAX_IMAGE_BYTES
-from core.storage import object_size, presign_put, read_head, sniff_image
+from core.storage import ObjectTooLarge, object_size, presign_put, read_capped, read_head, sniff_image
 
 from . import tasks
 from .facebook_client import GRAPH_API_URL
 from .models import Message
 
 META_CDN_SUFFIXES = (".fbcdn.net", ".fbsbx.com", ".cdninstagram.com")
-UPLOAD_PREFIXES = ("chat_media/",)  # where media_store keeps photos; fetch_photo reads nothing else
+# Where media_store keeps photos, plus widget/test-chat uploads it has not moved yet (a text sent right after a
+# photo can be answered first). Those tmp/ keys were checked against the sender at confirm; nothing else is read.
+UPLOAD_PREFIXES = ("chat_media/", "tmp/widget/", "tmp/chat/")
 TIMEOUT = 10
 CHAT_PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 PHOTO_ERROR = "Send a JPEG, PNG or WebP image up to 5 MB"
@@ -53,7 +55,7 @@ def presign_chat_photo(prefix: str, content_type, size) -> dict | None:
 	if not ext or not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= MAX_IMAGE_BYTES:
 		return None
 	key = f"{prefix}{uuid4().hex}.{ext}"
-	return {"key": key, **presign_put(key, content_type)}
+	return {"key": key, **presign_put(key, content_type, size=size)}
 
 
 def is_own_upload(prefix: str, key) -> bool:
@@ -136,15 +138,13 @@ def _fetch_whatsapp(msg: Message, att: dict, cap: int = MAX_IMAGE_BYTES) -> byte
 def read_stored(path: str, cap: int = MAX_IMAGE_BYTES) -> bytes:
 	"""Bytes of a stored object, refusing more than `cap`; MediaError on any failure."""
 	try:
-		with default_storage.open(path) as f:
-			data = f.read(cap + 1)
+		return read_capped(path, cap)
 	except SoftTimeLimitExceeded:
 		raise
+	except ObjectTooLarge:
+		raise MediaError("media too large")
 	except Exception as e:
 		raise MediaError(f"cannot read upload: {e}") from e
-	if len(data) > cap:
-		raise MediaError("media too large")
-	return data
 
 
 def _read_upload(path) -> bytes:

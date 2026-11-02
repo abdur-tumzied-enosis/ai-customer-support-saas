@@ -244,7 +244,7 @@ class DocumentUploadView(APIView):
         # filename is ≤100 chars, so the path fits Document.file
         document.file.name = document_storage_path(kb, f"{document.id}_{filename}")
         document.save()
-        upload = presign_put(document.file.name, put_type, checksum)
+        upload = presign_put(document.file.name, put_type, checksum, size=size)
         return Response({"success": True, "data": {"document_id": str(document.id), **upload}}, status=status.HTTP_201_CREATED)
 
 
@@ -276,20 +276,21 @@ class DocumentConfirmView(APIView):
         if not document or not _project_user(request.user, document.kb.project_id, admin=True):
             return _upload_error("not_found", "Document not found", status.HTTP_404_NOT_FOUND)
         kb, project = document.kb, document.kb.project
-        created = document.status == 'uploading'
-        if created:
+        created = False
+        if document.status == 'uploading':
             size = object_size(document.file.name)
-            if size is None or size > MAX_DOCUMENT_FILE_SIZE:
-                document.status = 'failed'
-                document.save(update_fields=['status'])
+            ok = size is not None and size <= MAX_DOCUMENT_FILE_SIZE
+            # Compare-and-set: of two overlapping confirms only one moves the document on (and starts ingestion)
+            created = bool(Document.objects.filter(id=document.id, status='uploading').update(status='processing' if ok else 'failed'))
+            if created and not ok:
                 delete_keys(document.file.name)
                 code = "upload_missing" if size is None else "upload_too_large"
                 return _upload_error(code, "The upload did not arrive" if size is None else "File size exceeds the limit",
                     status.HTTP_400_BAD_REQUEST)
-            document.status = 'processing'
-            document.save(update_fields=['status'])
-            ingestion_job = _start_ingestion(document)
-        else:
+            if created:
+                document.status = 'processing'
+                ingestion_job = _start_ingestion(document)
+        if not created:
             ingestion_job = document.ingestion_jobs.order_by('-created_at').first()
             if ingestion_job is None:
                 return _upload_error("not_uploading", "This document is not waiting for an upload", status.HTTP_400_BAD_REQUEST)

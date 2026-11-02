@@ -250,7 +250,7 @@ def png_bytes(size=4):
 	return buf.getvalue()
 
 
-def fake_presign(key, content_type, sha256_hex=None):
+def fake_presign(key, content_type, sha256_hex=None, size=None):
 	return {"url": f"https://r2.test/{key}", "headers": {"Content-Type": content_type}}
 
 
@@ -291,6 +291,11 @@ class WidgetPhotoTest(WidgetBase):
 		data = r.json()["data"]
 		assert data["key"].startswith(f"tmp/widget/{self.widget.id}/") and data["key"].endswith(".png")
 		assert data["url"] == f"https://r2.test/{data['key']}" and data["headers"] == {"Content-Type": "image/png"}
+
+	def test_presign_signs_declared_size(self):
+		with mock.patch("channels_app.media.presign_put", side_effect=fake_presign) as presign_put:
+			self.presign(size=777)
+		assert presign_put.call_args.kwargs["size"] == 777
 
 	def test_presign_rejects_large_or_wrong_type(self):
 		for body in ({"size": 5 * 1024 * 1024 + 1}, {"content_type": "application/pdf"}, {"size": "1"}, {"size": 0}):

@@ -16,7 +16,7 @@ User = get_user_model()
 URL = "/api/kb/documents/upload/"
 
 
-def fake_presign(key, content_type, sha256_hex=None):
+def fake_presign(key, content_type, sha256_hex=None, size=None):
 	return {"url": f"https://r2.test/{key}", "headers": {"Content-Type": content_type, "x-amz-checksum-sha256": "b64"}}
 
 
@@ -66,7 +66,7 @@ class DocumentUploadViewTests(TestCase):
 		self.assertEqual(doc.file.name, f"documents/test-project-123/{self.kb.id.hex}/{doc.id}_test.pdf")
 		self.assertEqual(data["url"], f"https://r2.test/{doc.file.name}")
 		self.assertEqual(data["headers"]["Content-Type"], "application/pdf")
-		self.presign_put.assert_called_once_with(doc.file.name, "application/pdf", hashlib.sha256(content).hexdigest())
+		self.presign_put.assert_called_once_with(doc.file.name, "application/pdf", hashlib.sha256(content).hexdigest(), size=len(content))
 		self.assertFalse(IngestionJob.objects.exists())
 
 	def test_markdown_without_browser_mime_type(self):
@@ -215,3 +215,20 @@ class DocumentUploadViewTests(TestCase):
 		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 		response = self.client.get("/api/kb/documents/", {"project_id": str(self.project.id), "kb_id": "not-a-uuid"})
 		self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+	def test_presign_signs_declared_size(self):
+		self.presign(b"12345")
+		self.assertEqual(self.presign_put.call_args.kwargs["size"], 5)
+
+	def test_concurrent_confirm_creates_no_second_job(self):
+		doc = Document.objects.get(id=self.presign().json()["data"]["document_id"])
+
+		def other_confirm_wins(key):
+			Document.objects.filter(id=doc.id).update(status="processing")
+			return 10
+		with patch("knowledge.views.object_size", side_effect=other_confirm_wins):
+			r = self.confirm(doc.id)
+		self.assertEqual(r.status_code, 400)
+		self.assertEqual(r.json()["error"]["code"], "not_uploading")
+		self.assertFalse(IngestionJob.objects.exists())
+		self.run_job.assert_not_called()

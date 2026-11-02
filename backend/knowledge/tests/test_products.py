@@ -116,6 +116,14 @@ class ProductImageTest(TestCase):
 		self.assertFalse(default_storage.exists(path))
 		self.assertFalse(default_storage.exists(thumb_key(path)))
 
+	def test_oversize_tmp_upload_fails_without_reading_it_all(self):
+		with mock.patch("knowledge.tasks.MAX_PRODUCT_IMAGE_BYTES", 100):
+			embed_product_image(str(self.image.id))
+		self.image.refresh_from_db()
+		self.assertEqual(self.image.status, "failed")
+		self.assertFalse(default_storage.exists(self.tmp))
+		self.upsert.assert_not_called()
+
 
 @fresh_storage
 class CleanupAbandonedUploadsTest(TestCase):

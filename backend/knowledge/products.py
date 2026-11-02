@@ -64,7 +64,7 @@ def _gate(request, project, admin: bool):
 
 
 def _clean_specs(request, existing: int):
-	"""(validated [(filename, ext)], None) or (None, error) from the declared `files`: [{name, size, content_type}].
+	"""(validated [(filename, ext, size)], None) or (None, error) from the declared `files`: [{name, size, content_type}].
 	The declared size and type are re-checked at confirm (size) and by the worker (decode)."""
 	files = request.data.get("files")
 	if not isinstance(files, list):
@@ -83,7 +83,7 @@ def _clean_specs(request, existing: int):
 		ext = IMAGE_TYPES.get(f.get("content_type"))
 		if not ext:
 			return None, _kb_error("invalid_image", f"{name} is not a JPEG, PNG or WebP image", status.HTTP_400_BAD_REQUEST)
-		out.append((name, ext))
+		out.append((name, ext, size))
 	return out, None
 
 
@@ -93,11 +93,11 @@ def _reserve(product: Product, specs) -> list:
 		if product._state.adding:
 			product.save()
 		uploads = []
-		for _name, ext in specs:
+		for _name, ext, size in specs:
 			img = ProductImage(product=product, status="uploading")
 			img.file.name = "tmp/" + product_image_path(product.kb, str(img.id), ext)
 			img.save()
-			uploads.append({"image_id": str(img.id), **presign_put(img.file.name, f"image/{'jpeg' if ext == 'jpg' else ext}")})
+			uploads.append({"image_id": str(img.id), **presign_put(img.file.name, f"image/{'jpeg' if ext == 'jpg' else ext}", size=size)})
 	return uploads
 
 
@@ -255,13 +255,17 @@ class ProductImagesConfirmView(APIView):
 			if img.status != "uploading":
 				continue  # already confirmed: a retry or double click
 			size = object_size(img.file.name)
-			if size is None or size > MAX_PRODUCT_IMAGE_BYTES:
-				img.status, img.error = "failed", "upload_missing" if size is None else "upload_too_large"
-				delete_keys(img.file.name)
-			else:
-				img.status, img.error = "pending", ""
+			ok = size is not None and size <= MAX_PRODUCT_IMAGE_BYTES
+			new_status, error = ("pending", "") if ok else ("failed", "upload_missing" if size is None else "upload_too_large")
+			# Compare-and-set: of two overlapping confirms only one moves the row on (and queues the work)
+			if not ProductImage.objects.filter(id=img.id, status="uploading").update(status=new_status, error=error):
+				img.refresh_from_db(fields=["status", "error"])
+				continue
+			img.status, img.error = new_status, error
+			if ok:
 				transaction.on_commit(lambda i=str(img.id): embed_product_image.delay(i))
-			img.save(update_fields=["status", "error"])
+			else:
+				delete_keys(img.file.name)
 		return Response({"success": True, "data": [_image_dict(i) for i in images]})
 
 

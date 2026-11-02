@@ -8,7 +8,13 @@ from rest_framework.test import APIClient
 from accounts.models import Project, ProjectUser
 from channels_app.models import Widget
 from channels_app.service.conversation_service import create_conversation
-from knowledge.models import Document, KnowledgeBase
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
+
+from accounts.views import purge_project
+from core.storage import thumb_key
+from core.tests.utils import fresh_storage, stored_files
+from knowledge.models import Document, KnowledgeBase, Product, ProductImage
 
 User = get_user_model()
 
@@ -82,3 +88,19 @@ class AccountSettingsTests(TestCase):
 		assert r.status_code == 500  # core.middleware.ExceptionHandlingMiddleware; the user can retry
 		assert User.objects.filter(pk=self.user.pk).exists()
 		assert Project.objects.filter(pk=self.solo.pk).exists()
+
+
+@fresh_storage
+class PurgeStorageTests(TestCase):
+	@mock.patch("agents.vector_store.delete_collection")
+	@mock.patch("knowledge.models.delete_images")
+	def test_purge_removes_photo_variants_and_customer_media(self, _delete_images, _delete_collection):
+		project = Project.objects.create(name="Solo", slug="solo-purge")
+		kb = KnowledgeBase.objects.create(project=project, name="kb", vector_collection="vc-solo-purge")
+		product = Product.objects.create(kb=kb, name="Shoe")
+		img = ProductImage.objects.create(product=product, status="ready", file="products/solo-purge/x/i.webp")
+		keep = default_storage.save("chat_media/other-project/b.webp", ContentFile(b"b"))
+		for name in (img.file.name, thumb_key(img.file.name), "chat_media/solo-purge/a.webp", "chat_media/solo-purge/v.ogg"):
+			default_storage.save(name, ContentFile(b"x"))
+		purge_project(project)
+		assert stored_files() == [keep]

@@ -158,3 +158,14 @@ class StoredPathTest(SimpleTestCase):
 		p = media.default_storage.save("chat_media/big.bin", ContentFile(b"x" * (MAX_IMAGE_BYTES + 1)))
 		with self.assertRaises(MediaError):
 			fetch_photo(msg("self"), {"type": "image", "path": p})
+
+	def test_unmoved_widget_and_test_chat_uploads_are_readable(self):
+		# A text sent right after a photo can be answered before media_store has moved the photo out of tmp/
+		from django.core.files.base import ContentFile
+		import channels_app.media as media
+		for path in ("tmp/widget/w1/v1/" + "a" * 32 + ".png", "tmp/chat/p/c1/" + "b" * 32 + ".jpg"):
+			media.default_storage.save(path, ContentFile(b"img"))
+			self.assertEqual(fetch_photo(msg("widget"), {"type": "image", "path": path}), b"img")
+		for path in ("tmp/products/x.png", "tmp/other/a.png"):
+			with self.assertRaises(MediaError, msg=path):
+				fetch_photo(msg("widget"), {"type": "image", "path": path})
