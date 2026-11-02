@@ -1,13 +1,11 @@
-import tempfile
 from types import SimpleNamespace
 from unittest import mock
 
 from celery.exceptions import SoftTimeLimitExceeded
-from django.core.files.storage import FileSystemStorage
 from django.test import SimpleTestCase
 
-from agents.image_search import MAX_IMAGE_BYTES, NotAnImage
-from channels_app.media import MediaError, fetch_photo, is_photo, store_photo
+from agents.image_search import MAX_IMAGE_BYTES
+from channels_app.media import MediaError, fetch_photo, is_photo
 from PIL import Image
 import io
 
@@ -129,48 +127,34 @@ class FetchRemoteTest(SimpleTestCase):
 			fetch_photo(msg("telegram"), {"type": "image"})
 
 
-class StoreTest(SimpleTestCase):
-	def setUp(self):
-		tmp = tempfile.TemporaryDirectory()
-		self.addCleanup(tmp.cleanup)
-		self.tmp = tmp.name
-		storage = FileSystemStorage(location=tmp.name)
-		patcher = mock.patch("channels_app.media.default_storage", storage)
-		patcher.start()
-		self.addCleanup(patcher.stop)
-
-	def test_store_photo_round_trip(self):
+class StoredPathTest(SimpleTestCase):
+	def test_stored_photo_round_trip(self):
+		from django.core.files.base import ContentFile
+		import channels_app.media as media
 		data = png_bytes()
-		path = store_photo(data, "chat_uploads/x")
-		self.assertTrue(path.endswith(".png"))
+		path = media.default_storage.save("chat_media/p/x.webp", ContentFile(data))
 		self.assertEqual(fetch_photo(msg("self"), {"type": "image", "path": path}), data)
-		path = store_photo(data, "widget_uploads/y")
 		self.assertEqual(fetch_photo(msg("widget"), {"type": "image", "path": path}), data)
 
-	def test_store_photo_rejects_non_image(self):
-		with self.assertRaises(NotAnImage):
-			store_photo(b"not an image", "chat_uploads/x")
-		import os
-		self.assertEqual(os.listdir(self.tmp), [])
-
 	def test_path_traversal_and_foreign_prefix_rejected(self):
-		for path in ("../secret.png", "chat_uploads/../secret.png", "/etc/passwd", "other/x.png", "chat_uploads", "widget_uploads/a/../../x", ""):
+		for path in ("../secret.png", "chat_media/../secret.png", "/etc/passwd", "other/x.png", "tmp/widget/w/v/x.png",
+				"widget_uploads/a.png", "chat_media/a/../../x", ""):
 			with self.assertRaises(MediaError, msg=path):
 				fetch_photo(msg("widget"), {"type": "image", "path": path})
 
 	def test_missing_file_is_media_error(self):
 		with self.assertRaises(MediaError):
-			fetch_photo(msg("self"), {"type": "image", "path": "chat_uploads/none.png"})
+			fetch_photo(msg("self"), {"type": "image", "path": "chat_media/none.webp"})
 
 	def test_soft_time_limit_reading_upload_is_not_swallowed(self):
 		import channels_app.media as media
 		with mock.patch.object(media.default_storage, "open", side_effect=SoftTimeLimitExceeded()):
 			with self.assertRaises(SoftTimeLimitExceeded):
-				fetch_photo(msg("self"), {"type": "image", "path": "chat_uploads/x.png"})
+				fetch_photo(msg("self"), {"type": "image", "path": "chat_media/x.webp"})
 
 	def test_oversize_stored_file_raises(self):
 		from django.core.files.base import ContentFile
 		import channels_app.media as media
-		p = media.default_storage.save("chat_uploads/big.bin", ContentFile(b"x" * (MAX_IMAGE_BYTES + 1)))
+		p = media.default_storage.save("chat_media/big.bin", ContentFile(b"x" * (MAX_IMAGE_BYTES + 1)))
 		with self.assertRaises(MediaError):
 			fetch_photo(msg("self"), {"type": "image", "path": p})

@@ -6,6 +6,7 @@ iframe on the widget's allowed origins (CSP frame-ancestors). Inside it, visitor
 /api/widget/<key>/session and talk through /api/widget/messages. Each visitor is a
 CustomerContact(platform="widget") with one conversation, answered by the normal reply pipeline (channels_app.reply).
 """
+import hashlib
 import re
 import uuid
 from pathlib import Path
@@ -22,16 +23,15 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
-from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import SimpleRateThrottle
 from rest_framework.views import APIView
 
 from knowledge.models import KnowledgeBase
-from agents.image_search import NotAnImage
-from .api import _error, _get_project, _iso, _verify_project_access, read_photo_upload
-from .media import has_photo, store_photo
+from .api import _error, _get_project, _iso, _verify_project_access
+from .media import PHOTO_ERROR, has_photo, is_own_upload, presign_chat_photo, uploaded_photo_ok
+from .media_store import store_message_media
 from .models import CustomerContact, Widget, normalize_origin
 from .reply import schedule_reply
 from .service.conversation_service import ensure_contact_conversation
@@ -203,8 +203,10 @@ def embed(request, key):
 	}
 	response = render(request, "widget/embed.html", {"config": config})
 	ancestors = " ".join(widget.allowed_origins) or "'none'"
+	# Visitor photos are PUT straight to R2 (presigned, path-style URLs on the account endpoint)
+	connect = f"'self' {settings.R2_ENDPOINT_URL}".strip()
 	response["Content-Security-Policy"] = (
-		"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; "
+		f"default-src 'none'; script-src 'self'; style-src 'self'; connect-src {connect}; img-src 'self' data:; "
 		f"base-uri 'none'; form-action 'none'; frame-ancestors {ancestors}"
 	)
 	response["Cache-Control"] = "no-store"  # config and allowed origins apply on the next page load
@@ -366,9 +368,28 @@ class WidgetMessagesView(APIView):
 		return Response({"success": True, "data": {"message": _visitor_message(msg)}}, status=status.HTTP_201_CREATED)
 
 
+def _photo_prefix(widget: Widget, visitor: str) -> str:
+	"""Where this visitor's photo uploads go: confirm only accepts keys under it."""
+	return f"tmp/widget/{widget.id}/{hashlib.sha256(visitor.encode()).hexdigest()[:16]}/"
+
+
+class WidgetPhotoPresignView(WidgetMessagesView):
+	"""Step 1 of a visitor photo: a presigned PUT straight to R2 (the photo never passes through Django)."""
+	http_method_names = ["post", "options"]
+
+	def post(self, request):
+		widget, visitor = request.auth
+		if not _image_upload(widget):
+			return _error("photo_disabled", "Photo upload is not available", status.HTTP_403_FORBIDDEN)
+		upload = presign_chat_photo(_photo_prefix(widget, visitor), request.data.get("content_type"), request.data.get("size"))
+		if not upload:
+			return _error("invalid_image", PHOTO_ERROR, status.HTTP_400_BAD_REQUEST)
+		return Response({"success": True, "data": upload})
+
+
 class WidgetPhotoView(WidgetMessagesView):
-	"""A visitor's photo plus optional text: same auth, throttles and client_id dedupe as the text send."""
-	parser_classes = [MultiPartParser]
+	"""Step 2: the visitor's photo (by its uploaded key) plus optional text. Same auth, throttles and client_id dedupe
+	as the text send; the photo is moved into R2 storage and resized before the reply runs."""
 	http_method_names = ["post", "options"]
 
 	def post(self, request):
@@ -378,6 +399,9 @@ class WidgetPhotoView(WidgetMessagesView):
 		text = str(request.data.get("text") or "").strip()
 		if len(text) > MAX_MESSAGE_CHARS:
 			return _error("message_too_long", f"Messages are limited to {MAX_MESSAGE_CHARS} characters", status.HTTP_400_BAD_REQUEST)
+		key = request.data.get("key")
+		if not is_own_upload(_photo_prefix(widget, visitor), key):
+			return _error("invalid_upload", "Upload the photo first", status.HTTP_400_BAD_REQUEST)
 		client_id = str(request.data.get("client_id") or "")[:64]
 		label = f"Visitor {visitor[:6]}"
 		contact, _ = CustomerContact.objects.get_or_create(
@@ -389,15 +413,13 @@ class WidgetPhotoView(WidgetMessagesView):
 			existing = conversation.messages.filter(direction="in", meta__client_id=client_id).first()
 			if existing:
 				return Response({"success": True, "data": {"message": _visitor_message(existing)}})
-		try:
-			path = store_photo(read_photo_upload(request), f"widget_uploads/{widget.id}")
-		except NotAnImage:
-			return _error("invalid_image", "Send a JPEG, PNG or WebP image up to 5 MB", status.HTTP_400_BAD_REQUEST)
-		# ponytail: widget and test-chat uploads are kept forever; add a cleanup beat task if disk use matters
+		# After the dedupe: on a retry the worker may already have moved the upload out of tmp/
+		if not uploaded_photo_ok(key):
+			return _error("invalid_image", PHOTO_ERROR, status.HTTP_400_BAD_REQUEST)
 		msg = create_inbound_message(
 			project=widget.project, contact=contact, text=text, conversation=conversation,
-			has_attachments=True, attachment_info=[{"type": "image", "path": path}],
+			has_attachments=True, attachment_info=[{"type": "image", "path": key}],
 			meta={"photo_reply": True, **({"client_id": client_id} if client_id else {})}, status="pending",
 		)
-		schedule_reply(msg)
+		store_message_media.delay(str(msg.id), True)  # moves + resizes the photo, then schedules the reply
 		return Response({"success": True, "data": {"message": _visitor_message(msg)}}, status=status.HTTP_201_CREATED)

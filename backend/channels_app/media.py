@@ -1,22 +1,27 @@
-"""Fetch customer photos from each channel and store uploaded ones. This is an SSRF boundary: only Meta CDN hosts are fetched.
+"""Fetch customer photos from each channel, and presign/check the widget and test-chat photo uploads.
+This is an SSRF boundary: only Meta CDN hosts are fetched.
 Failures become MediaError, except celery's SoftTimeLimitExceeded (an Exception subclass), which must reach reply._reply."""
+import re
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 import requests
 from celery.exceptions import SoftTimeLimitExceeded
-from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
-from agents.image_search import MAX_IMAGE_BYTES, image_format, load_image
+from agents.image_search import MAX_IMAGE_BYTES
+from core.storage import object_size, presign_put, read_head, sniff_image
 
 from . import tasks
 from .facebook_client import GRAPH_API_URL
 from .models import Message
 
 META_CDN_SUFFIXES = (".fbcdn.net", ".fbsbx.com", ".cdninstagram.com")
-UPLOAD_PREFIXES = ("chat_media/", "widget_uploads/", "chat_uploads/")
+UPLOAD_PREFIXES = ("chat_media/",)  # where media_store keeps photos; fetch_photo reads nothing else
 TIMEOUT = 10
+CHAT_PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+PHOTO_ERROR = "Send a JPEG, PNG or WebP image up to 5 MB"
+_UPLOAD_NAME = re.compile(r"[0-9a-f]{32}\.(jpg|png|webp)")
 
 
 class MediaError(Exception):
@@ -41,9 +46,30 @@ def has_storable_media(attachment_info: list) -> bool:
 	return any(isinstance(a, dict) and is_storable(a) for a in attachment_info or [])
 
 
-def store_photo(data: bytes, folder: str) -> str:
-	load_image(data)  # raises NotAnImage
-	return default_storage.save(f"{folder}/{uuid4().hex}.{image_format(data)}", ContentFile(data))
+def presign_chat_photo(prefix: str, content_type, size) -> dict | None:
+	"""{key, url, headers} for a browser PUT of one chat photo under `prefix` (tmp/..., visitor or conversation scoped),
+	or None when the declared type/size is not acceptable."""
+	ext = CHAT_PHOTO_TYPES.get(content_type)
+	if not ext or not isinstance(size, int) or isinstance(size, bool) or not 0 < size <= MAX_IMAGE_BYTES:
+		return None
+	key = f"{prefix}{uuid4().hex}.{ext}"
+	return {"key": key, **presign_put(key, content_type)}
+
+
+def is_own_upload(prefix: str, key) -> bool:
+	"""`key` is one presign_chat_photo could have issued under `prefix` (so not another visitor's or conversation's)."""
+	return isinstance(key, str) and key.startswith(prefix) and bool(_UPLOAD_NAME.fullmatch(key[len(prefix):]))
+
+
+def uploaded_photo_ok(key: str) -> bool:
+	"""The browser's PUT landed, within the cap, and starts like a JPEG/PNG/WebP (a 32-byte read; workers decode fully)."""
+	size = object_size(key)
+	if size is None or size > MAX_IMAGE_BYTES:
+		return False
+	try:
+		return sniff_image(read_head(key)) is not None
+	except Exception:
+		return False
 
 
 def _check_meta_url(url) -> str:

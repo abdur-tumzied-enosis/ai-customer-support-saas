@@ -7,11 +7,15 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
+
 from channels_app.media import MediaError
 from channels_app.models import CustomerContact, Message, Widget, normalize_origin
 from channels_app.reply import process_reply
 from channels_app.service.conversation_service import create_conversation
 from channels_app.tasks import build_reply_context
+from core.tests.utils import fresh_storage
 from knowledge.models import KnowledgeBase
 
 LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "widget-tests"}}
@@ -238,15 +242,19 @@ class WidgetReplyTest(WidgetBase):
 		assert build_reply_context(self.project, self.kb, ui_conv)[0].api_domains
 
 
-def png_upload(name="p.png", size=4):
+def png_bytes(size=4):
 	import io
-	from django.core.files.uploadedfile import SimpleUploadedFile
 	from PIL import Image
 	buf = io.BytesIO()
 	Image.new("RGB", (size, size), "red").save(buf, "PNG")
-	return SimpleUploadedFile(name, buf.getvalue(), content_type="image/png")
+	return buf.getvalue()
 
 
+def fake_presign(key, content_type, sha256_hex=None):
+	return {"url": f"https://r2.test/{key}", "headers": {"Content-Type": content_type}}
+
+
+@fresh_storage
 @override_settings(IMAGE_SEARCH_ENABLED=True)
 class WidgetPhotoTest(WidgetBase):
 	def setUp(self):
@@ -255,9 +263,20 @@ class WidgetPhotoTest(WidgetBase):
 		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=True)
 		self.project.refresh_from_db()
 		self.as_visitor(self.token())
+		mock.patch("channels_app.media.presign_put", side_effect=fake_presign).start()
+		self.store = mock.patch("channels_app.widget.store_message_media.delay").start()
 
-	def photo(self, **extra):
-		return self.visitor.post("/api/widget/messages/photo", {"image": png_upload(), **extra}, format="multipart")
+	def presign(self, content_type="image/png", size=100):
+		return self.visitor.post("/api/widget/messages/photo/presign", {"content_type": content_type, "size": size}, format="json")
+
+	def uploaded_key(self, data=None):
+		"""Presign, then PUT like the browser."""
+		key = self.presign().json()["data"]["key"]
+		default_storage.save(key, ContentFile(png_bytes() if data is None else data))
+		return key
+
+	def photo(self, key=None, **extra):
+		return self.visitor.post("/api/widget/messages/photo", {"key": key or self.uploaded_key(), **extra}, format="json")
 
 	def test_session_reports_image_upload(self):
 		r = self.visitor.post(f"/api/widget/{self.widget.public_key}/session")
@@ -266,7 +285,21 @@ class WidgetPhotoTest(WidgetBase):
 		r = self.visitor.post(f"/api/widget/{self.widget.public_key}/session")
 		assert r.json()["data"]["image_upload"] is False
 
-	def test_photo_upload_schedules_reply(self):
+	def test_presign_returns_visitor_scoped_key(self):
+		r = self.presign()
+		assert r.status_code == 200, r.content
+		data = r.json()["data"]
+		assert data["key"].startswith(f"tmp/widget/{self.widget.id}/") and data["key"].endswith(".png")
+		assert data["url"] == f"https://r2.test/{data['key']}" and data["headers"] == {"Content-Type": "image/png"}
+
+	def test_presign_rejects_large_or_wrong_type(self):
+		for body in ({"size": 5 * 1024 * 1024 + 1}, {"content_type": "application/pdf"}, {"size": "1"}, {"size": 0}):
+			with self.subTest(body=body):
+				r = self.presign(**body)
+				assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
+				assert r.json()["error"]["message"] == "Send a JPEG, PNG or WebP image up to 5 MB"
+
+	def test_confirm_creates_message_and_queues_store(self):
 		r = self.photo(text="like this?", client_id="c1")
 		assert r.status_code == 201, r.content
 		assert r.json()["data"]["message"]["has_photo"] is True
@@ -274,31 +307,54 @@ class WidgetPhotoTest(WidgetBase):
 		assert msg.has_attachments and msg.status == "pending" and msg.text == "like this?"
 		assert msg.meta["photo_reply"] is True and msg.meta["client_id"] == "c1"
 		info = msg.attachment_info[0]
-		assert info["type"] == "image" and info["path"].startswith(f"widget_uploads/{self.widget.id}/")
-		self.schedule.assert_called_once()
-		# a retry with the same client_id returns the same message
-		again = self.photo(client_id="c1")
-		assert again.status_code == 200 and again.json()["data"]["message"]["id"] == str(msg.id)
-		self.schedule.assert_called_once()
+		assert info["type"] == "image" and info["path"].startswith(f"tmp/widget/{self.widget.id}/")
+		self.store.assert_called_once_with(str(msg.id), True)
+		self.schedule.assert_not_called()
+
+	def test_confirm_client_id_dedupe(self):
+		key = self.uploaded_key()
+		first = self.photo(key, client_id="c1")
+		default_storage.delete(key)  # the worker has moved it out of tmp/ by the time a retry arrives
+		again = self.photo(key, client_id="c1")
+		assert again.status_code == 200 and again.json()["data"]["message"]["id"] == first.json()["data"]["message"]["id"]
+		assert Message.objects.count() == 1
+		self.store.assert_called_once()
+
+	def test_confirm_rejects_foreign_key(self):
+		key = self.uploaded_key()
+		self.as_visitor(self.token())
+		foreign = [key, f"tmp/widget/{self.widget.id}/../x.png", "chat_media/p/x.webp", "", None, 5]
+		for k in foreign:
+			with self.subTest(key=k):
+				r = self.visitor.post("/api/widget/messages/photo", {"key": k}, format="json")
+				assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_upload", r.content
+		assert not Message.objects.exists()
+		self.store.assert_not_called()
+
+	def test_confirm_rejects_non_image_missing_or_oversize(self):
+		for data in (b"%PDF-1.7 not an image", None):
+			with self.subTest(data=data):
+				key = self.presign().json()["data"]["key"]
+				if data is not None:
+					default_storage.save(key, ContentFile(data))
+				r = self.photo(key)
+				assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
+		key = self.uploaded_key(b"\x89PNG\r\n\x1a\n" + b"0" * 200)
+		with mock.patch("channels_app.media.MAX_IMAGE_BYTES", 100):
+			assert self.photo(key).json()["error"]["code"] == "invalid_image"
+		assert not Message.objects.exists()
+		self.store.assert_not_called()
 
 	def test_photo_upload_disabled_403(self):
 		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=False)
-		r = self.photo()
+		assert self.presign().json()["error"]["code"] == "photo_disabled"
+		r = self.visitor.post("/api/widget/messages/photo", {"key": "tmp/x"}, format="json")
 		assert r.status_code == 403 and r.json()["error"]["code"] == "photo_disabled"
 		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=True)
 		Project.objects.filter(id=self.project.id).update(image_search_enabled=False)
-		r = self.photo()
+		r = self.visitor.post("/api/widget/messages/photo", {"key": "tmp/x"}, format="json")
 		assert r.status_code == 403 and r.json()["error"]["code"] == "photo_disabled"
-		self.schedule.assert_not_called()
-
-	def test_photo_upload_invalid_image_400(self):
-		from django.core.files.uploadedfile import SimpleUploadedFile
-		bad = SimpleUploadedFile("x.png", b"not an image", content_type="image/png")
-		r = self.visitor.post("/api/widget/messages/photo", {"image": bad}, format="multipart")
-		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
-		r = self.visitor.post("/api/widget/messages/photo", {}, format="multipart")
-		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
-		self.schedule.assert_not_called()
+		self.store.assert_not_called()
 
 	def reply_to_photo(self):
 		mock.patch("channels_app.tasks.generate_reply", return_value="ok").start()
@@ -320,11 +376,15 @@ class WidgetPhotoTest(WidgetBase):
 		assert Message.objects.get(direction="out").text == "ok"
 
 	def test_photo_upload_requires_token(self):
-		r = APIClient().post("/api/widget/messages/photo", {"image": png_upload()}, format="multipart")
-		assert r.status_code == 401
+		assert APIClient().post("/api/widget/messages/photo", {"key": "tmp/x"}, format="json").status_code == 401
+		assert APIClient().post("/api/widget/messages/photo/presign", {"size": 1}, format="json").status_code == 401
+
+	@override_settings(R2_ENDPOINT_URL="https://acc.r2.cloudflarestorage.com")
+	def test_csp_allows_r2(self):
+		csp = self.client.get(f"/embed/{self.widget.public_key}/")["Content-Security-Policy"]
+		assert "connect-src 'self' https://acc.r2.cloudflarestorage.com;" in csp
 
 
-@override_settings(IMAGE_SEARCH_ENABLED=True)
 class EmbedImageUploadTest(WidgetBase):
 	def test_embed_config_reports_image_upload(self):
 		Project.objects.filter(id=self.project.id).update(image_search_allowed=True)

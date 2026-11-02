@@ -1,6 +1,8 @@
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
@@ -8,10 +10,12 @@ from accounts.models import Project, ProjectUser
 from channels_app.api import _message_dict
 from channels_app.models import Message
 from channels_app.service.conversation_service import create_conversation
-from channels_app.tests.test_widget import png_upload
+from channels_app.tests.test_widget import fake_presign, png_bytes
+from core.tests.utils import fresh_storage
 from knowledge.models import KnowledgeBase
 
 
+@fresh_storage
 @override_settings(IMAGE_SEARCH_ENABLED=True)
 class TestChatPhotoTest(TestCase):
 	def setUp(self):
@@ -22,51 +26,83 @@ class TestChatPhotoTest(TestCase):
 		self.conv = create_conversation(project=self.project, knowledge_base=self.kb, user_id=str(self.user.id))
 		self.client = APIClient()
 		self.client.force_authenticate(self.user)
-		self.schedule = mock.patch("channels_app.api.schedule_reply").start()
+		mock.patch("channels_app.media.presign_put", side_effect=fake_presign).start()
+		self.store = mock.patch("channels_app.api.store_message_media.delay").start()
 		self.addCleanup(mock.patch.stopall)
 
-	def post(self, conv=None, **extra):
-		return self.client.post(f"/api/channels/conversations/{(conv or self.conv).id}/photo",
-			{"image": png_upload(), **extra}, format="multipart")
+	def url(self, conv=None, presign=False):
+		return f"/api/channels/conversations/{(conv or self.conv).id}/photo" + ("/presign" if presign else "")
 
-	def test_test_chat_photo_schedules_reply(self):
+	def presign(self, conv=None, content_type="image/jpeg", size=100):
+		return self.client.post(self.url(conv, presign=True), {"content_type": content_type, "size": size}, format="json")
+
+	def uploaded_key(self, data=None):
+		key = self.presign().json()["data"]["key"]
+		default_storage.save(key, ContentFile(png_bytes() if data is None else data))
+		return key
+
+	def post(self, conv=None, key=None, **extra):
+		return self.client.post(self.url(conv), {"key": key or self.uploaded_key(), **extra}, format="json")
+
+	def test_presign_returns_conversation_scoped_key(self):
+		r = self.presign()
+		assert r.status_code == 200, r.content
+		key = r.json()["data"]["key"]
+		assert key.startswith(f"tmp/chat/p-tc-photo/{self.conv.id}/") and key.endswith(".jpg")
+
+	def test_presign_rejects_large(self):
+		r = self.presign(size=5 * 1024 * 1024 + 1)
+		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
+
+	def test_test_chat_photo_queues_store(self):
 		r = self.post(text="this one?")
 		assert r.status_code == 201, r.content
 		data = r.json()["data"]["message"]
 		assert data["has_photo"] is True and data["text"] == "this one?"
 		msg = Message.objects.get(id=data["id"])
 		assert msg.meta["photo_reply"] is True and msg.has_attachments
-		assert msg.attachment_info[0]["path"].startswith("chat_uploads/p-tc-photo/")
-		self.schedule.assert_called_once_with(msg)
+		assert msg.attachment_info[0]["path"].startswith(f"tmp/chat/p-tc-photo/{self.conv.id}/")
+		self.store.assert_called_once_with(str(msg.id), True)
+
+	def test_confirm_rejects_foreign_key(self):
+		other_conv = create_conversation(project=self.project, knowledge_base=self.kb, user_id=str(self.user.id))
+		key = self.uploaded_key()
+		for k in (key.replace(str(self.conv.id), str(other_conv.id)), f"tmp/chat/p-tc-photo/{self.conv.id}/../x.jpg", None):
+			with self.subTest(key=k):
+				r = self.client.post(self.url(), {"key": k}, format="json")
+				assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_upload"
+		assert self.client.post(self.url(other_conv), {"key": key}, format="json").json()["error"]["code"] == "invalid_upload"
+		self.store.assert_not_called()
+
+	def test_test_chat_photo_invalid_image_400(self):
+		r = self.post(key=self.uploaded_key(b"nope, not an image"))
+		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
+		self.store.assert_not_called()
 
 	def test_test_chat_photo_tenant_off_404(self):
 		Project.objects.filter(id=self.project.id).update(image_search_enabled=False)
-		r = self.post()
-		assert r.status_code == 404 and r.json()["error"]["code"] == "feature_disabled"
-		self.schedule.assert_not_called()
+		for r in (self.presign(), self.client.post(self.url(), {"key": "tmp/x"}, format="json")):
+			assert r.status_code == 404 and r.json()["error"]["code"] == "feature_disabled"
+		self.store.assert_not_called()
 
 	def test_test_chat_photo_other_project_404(self):
 		other = Project.objects.create(name="O", slug="o-tc-photo", image_search_allowed=True)
 		okb = KnowledgeBase.objects.create(project=other, name="o", vector_collection="vc-o-tc")
 		oconv = create_conversation(project=other, knowledge_base=okb, user_id="x")
-		assert self.post(conv=oconv).status_code == 404
+		assert self.presign(conv=oconv).status_code == 404
+		assert self.client.post(self.url(oconv), {"key": "tmp/x"}, format="json").status_code == 404
 
 	def test_test_chat_photo_non_self_conversation_400(self):
 		from channels_app.models import CustomerContact
 		from channels_app.service.conversation_service import ensure_contact_conversation
 		contact = CustomerContact.objects.create(project=self.project, platform="whatsapp", external_id="w1")
-		r = self.post(conv=ensure_contact_conversation(contact, self.kb))
-		assert r.status_code == 400 and r.json()["error"]["code"] == "not_a_test_conversation"
-
-	def test_test_chat_photo_invalid_image_400(self):
-		from django.core.files.uploadedfile import SimpleUploadedFile
-		r = self.client.post(f"/api/channels/conversations/{self.conv.id}/photo",
-			{"image": SimpleUploadedFile("x.png", b"nope")}, format="multipart")
-		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
+		conv = ensure_contact_conversation(contact, self.kb)
+		for r in (self.presign(conv=conv), self.client.post(self.url(conv), {"key": "tmp/x"}, format="json")):
+			assert r.status_code == 400 and r.json()["error"]["code"] == "not_a_test_conversation"
 
 	def test_message_dict_exposes_photo_matches(self):
 		msg = Message.objects.create(project=self.project, contact=self.conv.contact, conversation=self.conv,
-			direction="in", text="t", has_attachments=True, attachment_info=[{"type": "image", "path": "chat_uploads/x.png"}],
+			direction="in", text="t", has_attachments=True, attachment_info=[{"type": "image", "path": "chat_media/x.webp"}],
 			meta={"photo_matches": "Red shirt"})
 		d = _message_dict(msg)
 		assert d["has_photo"] is True and d["photo_matches"] == "Red shirt"
