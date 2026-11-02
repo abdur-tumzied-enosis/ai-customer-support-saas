@@ -45,16 +45,17 @@ class FactUpdate(BaseModel):
 def ask_llm(project_id: str, system: str, user: str, schema):
 	"""One structured call to the memory model; tokens are billed to the project like replies."""
 	from agents.llm import get_llm
-	from usage.utils import track_token_usage
+	from usage.utils import llm_costs, track_token_usage
 
-	llm = get_llm(model=settings.MEMORY_LLM_MODEL, max_tokens=MEMORY_MAX_TOKENS)
+	llm = get_llm(role="memory", max_tokens=MEMORY_MAX_TOKENS)
 	# function_calling: Gemini's json_schema mode looped or garbled string fields in 3 of 4 live runs, tool calls 0 of 4
 	out = llm.with_structured_output(schema, include_raw=True, method="function_calling").invoke(
 		[("system", system), ("human", user)]
 	)
 	usage = getattr(out.get("raw"), "usage_metadata", None) or {}
-	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), {"source": "memory"})
-	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), {"source": "memory"})
+	cost_in, cost_out = llm_costs([out.get("raw")])
+	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), {"source": "memory"}, cost_usd=cost_in)
+	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), {"source": "memory"}, cost_usd=cost_out)
 	if out.get("parsed") is None:
 		raise ValueError(f"memory model returned no {schema.__name__}: {out.get('parsing_error')}")
 	return out["parsed"]

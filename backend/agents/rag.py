@@ -195,24 +195,26 @@ def _track_token_usage(
 	project_id: str, 
 	question: str, 
 	reply_text: str, 
-	input_tokens: int, 
-	output_tokens: int
+	input_tokens: int,
+	output_tokens: int,
+	new_messages: Sequence = (),
 ) -> None:
 	"""Track token usage in the database."""
 	try:
-		from usage.utils import track_token_usage
-		
+		from usage.utils import llm_costs, track_token_usage
+
+		cost_in, cost_out = llm_costs([m for m in new_messages if isinstance(m, AIMessage)])
 		if input_tokens > 0:
 			track_token_usage(project_id, "chat_in", input_tokens, {
 				"question_length": len(question),
 				"source": "langchain_usage_metadata"
-			})
-		
+			}, cost_usd=cost_in)
+
 		if output_tokens > 0:
 			track_token_usage(project_id, "chat_out", output_tokens, {
 				"response_length": len(reply_text),
 				"source": "langchain_usage_metadata"
-			})
+			}, cost_usd=cost_out)
 	except Exception as e:
 		logger.warning(f"Failed to track token usage: {e}")
 
@@ -268,6 +270,6 @@ def generate_reply(
 
 	# Track token usage if project_id provided
 	if project_id and reply_text and input_tokens > 0:
-		_track_token_usage(project_id, question, reply_text, input_tokens, output_tokens)
+		_track_token_usage(project_id, question, reply_text, input_tokens, output_tokens, result["messages"][len(messages):])
 
 	return reply_text

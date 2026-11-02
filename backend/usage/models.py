@@ -146,6 +146,8 @@ class UsageEvent(models.Model):
 	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="usage_events")
 	kind = models.CharField(max_length=16, choices=KIND_CHOICES)
 	tokens = models.PositiveIntegerField(default=0)
+	# USD; null when unknown (no reported cost and no AIModel prices). OpenRouter's charged total is booked on chat_out.
+	cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
 	metadata = models.JSONField(default=dict, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 

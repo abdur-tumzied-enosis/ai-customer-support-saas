@@ -12,19 +12,48 @@ OPENROUTER_DEFAULT_MODEL = "stepfun/step-3.5-flash:free"
 
 logger = logging.getLogger(__name__)
 
-def get_llm(provider: Optional[str] = None, model: Optional[str] = None, **kwargs):
+MODEL_CONFIG_TTL = 300  # admin saves clear the cache at once; the TTL only bounds a missed clear
+
+
+def active_model(role: str):
+	"""(provider, name) the admin picked for `role` in agents.ModelConfig, or None when unset."""
+	from django.core.cache import cache
+	from .models import MODEL_CONFIG_CACHE_KEY, ModelConfig
+
+	config = cache.get(MODEL_CONFIG_CACHE_KEY)
+	if config is None:
+		row = ModelConfig.objects.select_related("reply_model", "fallback_model", "memory_model", "transcription_model").first()
+		config = row.roles() if row else {}
+		cache.set(MODEL_CONFIG_CACHE_KEY, config, MODEL_CONFIG_TTL)
+	return config.get(role)
+
+
+def resolve_model(provider: Optional[str] = None, model: Optional[str] = None, role: str = "reply"):
+	"""(provider, model): explicit args, then the admin's ModelConfig, then env settings.
+	memory: DB memory → MEMORY_LLM_MODEL → the reply model, like MEMORY_LLM_MODEL → LLM_MODEL before."""
+	if not model:
+		if db := active_model(role):
+			return db
+		if role == "memory" and settings.MEMORY_LLM_MODEL:
+			model = settings.MEMORY_LLM_MODEL
+		elif role != "reply" and (db := active_model("reply")):
+			return db
+	return provider or settings.LLM_PROVIDER, model or settings.LLM_MODEL
+
+
+def get_llm(provider: Optional[str] = None, model: Optional[str] = None, role: str = "reply", **kwargs):
 	"""
 	Return an LLM instance.
 
 	Args:
-		provider: "google" or "openrouter". Defaults to settings.LLM_PROVIDER.
-		model: Model name override. Defaults per provider:
+		provider: "google" or "openrouter". Defaults to the role's ModelConfig pick, then settings.LLM_PROVIDER.
+		model: Model name override. Defaults to the role's ModelConfig pick, then settings.LLM_MODEL, then per provider:
 			google     → "gemini-3.8-flash"
-			openrouter → "nvidia/nemotron-3-super-120b-a12b:free"
+			openrouter → OPENROUTER_DEFAULT_MODEL
+		role: "reply" or "memory" (see resolve_model).
 		**kwargs: Extra kwargs forwarded to the underlying LLM class.
 	"""
-	provider = provider or settings.LLM_PROVIDER
-	model = model or settings.LLM_MODEL
+	provider, model = resolve_model(provider, model, role)
 	if provider == "openrouter":
 		logger.warning("Using OpenRouter LLM - ensure your OPENROUTER_API_KEY is set and monitor usage to avoid unexpected costs.")
 		return ChatOpenRouter(
@@ -117,8 +146,11 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 		llm_kwargs.setdefault("temperature", settings.LLM_TEMPERATURE)
 	llm = _reply_llm(provider, model, **llm_kwargs)
 	middleware = []
-	if settings.LLM_FALLBACK_MODEL:
-		backup = _reply_llm(settings.LLM_FALLBACK_PROVIDER, settings.LLM_FALLBACK_MODEL, **llm_kwargs)
+	backup_model = active_model("fallback") or (
+		(settings.LLM_FALLBACK_PROVIDER, settings.LLM_FALLBACK_MODEL) if settings.LLM_FALLBACK_MODEL else None
+	)
+	if backup_model:
+		backup = _reply_llm(*backup_model, **llm_kwargs)
 		middleware.append(fallback_to(backup))
 	system_prompt = build_system_prompt(custom_instructions, memory, search_results)
 	agent = create_agent(
@@ -132,7 +164,8 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 
 def _reply_llm(provider: Optional[str], model: Optional[str], **kwargs):
 	"""get_llm with LLM_THINKING_LEVEL applied; Gemini only, OpenRouter has no such setting."""
-	if settings.LLM_THINKING_LEVEL and (provider or settings.LLM_PROVIDER) == "google":
+	provider, model = resolve_model(provider, model)
+	if settings.LLM_THINKING_LEVEL and provider == "google":
 		kwargs.setdefault("thinking_level", settings.LLM_THINKING_LEVEL)
 	return get_llm(provider=provider, model=model, **kwargs)
 
