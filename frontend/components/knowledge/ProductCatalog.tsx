@@ -218,7 +218,7 @@ export default function ProductCatalog({ projectId, kbId, isAdmin, onProductsCha
 									<div key={img.id} className="w-24 space-y-1">
 										{/* eslint-disable-next-line @next/next/no-img-element */}
 										<img
-											src={`${API_BASE_URL}${img.url}`}
+											src={`${API_BASE_URL}${img.thumb_url}`}
 											alt={p.name}
 											className="h-24 w-24 rounded-md border object-cover"
 										/>

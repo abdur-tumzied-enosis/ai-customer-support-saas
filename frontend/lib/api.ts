@@ -1,3 +1,5 @@
+import { downscaleImage, putToR2, sha256Hex, type PresignedUpload } from "./upload";
+
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8251";
 
 type FetchOptions = RequestInit & { json?: unknown };
@@ -184,25 +186,21 @@ export const authApi = {
 
 // Document API functions
 export const documentApi = {
+	// Presign (duplicate check on the hash) -> PUT to R2 (R2 enforces the signed hash) -> confirm (starts ingestion)
 	upload: async (file: File, projectId: string, kbId: string) => {
-		const formData = new FormData();
-		formData.append("file", file);
-		formData.append("project_id", projectId);
-		formData.append("kb_id", kbId);
-
-		const csrfToken = getCsrfToken();
-		const headers: HeadersInit = {
-			...(csrfToken ? { "X-CSRFToken": csrfToken } : {}),
-		};
-
-		const res = await fetch(`${API_BASE_URL}/api/kb/documents/upload/`, {
+		const presigned = await apiFetch<PresignedUpload & { document_id: string }>("/api/kb/documents/upload/", {
 			method: "POST",
-			headers,
-			credentials: "include",
-			body: formData,
+			json: {
+				project_id: projectId,
+				kb_id: kbId,
+				filename: file.name,
+				size: file.size,
+				content_type: file.type,
+				sha256: await sha256Hex(file),
+			},
 		});
-
-		const data = (await res.json()) as ApiResponse<{
+		await putToR2(presigned.data, file);
+		return apiFetch<{
 			document: {
 				id: string;
 				filename: string;
@@ -220,19 +218,7 @@ export const documentApi = {
 				id: string;
 				status: string;
 			};
-		}>;
-
-		if (!res.ok || !data.success) {
-			if (!data.success) {
-				throw new ApiError(data.error);
-			}
-			throw new ApiError({
-				code: "upload_failed",
-				message: `Upload failed with status ${res.status}`,
-			});
-		}
-
-		return data;
+		}>(`/api/kb/documents/${presigned.data.document_id}/confirm/`, { method: "POST" });
 	},
 
 	list: async (projectId?: string, kbId?: string, status?: string) => {
@@ -729,10 +715,14 @@ export const conversationApi = {
 	},
 
 	sendPhoto: async (conversationId: string, file: File, text?: string) => {
-		const formData = new FormData();
-		formData.append("image", file);
-		if (text) formData.append("text", text);
-		return postForm<{ message: ConversationMessage }>(`/api/channels/conversations/${conversationId}/photo`, formData);
+		const photo = await downscaleImage(file);
+		const base = `/api/channels/conversations/${conversationId}/photo`;
+		const presigned = await apiFetch<PresignedUpload & { key: string }>(`${base}/presign`, {
+			method: "POST",
+			json: { content_type: photo.type, size: photo.size },
+		});
+		await putToR2(presigned.data, photo);
+		return apiFetch<{ message: ConversationMessage }>(base, { method: "POST", json: { key: presigned.data.key, text } });
 	},
 
 	getMessageStatus: async (messageId: string) => {
@@ -961,7 +951,12 @@ export const widgetApi = {
 	remove: async (id: string) => apiFetch<Record<string, never>>(`/api/channels/widgets/${id}`, { method: "DELETE" }),
 };
 
-export type ProductImage = { id: string; status: "pending" | "ready" | "failed"; url: string };
+export type ProductImage = {
+	id: string;
+	status: "uploading" | "pending" | "ready" | "failed";
+	url: string;
+	thumb_url: string;
+};
 
 export type Product = {
 	id: string;
@@ -973,26 +968,19 @@ export type Product = {
 
 export type Features = { image_search_available: boolean; image_search: boolean };
 
-// Multipart upload with the CSRF header; a non-JSON error body (e.g. a proxy's 502 page) becomes request_failed.
-async function postForm<T>(path: string, formData: FormData): Promise<ApiSuccessResponse<T>> {
-	const csrfToken = getCsrfToken();
-	const res = await fetch(`${API_BASE_URL}${path}`, {
+type ProductUploads = { product: Product; uploads: (PresignedUpload & { image_id: string })[] };
+
+// Downscale -> presign (`path` creates the product or adds to it) -> parallel PUTs to R2 -> confirm (queues resize + embed)
+async function uploadProductPhotos(path: string, body: Record<string, unknown>, files: File[]): Promise<Product> {
+	const photos = await Promise.all(files.map((f) => downscaleImage(f)));
+	const specs = photos.map((p, i) => ({ name: files[i].name, size: p.size, content_type: p.type }));
+	const { data } = await apiFetch<ProductUploads>(path, { method: "POST", json: { ...body, files: specs } });
+	await Promise.all(data.uploads.map((u, i) => putToR2(u, photos[i])));
+	await apiFetch<ProductImage[]>("/api/kb/products/images/confirm/", {
 		method: "POST",
-		headers: csrfToken ? { "X-CSRFToken": csrfToken } : {},
-		credentials: "include",
-		body: formData,
+		json: { image_ids: data.uploads.map((u) => u.image_id) },
 	});
-	let data: ApiResponse<T> | null = null;
-	try {
-		data = (await res.json()) as ApiResponse<T>;
-	} catch {
-		// not JSON
-	}
-	if (!res.ok || !data || !data.success) {
-		if (data && !data.success) throw new ApiError(data.error);
-		throw new ApiError({ code: "request_failed", message: `Upload failed with status ${res.status}` });
-	}
-	return data;
+	return data.product;
 }
 
 export const featuresApi = {
@@ -1012,26 +1000,15 @@ export const productApi = {
 			`/api/kb/products/?project_id=${encodeURIComponent(projectId)}&kb_id=${encodeURIComponent(kbId)}`
 		)).data,
 
-	create: (projectId: string, kbId: string, name: string, description: string, files: File[]) => {
-		const formData = new FormData();
-		formData.append("project_id", projectId);
-		formData.append("kb_id", kbId);
-		formData.append("name", name);
-		formData.append("description", description);
-		files.forEach((f) => formData.append("images", f));
-		return postForm<Product>("/api/kb/products/", formData);
-	},
+	create: (projectId: string, kbId: string, name: string, description: string, files: File[]) =>
+		uploadProductPhotos("/api/kb/products/", { project_id: projectId, kb_id: kbId, name, description }, files),
 
 	update: (id: string, data: { name?: string; description?: string }) =>
 		apiFetch<Product>(`/api/kb/products/${id}/`, { method: "PATCH", json: data }),
 
 	remove: (id: string) => apiFetch<null>(`/api/kb/products/${id}/`, { method: "DELETE" }),
 
-	addImages: (id: string, files: File[]) => {
-		const formData = new FormData();
-		files.forEach((f) => formData.append("images", f));
-		return postForm<Product>(`/api/kb/products/${id}/images/`, formData);
-	},
+	addImages: (id: string, files: File[]) => uploadProductPhotos(`/api/kb/products/${id}/images/`, {}, files),
 
 	removeImage: (imageId: string) => apiFetch<null>(`/api/kb/products/images/${imageId}/`, { method: "DELETE" }),
 };
