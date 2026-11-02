@@ -63,10 +63,12 @@ class WhatsAppInboundTest(WhatsAppBase):
 
 	def test_media_is_stored_without_reply(self, schedule):
 		image = {"from": "8801700000000", "id": "wamid.img", "type": "image", "image": {"id": "media-1", "mime_type": "image/jpeg"}}
-		handle_whatsapp_message(payload(image))
+		with mock.patch("channels_app.service.whatsapp_messaging.store_message_media.delay") as store:
+			handle_whatsapp_message(payload(image))
 		msg = Message.objects.get(external_message_id="wamid.img")
 		assert msg.has_attachments and msg.status == "completed"
 		assert msg.attachment_info == [{"type": "image", "payload": {"id": "media-1", "mime_type": "image/jpeg"}}]
+		store.assert_called_once_with(str(msg.id), False)
 		schedule.assert_not_called()
 
 	def test_status_updates_and_unknown_numbers_are_ignored(self, schedule):

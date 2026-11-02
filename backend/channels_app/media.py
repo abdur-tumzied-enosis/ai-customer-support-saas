@@ -15,7 +15,7 @@ from .facebook_client import GRAPH_API_URL
 from .models import Message
 
 META_CDN_SUFFIXES = (".fbcdn.net", ".fbsbx.com", ".cdninstagram.com")
-UPLOAD_PREFIXES = ("widget_uploads/", "chat_uploads/")
+UPLOAD_PREFIXES = ("chat_media/", "widget_uploads/", "chat_uploads/")
 TIMEOUT = 10
 
 
@@ -30,6 +30,15 @@ def is_photo(att: dict) -> bool:
 def has_photo(msg: Message) -> bool:
 	"""A real photo among the attachments (not a sticker, voice note, like or document)."""
 	return any(isinstance(a, dict) and is_photo(a) for a in msg.attachment_info or [])
+
+
+def is_storable(att: dict) -> bool:
+	"""Photos and voice notes/audio are kept in R2 (media_store); stickers, documents, locations... stay metadata."""
+	return is_photo(att) or att.get("type") == "audio"
+
+
+def has_storable_media(attachment_info: list) -> bool:
+	return any(isinstance(a, dict) and is_storable(a) for a in attachment_info or [])
 
 
 def store_photo(data: bytes, folder: str) -> str:
@@ -62,19 +71,19 @@ def _get(url: str, **kwargs) -> requests.Response:
 		raise MediaError(f"download failed: {e}") from e
 
 
-def _read_capped(chunks) -> bytes:
+def _read_capped(chunks, cap: int = MAX_IMAGE_BYTES) -> bytes:
 	data = bytearray()
 	for chunk in chunks:
 		data += chunk
-		if len(data) > MAX_IMAGE_BYTES:
-			raise MediaError("image too large")
+		if len(data) > cap:
+			raise MediaError("media too large")
 	return bytes(data)
 
 
-def _download(url: str, **kwargs) -> bytes:
+def _download(url: str, cap: int = MAX_IMAGE_BYTES, **kwargs) -> bytes:
 	resp = _get(url, **kwargs)
 	try:
-		return _read_capped(resp.iter_content(chunk_size=64 * 1024))
+		return _read_capped(resp.iter_content(chunk_size=64 * 1024), cap)
 	except (MediaError, SoftTimeLimitExceeded):
 		raise
 	except Exception as e:
@@ -83,7 +92,7 @@ def _download(url: str, **kwargs) -> bytes:
 		resp.close()
 
 
-def _fetch_whatsapp(msg: Message, att: dict) -> bytes:
+def _fetch_whatsapp(msg: Message, att: dict, cap: int = MAX_IMAGE_BYTES) -> bytes:
 	media_id = (att.get("payload") or {}).get("id")
 	cred = tasks.get_whatsapp_credential(msg)
 	if not media_id or not cred:
@@ -95,31 +104,43 @@ def _fetch_whatsapp(msg: Message, att: dict) -> bytes:
 		raise
 	except Exception as e:
 		raise MediaError(f"media lookup failed: {e}") from e
-	return _download(_check_meta_url(url), headers=headers)
+	return _download(_check_meta_url(url), cap, headers=headers)
+
+
+def read_stored(path: str, cap: int = MAX_IMAGE_BYTES) -> bytes:
+	"""Bytes of a stored object, refusing more than `cap`; MediaError on any failure."""
+	try:
+		with default_storage.open(path) as f:
+			data = f.read(cap + 1)
+	except SoftTimeLimitExceeded:
+		raise
+	except Exception as e:
+		raise MediaError(f"cannot read upload: {e}") from e
+	if len(data) > cap:
+		raise MediaError("media too large")
+	return data
 
 
 def _read_upload(path) -> bytes:
 	if not isinstance(path, str) or ".." in path or path.startswith("/") or not path.startswith(UPLOAD_PREFIXES):
 		raise MediaError("invalid upload path")
-	try:
-		with default_storage.open(path) as f:
-			data = f.read(MAX_IMAGE_BYTES + 1)
-	except SoftTimeLimitExceeded:
-		raise
-	except Exception as e:
-		raise MediaError(f"cannot read upload: {e}") from e
-	if len(data) > MAX_IMAGE_BYTES:
-		raise MediaError("image too large")
-	return data
+	return read_stored(path)
+
+
+def fetch_attachment(msg: Message, att: dict, cap: int) -> bytes:
+	"""Raw bytes of a Meta channel attachment (photo or audio), downloaded from Meta; MediaError on any failure."""
+	channel = msg.conversation.channel
+	if channel in ("facebook", "instagram"):
+		return _download(_check_meta_url(att.get("url")), cap)
+	if channel == "whatsapp":
+		return _fetch_whatsapp(msg, att, cap)
+	raise MediaError(f"unsupported channel: {channel}")
 
 
 def fetch_photo(msg: Message, att: dict) -> bytes:
-	"""Raw bytes of the photo in `att`; MediaError on any failure."""
-	channel = msg.conversation.channel
-	if channel in ("facebook", "instagram"):
-		return _download(_check_meta_url(att.get("url")))
-	if channel == "whatsapp":
-		return _fetch_whatsapp(msg, att)
-	if channel in ("widget", "self"):
-		return _read_upload(att.get("path"))
-	raise MediaError(f"unsupported channel: {channel}")
+	"""Raw bytes of the photo in `att`: the stored copy when media_store kept one, else from Meta; MediaError on any failure."""
+	if att.get("path"):
+		return _read_upload(att["path"])
+	if msg.conversation.channel in ("widget", "self"):
+		raise MediaError("upload has no stored path")
+	return fetch_attachment(msg, att, MAX_IMAGE_BYTES)

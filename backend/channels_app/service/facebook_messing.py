@@ -8,6 +8,8 @@ from accounts.models import Project
 from channels_app.models import META_CHANNELS, ChannelCredential, CustomerContact, Message, meta_credentials
 from channels_app.facebook_client import get_user_name
 from channels_app.image_reply import wants_photo_reply
+from channels_app.media import has_storable_media
+from channels_app.media_store import store_message_media
 from channels_app.reply import schedule_reply
 from channels_app.service.conversation_service import ensure_contact_conversation
 from channels_app.service.message_service import create_inbound_message
@@ -193,7 +195,10 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 				status="pending" if wants_reply else "completed",  # pending until answered (recover_stuck_replies)
 			)
 
-			if wants_reply:
+			if has_storable_media(attachment_info):
+				# Keep the photo/audio in R2 first (Meta's URLs expire); that task schedules the reply
+				store_message_media.delay(str(msg.id), wants_reply)
+			elif wants_reply:
 				# Enqueue async handler (generate reply + send)
 				schedule_reply(msg)
 			else:

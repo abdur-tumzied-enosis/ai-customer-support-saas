@@ -123,6 +123,7 @@ CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_TASK_ROUTES = {
     "channels_app.reply.process_reply": {"queue": "replies"},
     "channels_app.reply.redeliver": {"queue": "replies"},
+    "channels_app.media_store.store_message_media": {"queue": "replies"},  # on the reply path for photos
 }
 STUCK_JOB_THRESHOLD_MINUTES =env.int("STUCK_JOB_THRESHOLD_MINUTES", default=120)
 CELERY_BEAT_SCHEDULE = {

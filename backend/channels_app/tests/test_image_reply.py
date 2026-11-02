@@ -62,6 +62,12 @@ class ImageReplyTest(PipelineBase):
 		self.scheduled = []
 		mock.patch("channels_app.service.facebook_messing.schedule_reply", side_effect=self.scheduled.append).start()
 		mock.patch("channels_app.service.whatsapp_messaging.schedule_reply", side_effect=self.scheduled.append).start()
+
+		def stored_then_scheduled(message_id, reply):  # media_store's effect, minus the R2 copy (fetch_photo is mocked)
+			if reply:
+				self.scheduled.append(Message.objects.get(id=message_id))
+		for handler in ("facebook_messing", "whatsapp_messaging"):
+			mock.patch(f"channels_app.service.{handler}.store_message_media.delay", side_effect=stored_then_scheduled).start()
 		mock.patch("channels_app.service.facebook_messing.get_user_name", return_value="Ann").start()
 		self.fetch = mock.patch("channels_app.image_reply.fetch_photo", return_value=png_bytes()).start()
 		self.embed = mock.patch("channels_app.image_reply.embed_image", return_value=[1, 0, 0, 0]).start()

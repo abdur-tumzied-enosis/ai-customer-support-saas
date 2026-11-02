@@ -2,6 +2,8 @@
 from typing import Any, Dict
 
 from channels_app.image_reply import wants_photo_reply
+from channels_app.media import has_storable_media
+from channels_app.media_store import store_message_media
 from channels_app.models import CustomerContact, Message, whatsapp_credentials
 from channels_app.reply import schedule_reply
 from channels_app.service.conversation_service import ensure_contact_conversation
@@ -69,5 +71,7 @@ def _handle_message(phone_number_id: str, message: Dict[str, Any], name: str) ->
 		conversation=conversation,
 		status="pending" if wants_reply else "completed",
 	)
-	if wants_reply:
+	if has_storable_media(attachments):
+		store_message_media.delay(str(msg.id), wants_reply)  # stores the photo/audio in R2, then schedules the reply
+	elif wants_reply:
 		schedule_reply(msg)
