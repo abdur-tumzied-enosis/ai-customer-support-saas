@@ -12,6 +12,10 @@ from agents.vector_store import get_qdrant_client
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
 IMAGE_SEARCH_TOP_K = 3
+# Stored photo variants: `display` replaces the upload, `thumb` sits next to it
+DISPLAY_EDGE = 1600
+THUMB_EDGE = 320
+WEBP_QUALITY = 80
 
 _FORMATS = {"JPEG": "jpg", "MPO": "jpg", "PNG": "png", "WEBP": "webp"}  # MPO: multi-picture JPEG from phones
 
@@ -45,6 +49,20 @@ def load_image(data: bytes, max_bytes: int = MAX_IMAGE_BYTES) -> Image.Image:
 		raise
 	except Exception as e:  # Pillow raises SyntaxError, ValueError, struct.error, zlib.error, EOFError... on corrupt data
 		raise NotAnImage("not a valid image") from e
+
+
+def _webp(img: Image.Image, edge: int) -> bytes:
+	img = img.copy()
+	img.thumbnail((edge, edge))  # keeps aspect, never upscales
+	buf = BytesIO()
+	img.save(buf, "WEBP", quality=WEBP_QUALITY)  # no exif= : metadata is dropped
+	return buf.getvalue()
+
+
+def make_variants(data: bytes, max_bytes: int = MAX_IMAGE_BYTES) -> tuple[bytes, bytes]:
+	"""(display, thumb) WebP versions of an uploaded photo, upright and without metadata. Raises NotAnImage."""
+	img = load_image(data, max_bytes)
+	return _webp(img, DISPLAY_EDGE), _webp(img, THUMB_EDGE)
 
 
 def image_format(data: bytes) -> str:

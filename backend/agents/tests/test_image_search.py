@@ -9,7 +9,7 @@ from qdrant_client import QdrantClient, models
 
 from agents import image_search
 from agents.image_search import (
-	MAX_IMAGE_BYTES, NotAnImage, delete_images, image_format, load_image, search_products, upsert_image,
+	MAX_IMAGE_BYTES, NotAnImage, delete_images, image_format, load_image, make_variants, search_products, upsert_image,
 )
 
 
@@ -118,3 +118,34 @@ class ImageSearchTest(SimpleTestCase):
 		with mock.patch.object(client, "collection_exists", side_effect=racy):
 			upsert_image("c_images", self.A1, [1, 0, 0, 0], "pA")
 		self.assertEqual(search_products("c_images", [1, 0, 0, 0])[0][0], "pA")
+
+
+class MakeVariantsTest(SimpleTestCase):
+	def test_variants_bounded_webp(self):
+		display, thumb = make_variants(_png_bytes(4000, 3000))
+		d, t = Image.open(io.BytesIO(display)), Image.open(io.BytesIO(thumb))
+		self.assertEqual((d.format, d.size), ("WEBP", (1600, 1200)))
+		self.assertEqual((t.format, t.size), ("WEBP", (320, 240)))
+
+	def test_small_image_not_upscaled(self):
+		display, thumb = make_variants(_png_bytes(200, 100))
+		self.assertEqual(Image.open(io.BytesIO(display)).size, (200, 100))
+		self.assertEqual(Image.open(io.BytesIO(thumb)).size, (200, 100))
+
+	def test_exif_orientation_applied(self):
+		img = Image.new("RGB", (300, 100), "red")
+		exif = img.getexif()
+		exif[0x0112] = 6
+		buf = io.BytesIO()
+		img.save(buf, "JPEG", exif=exif)
+		d = Image.open(io.BytesIO(make_variants(buf.getvalue())[0]))
+		self.assertEqual(d.size, (100, 300))
+		self.assertFalse(d.getexif())
+
+	def test_variants_reject_non_image(self):
+		with self.assertRaises(NotAnImage):
+			make_variants(b"%PDF-1.7 not an image")
+
+	def test_variants_respect_max_bytes(self):
+		with self.assertRaises(NotAnImage):
+			make_variants(_png_bytes(10, 10), max_bytes=10)
