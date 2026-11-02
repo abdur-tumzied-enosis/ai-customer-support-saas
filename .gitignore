@@ -8,3 +8,4 @@ gcp-sa.json
 backend/celerybeat-schedule*
 .playwright-mcp/
 .superpowers/
+.docker/

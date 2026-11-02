@@ -14,8 +14,6 @@ RUN crawl4ai-setup
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-RUN playwright install chrome
-
 # Bake in the embedding and reranker models (agents/vector_store.py), BM25, and the CLIP image model for product
 # image search (agents/image_search.py). Loaded from the Hugging Face hub at runtime, each worker process's first
 # reply spent minutes on hub checks and hit process_reply's time limit.
