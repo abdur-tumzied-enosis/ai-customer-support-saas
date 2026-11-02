@@ -1,26 +1,24 @@
 import json
-import hashlib
 import os
+import re
 import uuid
 from django.http import JsonResponse, HttpRequest
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.forms.models import model_to_dict
-from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
 from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q
 from accounts.models import ProjectUser
 from .models import KnowledgeBase, Document, IngestionJob, IngestionJobStatus, DocumentFileType, MAX_DOCUMENT_FILE_SIZE, CustomInstruction, InstructionTemplate, document_storage_path
+from core.storage import delete_keys, object_size, presign_put
 from .tasks import run_ingestion_job, crawl_website
 from .api_tool_config import ApiConfigError, apply_api_config, public_api_domains
 
@@ -181,169 +179,143 @@ class InstructionTemplateListView(APIView):
 		}, status=status.HTTP_200_OK)
 
 
+DOC_CONTENT_TYPES = {".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown"}
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def _upload_error(code: str, message: str, http_status: int) -> Response:
+    return Response({"success": False, "error": {"code": code, "message": message}}, status=http_status)
+
+
+def _short_filename(filename: str) -> str:
+    """Document.filename holds 100 chars: truncate the base name, keep the extension."""
+    if len(filename) <= 100:
+        return filename
+    name, ext = os.path.splitext(filename)
+    max_base_length = 100 - len(ext)
+    return filename[:100] if max_base_length < 1 else name[:max_base_length] + ext
+
+
 class DocumentUploadView(APIView):
     """
-    API endpoint for uploading documents to knowledge base
+    Step 1 of a document upload: validate the declared file, refuse duplicates (by the browser-computed SHA-256),
+    create an `uploading` Document and return a presigned R2 PUT. The hash is signed into the URL, so R2 rejects
+    bytes that don't match it. The browser PUTs the file, then calls DocumentConfirmView.
     """
     permission_classes = [IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):
-        try:
-            # Get project from user's projects
-            project_id = request.data.get('project_id')
-            if not project_id:
-                return Response(
-                    {"success": False, "error": {"code": "missing_project", "message": "project_id is required"}},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        project_id = request.data.get('project_id')
+        if not project_id:
+            return _upload_error("missing_project", "project_id is required", status.HTTP_400_BAD_REQUEST)
+        project_user = _project_user(request.user, project_id, admin=True)
+        if not project_user:
+            return _upload_error("access_denied", "No access to this project", status.HTTP_403_FORBIDDEN)
+        project = project_user.project
+        kb = _resolve_kb(project, request.data.get('kb_id'))
+        if kb is None:
+            return _upload_error("kb_not_found", "Knowledge base not found", status.HTTP_404_NOT_FOUND)
 
-            # Verify user has access to this project
-            project_user = _project_user(request.user, project_id, admin=True)
-            if not project_user:
-                return Response(
-                    {"success": False, "error": {"code": "access_denied", "message": "No access to this project"}},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            project = project_user.project
+        filename = str(request.data.get('filename') or '')
+        size = request.data.get('size')
+        if not filename or not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+            return _upload_error("no_file", "No file provided", status.HTTP_400_BAD_REQUEST)
+        content_type = str(request.data.get('content_type') or '')
+        file_extension = os.path.splitext(filename)[1].lower()
+        if not DocumentFileType.is_supported(file_extension, content_type or None):
+            supported_types = ", ".join([ft.value.upper() for ft in DocumentFileType])
+            return _upload_error("invalid_file_type",
+                f"File type {content_type} not allowed. Only {supported_types} files are supported.", status.HTTP_400_BAD_REQUEST)
+        if size > MAX_DOCUMENT_FILE_SIZE:
+            max_size_mb = MAX_DOCUMENT_FILE_SIZE / (1024 * 1024)
+            return _upload_error("file_too_large", f"File size exceeds {max_size_mb}MB limit", status.HTTP_400_BAD_REQUEST)
+        checksum = request.data.get('sha256')
+        if not isinstance(checksum, str) or not SHA256_HEX.fullmatch(checksum):
+            return _upload_error("invalid_checksum", "sha256 must be 64 lowercase hex characters", status.HTTP_400_BAD_REQUEST)
 
-            kb = _resolve_kb(project, request.data.get('kb_id'))
-            if kb is None:
-                return Response(
-                    {"success": False, "error": {"code": "kb_not_found", "message": "Knowledge base not found"}},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+        existing_doc = Document.objects.filter(kb=kb, checksum=checksum, status__in=['completed', 'processing']).first()
+        if existing_doc:
+            return _upload_error("duplicate_file",
+                f"This file '{existing_doc.filename}' has already been uploaded to this knowledge base", status.HTTP_409_CONFLICT)
 
-            # Handle file upload
-            if 'file' not in request.FILES:
-                return Response(
-                    {"success": False, "error": {"code": "no_file", "message": "No file provided"}},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        filename = _short_filename(filename)
+        put_type = DOC_CONTENT_TYPES.get(file_extension) or content_type
+        document = Document(kb=kb, source_type='upload', filename=filename, file_size=size, checksum=checksum, status='uploading')
+        # filename is ≤100 chars, so the path fits Document.file
+        document.file.name = document_storage_path(kb, f"{document.id}_{filename}")
+        document.save()
+        upload = presign_put(document.file.name, put_type, checksum)
+        return Response({"success": True, "data": {"document_id": str(document.id), **upload}}, status=status.HTTP_201_CREATED)
 
-            uploaded_file = request.FILES['file']
 
-            # Validate file type using enum
-            file_extension = os.path.splitext(uploaded_file.name)[1].lower()
-            if not DocumentFileType.is_supported(file_extension, uploaded_file.content_type):
-                supported_types = ", ".join([ft.value.upper() for ft in DocumentFileType])
-                return Response(
-                    {"success": False, "error": {"code": "invalid_file_type",
-                                               "message": f"File type {uploaded_file.content_type} not allowed. Only {supported_types} files are supported."}},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+def _start_ingestion(document) -> IngestionJob:
+    ingestion_job = IngestionJob.objects.create(kb=document.kb, document=document, status=IngestionJobStatus.PENDING.value)
+    # Store task kwargs for recovery re-dispatch
+    ingestion_job.celery_task_kwargs = {
+        'task': 'run_ingestion_job',
+        'kwargs': {'job_id': str(ingestion_job.id)},
+    }
+    ingestion_job.save(update_fields=['celery_task_kwargs'])
+    try:
+        run_ingestion_job.delay(str(ingestion_job.id))
+    except Exception as e:
+        # If Celery is not running, mark as failed
+        ingestion_job.status = IngestionJobStatus.FAILED.value
+        ingestion_job.error = f"Could not start processing: {str(e)}"
+        ingestion_job.save()
+    return ingestion_job
 
-            # Validate file size using constant
-            if uploaded_file.size > MAX_DOCUMENT_FILE_SIZE:
-                max_size_mb = MAX_DOCUMENT_FILE_SIZE / (1024 * 1024)
-                return Response(
-                    {"success": False, "error": {"code": "file_too_large", 
-                                               "message": f"File size exceeds {max_size_mb}MB limit"}},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
 
-            # Read file content for checksum calculation
-            file_content = uploaded_file.read()
+class DocumentConfirmView(APIView):
+    """Step 2: the browser's PUT finished. Check the object landed within the size cap, then start ingestion.
+    A repeated confirm returns the existing job."""
+    permission_classes = [IsAuthenticated]
 
-            # Calculate checksum
-            checksum = hashlib.sha256(file_content).hexdigest()
-
-            # Check for duplicate file in the same knowledge base
-            existing_doc = Document.objects.filter(
-                kb=kb,
-                checksum=checksum,
-                status__in=['completed', 'processing']
-            ).first()
-
-            if existing_doc:
-                return Response(
-                    {"success": False, "error": {"code": "duplicate_file",
-                                               "message": f"This file '{existing_doc.filename}' has already been uploaded to this knowledge base"}},
-                    status=status.HTTP_409_CONFLICT
-                )
-
-            # Create document record
-            # Truncate filename if it's too long (database may have 100 char constraint)
-            filename = uploaded_file.name
-            if len(filename) > 100:
-                # Keep extension and truncate the base name
-                name, ext = os.path.splitext(filename)
-                max_base_length = 100 - len(ext)
-                if max_base_length < 1:
-                    # If extension itself is too long, just truncate everything
-                    filename = filename[:100]
-                else:
-                    filename = name[:max_base_length] + ext
-            
-            document = Document.objects.create(
-                kb=kb,
-                source_type='upload',
-                filename=filename,
-                file_size=uploaded_file.size,
-                checksum=checksum,
-                status='processing'
-            )
-
-            # Save file to storage (filename is already ≤100 chars, so the path fits Document.file)
-            file_path = document_storage_path(kb, f"{document.id}_{filename}")
-            saved_file = default_storage.save(file_path, ContentFile(file_content))
-            document.file = saved_file
-            document.save()
-
-            # Create ingestion job
-            ingestion_job = IngestionJob.objects.create(
-                kb=kb,
-                document=document,
-                status=IngestionJobStatus.PENDING.value
-            )
-
-            # Store task kwargs for recovery re-dispatch
-            ingestion_job.celery_task_kwargs = {
-                'task': 'run_ingestion_job',
-                'kwargs': {'job_id': str(ingestion_job.id)},
-            }
-            ingestion_job.save(update_fields=['celery_task_kwargs'])
-
-            # Start background processing
-            try:
-                run_ingestion_job.delay(str(ingestion_job.id))
-            except Exception as e:
-                # If Celery is not running, mark as failed
-                ingestion_job.status = IngestionJobStatus.FAILED.value
-                ingestion_job.error = f"Could not start processing: {str(e)}"
-                ingestion_job.save()
-
-            return Response({
-                "success": True,
-                "message": "Document uploaded successfully and processing started",
-                "data": {
-                    "document": {
-                        "id": str(document.id),
-                        "filename": document.filename,
-                        "file_size": document.file_size,
-                        "status": document.status,
-                        "created_at": document.created_at.isoformat()
-                    },
-                    "kb": {
-                        "id": str(kb.id),
-                        "name": kb.name,
-                        "project_id": str(project.id),
-                        "project_name": project.name
-                    },
-                    "ingestion_job": {
-                        "id": str(ingestion_job.id),
-                        "status": ingestion_job.status
-                    }
+    def post(self, request, document_id):
+        document = Document.objects.select_related('kb__project').filter(id=document_id, source_type='upload').first()
+        if not document or not _project_user(request.user, document.kb.project_id, admin=True):
+            return _upload_error("not_found", "Document not found", status.HTTP_404_NOT_FOUND)
+        kb, project = document.kb, document.kb.project
+        created = document.status == 'uploading'
+        if created:
+            size = object_size(document.file.name)
+            if size is None or size > MAX_DOCUMENT_FILE_SIZE:
+                document.status = 'failed'
+                document.save(update_fields=['status'])
+                delete_keys(document.file.name)
+                code = "upload_missing" if size is None else "upload_too_large"
+                return _upload_error(code, "The upload did not arrive" if size is None else "File size exceeds the limit",
+                    status.HTTP_400_BAD_REQUEST)
+            document.status = 'processing'
+            document.save(update_fields=['status'])
+            ingestion_job = _start_ingestion(document)
+        else:
+            ingestion_job = document.ingestion_jobs.order_by('-created_at').first()
+            if ingestion_job is None:
+                return _upload_error("not_uploading", "This document is not waiting for an upload", status.HTTP_400_BAD_REQUEST)
+        return Response({
+            "success": True,
+            "message": "Document uploaded successfully and processing started",
+            "data": {
+                "document": {
+                    "id": str(document.id),
+                    "filename": document.filename,
+                    "file_size": document.file_size,
+                    "status": document.status,
+                    "created_at": document.created_at.isoformat()
+                },
+                "kb": {
+                    "id": str(kb.id),
+                    "name": kb.name,
+                    "project_id": str(project.id),
+                    "project_name": project.name
+                },
+                "ingestion_job": {
+                    "id": str(ingestion_job.id),
+                    "status": ingestion_job.status
                 }
-            }, status=status.HTTP_201_CREATED)
-
-        except Exception as e:
-            import traceback
-            error_details = traceback.format_exc()
-            return Response(
-                {"success": False, "error": {"code": "upload_failed", "message": str(e), "details": error_details}},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            }
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
 class DocumentListView(APIView):

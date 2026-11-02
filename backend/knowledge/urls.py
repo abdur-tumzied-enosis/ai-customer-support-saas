@@ -6,7 +6,7 @@ from .products import (
 from .suggestions import SuggestionDecisionView, SuggestionListView
 from .views import (
 	KnowledgeBaseListView, KnowledgeBaseDetailView,
-	DocumentUploadView, DocumentListView, DocumentDeleteView,
+	DocumentUploadView, DocumentConfirmView, DocumentListView, DocumentDeleteView,
 	WebCrawlSubmitView, DocumentMarkdownView, DocumentChildrenView,
 	InstructionTemplateListView, InstructionTemplateUseView,
 	CustomInstructionListCreateView, CustomInstructionDetailView, CustomInstructionResolveView
@@ -19,6 +19,7 @@ urlpatterns = [
 	
 	# Document endpoints
 	path("documents/upload/", DocumentUploadView.as_view(), name="document-upload"),
+	path("documents/<uuid:document_id>/confirm/", DocumentConfirmView.as_view(), name="document-confirm"),
 	path("documents/", DocumentListView.as_view(), name="document-list"),
 	path("documents/<uuid:document_id>/", DocumentDeleteView.as_view(), name="document-delete"),
 	path("documents/<uuid:document_id>/markdown/", DocumentMarkdownView.as_view(), name="document-markdown"),
