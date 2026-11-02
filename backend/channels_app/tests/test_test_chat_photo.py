@@ -1,4 +1,3 @@
-import tempfile
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -16,11 +15,6 @@ from knowledge.models import KnowledgeBase
 @override_settings(IMAGE_SEARCH_ENABLED=True)
 class TestChatPhotoTest(TestCase):
 	def setUp(self):
-		tmp = tempfile.TemporaryDirectory()
-		self.addCleanup(tmp.cleanup)
-		media = override_settings(MEDIA_ROOT=tmp.name)
-		media.enable()
-		self.addCleanup(media.disable)
 		self.user = get_user_model().objects.create_user(username="tc@x.com", email="tc@x.com", password="pw123456")
 		self.project = Project.objects.create(name="P", slug="p-tc-photo", image_search_allowed=True)
 		ProjectUser.objects.create(project=self.project, user=self.user, role="admin")

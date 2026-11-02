@@ -1,6 +1,4 @@
 import os
-import shutil
-import tempfile
 from io import BytesIO
 from unittest.mock import patch
 
@@ -12,10 +10,10 @@ from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
 from agents.image_search import MAX_IMAGE_BYTES
+from core.tests.utils import fresh_storage, stored_files
 from knowledge.models import KnowledgeBase, Product, ProductImage
 
 User = get_user_model()
-MEDIA = tempfile.mkdtemp()
 
 
 def png():
@@ -28,17 +26,9 @@ def upload(name="a.png", data=None):
 	return SimpleUploadedFile(name, data if data is not None else png(), content_type="image/png")
 
 
-def files_under_media():
-	return [f for _, _, fs in os.walk(MEDIA) for f in fs]
-
-
-@override_settings(IMAGE_SEARCH_ENABLED=True, MEDIA_ROOT=MEDIA)
+@fresh_storage
+@override_settings(IMAGE_SEARCH_ENABLED=True)
 class ProductApiTests(TestCase):
-	@classmethod
-	def tearDownClass(cls):
-		super().tearDownClass()
-		shutil.rmtree(MEDIA, ignore_errors=True)
-
 	def setUp(self):
 		self.user = User.objects.create_user(username="a@example.com", email="a@example.com", password="x")
 		self.project = Project.objects.create(name="P", slug="p-img", image_search_allowed=True)
@@ -90,13 +80,13 @@ class ProductApiTests(TestCase):
 		self.assertEqual(r.status_code, 201, r.content)
 
 	def test_invalid_image_rejects_whole_upload(self):
-		before = len(files_under_media())
+		before = len(stored_files())
 		r = self.create(images=[upload("ok.png"), upload("bad.png", b"not an image")])
 		self.assertEqual(r.status_code, 400)
 		self.assertEqual(r.json()["error"]["code"], "invalid_image")
 		self.assertIn("bad.png", r.json()["error"]["message"])
 		self.assertEqual(Product.objects.count(), 0)
-		self.assertEqual(len(files_under_media()), before)
+		self.assertEqual(len(stored_files()), before)
 
 	def test_too_many_images(self):
 		r = self.create(images=[upload(f"{i}.png") for i in range(11)])
@@ -179,19 +169,19 @@ class ProductApiTests(TestCase):
 				raise RuntimeError("boom")
 			return orig(img, *a, **kw)
 
-		before = len(files_under_media())
+		before = len(stored_files())
 		with patch.object(ProductImage, "save", autospec=True, side_effect=flaky):
 			with self.captureOnCommitCallbacks(execute=True):
 				r = self.create()
 		self.assertEqual(r.status_code, 500)
 		self.assertEqual(Product.objects.count(), 0)
 		self.assertEqual(ProductImage.objects.count(), 0)
-		self.assertEqual(len(files_under_media()), before)
+		self.assertEqual(len(stored_files()), before)
 		self.embed.delay.assert_not_called()
 
 	def test_failed_add_images_leaves_existing_product_intact(self):
 		pid = self.make_product()["id"]
-		files_before = len(files_under_media())
+		files_before = len(stored_files())
 		orig = ProductImage.save
 		calls = []
 
@@ -205,7 +195,7 @@ class ProductApiTests(TestCase):
 			r = self.client.post(f"/api/kb/products/{pid}/images/", {"images": [upload("c.png"), upload("d.png")]}, format="multipart")
 		self.assertEqual(r.status_code, 500)
 		self.assertEqual(ProductImage.objects.filter(product_id=pid).count(), 2)
-		self.assertEqual(len(files_under_media()), files_before)
+		self.assertEqual(len(stored_files()), files_before)
 
 	def test_tenant_off_gates_every_route(self):
 		pid = self.make_product()["id"]

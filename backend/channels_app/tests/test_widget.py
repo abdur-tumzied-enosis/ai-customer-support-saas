@@ -251,12 +251,6 @@ def png_upload(name="p.png", size=4):
 class WidgetPhotoTest(WidgetBase):
 	def setUp(self):
 		super().setUp()
-		import tempfile
-		tmp = tempfile.TemporaryDirectory()
-		self.addCleanup(tmp.cleanup)
-		self.media = override_settings(MEDIA_ROOT=tmp.name)
-		self.media.enable()
-		self.addCleanup(self.media.disable)
 		Project.objects.filter(id=self.project.id).update(image_search_allowed=True, image_search_enabled=True)
 		Widget.objects.filter(id=self.widget.id).update(image_search_enabled=True)
 		self.project.refresh_from_db()

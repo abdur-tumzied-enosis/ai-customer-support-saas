@@ -22,3 +22,6 @@ python-dateutil==2.9.0.post0
 pdfplumber==0.11.8
 langchain-huggingface==1.0.1
 django-cors-headers==4.3.1
+django-storages[s3]==1.14.4
+# boto3 1.36+ adds default CRC checksums R2 rejects unless the client is configured for it; stay below until needed
+boto3==1.35.99

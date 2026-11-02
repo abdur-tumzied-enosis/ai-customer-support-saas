@@ -1,5 +1,3 @@
-import shutil
-import tempfile
 import uuid
 from unittest import mock
 
@@ -12,16 +10,9 @@ from knowledge.models import MAX_PRODUCT_IMAGE_BYTES, KnowledgeBase, Product, Pr
 from knowledge.tasks import embed_product_image
 from usage.models import UsageEvent
 
-MEDIA = tempfile.mkdtemp()
 
 
-@override_settings(MEDIA_ROOT=MEDIA)
 class ProductImageTest(TestCase):
-	@classmethod
-	def tearDownClass(cls):
-		shutil.rmtree(MEDIA, ignore_errors=True)
-		super().tearDownClass()
-
 	def setUp(self):
 		self.project = Project.objects.create(name="P", slug="0123456789abcdef0123456789abce")
 		self.kb = KnowledgeBase.objects.create(project=self.project, name="default", vector_collection="vc-prod")

@@ -1,7 +1,10 @@
 import os
+import sys
 from pathlib import Path
 import environ
 from django.core.exceptions import ImproperlyConfigured
+
+from core.storage import r2_endpoint, r2_storages
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -102,6 +105,11 @@ USE_TZ = True
 
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# Uploads (documents, photos, audio) live in a private Cloudflare R2 bucket: `local` in dev, `main` in prod
+# (docs/r2-storage.md). Tests use in-memory storage and never need R2 credentials.
+TESTING = "test" in sys.argv
+STORAGES = r2_storages(os.environ, DEBUG, TESTING)
+R2_ENDPOINT_URL = "" if TESTING else r2_endpoint(os.environ.get("R2_ACCOUNT_ID", ""))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

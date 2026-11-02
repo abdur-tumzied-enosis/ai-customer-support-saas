@@ -1,5 +1,3 @@
-import shutil
-import tempfile
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -10,17 +8,10 @@ from rest_framework.test import APIClient
 from accounts.models import Project, ProjectUser
 from knowledge.models import CustomInstruction, Document, IngestionJob, KnowledgeBase, MemorySuggestion
 
-MEDIA = tempfile.mkdtemp()
 URL = "/api/kb/suggestions/"
 
 
-@override_settings(MEDIA_ROOT=MEDIA)
 class SuggestionApiTest(TestCase):
-	@classmethod
-	def tearDownClass(cls):
-		shutil.rmtree(MEDIA, ignore_errors=True)
-		super().tearDownClass()
-
 	def setUp(self):
 		self.user = get_user_model().objects.create_user(username="k@x.com", email="k@x.com", password="pw123456")
 		self.project = Project.objects.create(name="P", slug="0123456789abcdef0123456789abce")  # signup-sized slug: 30 hex chars
