@@ -18,6 +18,7 @@ jobs:
     env:
       IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_REPO }}
     strategy:
+      fail-fast: false  # one image failing must not cancel the other mid-build
       matrix:
         include:
           - name: backend
