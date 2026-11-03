@@ -30,7 +30,7 @@ RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 # Copy standalone server and static assets
 COPY --from=builder /app/.next/standalone ./ 
 COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+# ponytail: no public/ dir yet; add `COPY --from=builder /app/public ./public` when one exists
 
 USER nextjs
 EXPOSE 3000
