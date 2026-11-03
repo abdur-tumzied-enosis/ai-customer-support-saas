@@ -9,3 +9,4 @@ backend/celerybeat-schedule*
 .playwright-mcp/
 .superpowers/
 .docker/
+nginx/certs/
