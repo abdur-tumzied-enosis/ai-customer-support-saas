@@ -16,7 +16,7 @@ Backend done. What's left is Meta setup + creating the credential.
 |---|---|
 | `instagram` channel / platform choice | `channels_app/models.py`, migration 0014 |
 | Webhook: `object: "instagram"`, echo skip | `service/facebook_messing.handle_facebook_message` |
-| Route | `/webhooks/facebook/` serves both (`object` tells them apart) |
+| Route | `/webhooks/meta/` serves both (`object` tells them apart) |
 | Reply sending, 990-byte parts | `reply.SENDERS["instagram"]`, `facebook_client.split_text(max_bytes=...)` |
 | Credential lookup by page id or IG account id | `models.meta_credentials`, `tasks.get_facebook_credential` |
 | Name lookup `name,username` | `facebook_client.get_user_name(fields=...)` |
@@ -70,7 +70,7 @@ Switch only if customers have IG accounts with no linked Facebook Page.
 
 - Add the **Instagram** product (Messenger API settings for Instagram).
 - Webhooks → object **Instagram** → callback URL + verify token. The same URL as the
-  Page webhook works (`/webhooks/facebook/`): same app, same `META_APP_SECRET`, so the
+  Page webhook works (`/webhooks/meta/`): same app, same `META_APP_SECRET`, so the
   `X-Hub-Signature-256` check passes. We branch on `payload["object"]`.
 - Subscribe field **`messages`**. Optional later: `messaging_postbacks`,
   `message_reactions`, `messaging_seen`.

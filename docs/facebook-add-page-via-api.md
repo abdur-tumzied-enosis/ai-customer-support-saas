@@ -273,7 +273,7 @@ Notes:
 
 1. Send the page a message from Messenger, from a role account if you only have
    Standard Access.
-2. ngrok inspector `http://127.0.0.1:4040` should show `POST /webhooks/facebook/` → 200.
+2. ngrok inspector `http://127.0.0.1:4040` should show `POST /webhooks/meta/` → 200.
 3. The conversation appears in the dashboard.
 
 If nothing arrives, work through [facebook-webhook-debugging.md](facebook-webhook-debugging.md).

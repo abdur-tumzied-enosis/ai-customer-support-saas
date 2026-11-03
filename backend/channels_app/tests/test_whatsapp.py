@@ -119,7 +119,7 @@ class WhatsAppSendTest(WhatsAppBase):
 class WhatsAppWebhookTest(WhatsAppBase):
 	def post(self, body, secret):
 		sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-		return Client().post("/webhooks/facebook/", data=body, content_type="application/json",
+		return Client().post("/webhooks/meta/", data=body, content_type="application/json",
 			HTTP_X_HUB_SIGNATURE_256=f"sha256={sig}")
 
 	def test_signed_with_the_whatsapp_apps_own_secret(self, schedule):
@@ -133,7 +133,7 @@ class WhatsAppWebhookTest(WhatsAppBase):
 		schedule.assert_not_called()
 
 	def test_verification_with_whatsapp_verify_token(self, schedule):
-		resp = Client().get("/webhooks/facebook/", {"hub.mode": "subscribe", "hub.verify_token": "wa-verify", "hub.challenge": "42"})
+		resp = Client().get("/webhooks/meta/", {"hub.mode": "subscribe", "hub.verify_token": "wa-verify", "hub.challenge": "42"})
 		assert resp.status_code == 200 and resp.content == b"42"
 
 

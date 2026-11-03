@@ -1,7 +1,7 @@
 # Facebook Messenger Webhook — Setup & Debugging
 
 App: **AutoMagic Pro** (`1257774078107684`) · Live mode
-Webhook route: `POST/GET /webhooks/facebook/` → `channels_app/views_facebook.py`
+Webhook route: `POST/GET /webhooks/meta/` → `channels_app/views_facebook.py`
 Local dev: `django` container on `localhost:8251`, exposed via ngrok.
 
 ---
@@ -9,7 +9,7 @@ Local dev: `django` container on `localhost:8251`, exposed via ngrok.
 ## How delivery works (two subscriptions, both required)
 
 ```
-Customer → Page ──(1)── App ──(2)── callback URL ── ngrok ── django:8251 /webhooks/facebook/
+Customer → Page ──(1)── App ──(2)── callback URL ── ngrok ── django:8251 /webhooks/meta/
 ```
 
 1. **Page → App** (`/{page_id}/subscribed_apps`): the page must subscribe the app.
@@ -49,8 +49,8 @@ curl -s "http://127.0.0.1:4040/api/requests/http?limit=20" | python -c "import s
 |---|---|---|
 | Only `GET ...hub.mode=subscribe` → 200 | Callback OK, Meta isn't sending events | step 3 |
 | `GET ...hub.mode=subscribe` → 403 | Verify token mismatch (`FB_VERIFY_TOKEN` in `.env` vs dashboard) | fix `.env` |
-| `POST /webhooks/facebook/` → 403 | Signature check failed — `META_APP_SECRET` ≠ app secret | fix `.env` |
-| `POST /webhooks/facebook/` → 200, no reply | Pipeline issue — check django/celery logs (`ChannelCredential not found for page_id`, `KnowledgeBase not configured`) | logs |
+| `POST /webhooks/meta/` → 403 | Signature check failed — `META_APP_SECRET` ≠ app secret | fix `.env` |
+| `POST /webhooks/meta/` → 200, no reply | Pipeline issue — check django/celery logs (`ChannelCredential not found for page_id`, `KnowledgeBase not configured`) | logs |
 | Nothing at all | Tunnel/URL wrong | step 1 |
 
 ### 3. Is the page subscribed to the app?

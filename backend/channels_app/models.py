@@ -481,7 +481,7 @@ class Platform(models.Model):
 				"description": "Connect your Facebook Page to receive and respond to Messenger conversations with AI-powered responses.",
 				"icon": "facebook",
 				"is_active": True,
-				"webhook_path": "/webhooks/facebook/",
+				"webhook_path": "/webhooks/meta/",
 				"api_base_url": "https://graph.facebook.com/v18.0",
 				"documentation_url": "https://developers.facebook.com/docs/messenger-platform",
 			},
@@ -491,7 +491,7 @@ class Platform(models.Model):
 				"description": "Connect your WhatsApp Business account to handle customer conversations via the WhatsApp Cloud API.",
 				"icon": "whatsapp",
 				"is_active": True,
-				"webhook_path": "/webhooks/facebook/",  # one Meta callback URL, routed on payload "object"
+				"webhook_path": "/webhooks/meta/",  # one Meta callback URL, routed on payload "object"
 				"api_base_url": "https://graph.facebook.com/v18.0",
 				"documentation_url": "https://developers.facebook.com/docs/whatsapp/cloud-api",
 			},

@@ -8,7 +8,7 @@ Inbound and outbound text over the WhatsApp Cloud API, using the same reply pipe
 2. In WhatsApp Manager, get the **Phone Number ID** and the **WhatsApp Business Account ID**. The test number works for development, but it only messages up to 5 recipient numbers you have verified.
 3. Create a **System User** token with `whatsapp_business_messaging` and `whatsapp_business_management`. Temporary tokens expire after 24h.
 4. Under App Dashboard → WhatsApp → Configuration → Webhook:
-   - Callback URL: `https://<backend>/webhooks/facebook/` (the same endpoint as Messenger and Instagram)
+   - Callback URL: `https://<backend>/webhooks/meta/` (the same endpoint as Messenger and Instagram)
    - Verify token: any string, entered on the channel too
    - Subscribe to the `messages` field.
 5. Connect the channel in the dashboard (`POST /api/channels/channels`, `channel: "whatsapp"`) with `phone_number_id`, `business_account_id`, `access_token`, `verify_token`, `app_id`, `app_secret`, and a knowledge base.

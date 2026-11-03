@@ -17,7 +17,7 @@
     {
       "parameters": {
         "authentication": "none",
-        "url": "http://django:8000/webhooks/facebook/",
+        "url": "http://django:8000/webhooks/meta/",
         "options": {}
       },
       "type": "n8n-nodes-base.httpRequest",
