@@ -156,9 +156,8 @@ QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production
 IMAGE_SEARCH_ENABLED = env.bool("IMAGE_SEARCH_ENABLED", default=False)
 IMAGE_EMBEDDING_MODEL = env("IMAGE_EMBEDDING_MODEL", default="Qdrant/clip-ViT-B-32-vision")
 IMAGE_SEARCH_MIN_SCORE = env.float("IMAGE_SEARCH_MIN_SCORE", default=0.80)
-# Embedding / reranker model servers (text-embeddings-inference, docker-compose). Set: workers call them over HTTP
-# instead of loading both models (~1.3GB RAM per process), so reply workers can run many more processes.
-# Unset: models load in-process. Same models and outputs either way, so no reindex when switching.
+# Embedding / reranker model servers (text-embeddings-inference, docker-compose). Required: the backend image has no
+# torch or models of its own. Unset EMBEDDINGS_URL fails search/indexing; unset RERANKER_URL keeps retrieval order.
 EMBEDDINGS_URL = env("EMBEDDINGS_URL", default="")
 RERANKER_URL = env("RERANKER_URL", default="")
 # Cross-encoder score below which a retrieved chunk counts as unrelated. mmarco-mMiniLMv2 logits (Bengali/Banglish/

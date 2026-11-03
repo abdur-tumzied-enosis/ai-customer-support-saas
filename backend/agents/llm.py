@@ -56,6 +56,8 @@ def get_llm(provider: Optional[str] = None, model: Optional[str] = None, role: s
 	provider, model = resolve_model(provider, model, role)
 	if provider == "openrouter":
 		logger.warning("Using OpenRouter LLM - ensure your OPENROUTER_API_KEY is set and monitor usage to avoid unexpected costs.")
+		if kwargs.get("timeout") is not None:
+			kwargs["timeout"] = int(kwargs["timeout"] * 1000)  # ChatOpenRouter's timeout is ms; callers pass seconds like Gemini
 		return ChatOpenRouter(
 			model=model or OPENROUTER_DEFAULT_MODEL,
 			api_key=settings.OPENROUTER_API_KEY,

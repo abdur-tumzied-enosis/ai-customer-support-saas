@@ -1,6 +1,6 @@
 from unittest import mock
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
 
@@ -21,19 +21,17 @@ class Broken:
 		raise ConnectionError("qdrant down")
 
 
-class FakeReranker:
+def fake_rerank_scores(query, texts):
 	"""Scores a doc by its leading number: "9 open 9-5" → 9."""
-	def predict(self, pairs):
-		return [float(text.split()[0]) for _, text in pairs]
+	return [float(text.split()[0]) for text in texts]
 
 
 def deps(kb, web):
 	return ToolDeps(retriever_factory=lambda c: kb, retrieved_factory_for_crawler_url_context=lambda: web)
 
 
-@mock.patch.object(vector_store, "_reranker", FakeReranker())
+@mock.patch.object(vector_store, "_tei_rerank_scores", fake_rerank_scores)
 @mock.patch("agents.rag.settings.RERANK_MIN_SCORE", 0.0)
-@override_settings(RERANKER_URL="")  # use FakeReranker even where the TEI reranker is configured
 class MergedSearchTest(SimpleTestCase):
 	def search(self, kb, web, ctx=None):
 		ctx = ctx or Context(vector_collection="vc")
@@ -59,9 +57,8 @@ class MergedSearchTest(SimpleTestCase):
 		assert out.startswith("ERROR: search is unavailable")
 
 
-@mock.patch.object(vector_store, "_reranker", FakeReranker())
+@mock.patch.object(vector_store, "_tei_rerank_scores", fake_rerank_scores)
 @mock.patch("agents.rag.settings.RERANK_MIN_SCORE", 0.0)
-@override_settings(RERANKER_URL="")  # use FakeReranker even where the TEI reranker is configured
 class SearchFirstTest(SimpleTestCase):
 	def run_reply(self, history=None):
 		agent = mock.Mock()

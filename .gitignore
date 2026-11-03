@@ -1,4 +1,5 @@
 .env
+.env.prod
 documents/
 # Catalog and customer photos: default_storage writes under /app, the bind-mounted ./backend in dev
 backend/products/
@@ -13,3 +14,5 @@ nginx/certs/
 nginx/prod.conf
 .pem
 docker-compose.prod.yml
+note
+

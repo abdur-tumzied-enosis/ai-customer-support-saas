@@ -14,14 +14,12 @@ RUN crawl4ai-setup
 COPY backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Bake in the embedding and reranker models (agents/vector_store.py), BM25, and the CLIP image model for product
-# image search (agents/image_search.py). Loaded from the Hugging Face hub at runtime, each worker process's first
-# reply spent minutes on hub checks and hit process_reply's time limit.
-# HF_HUB_OFFLINE=1 below means only baked models load: changing EMBEDDING_MODEL / RERANKER_MODEL /
-# IMAGE_EMBEDDING_MODEL means changing the matching RUN line and rebuilding.
+# Bake in BM25 and the CLIP image model for product image search (agents/image_search.py). Loaded from the Hugging
+# Face hub at runtime, each worker process's first reply spent minutes on hub checks and hit process_reply's time limit.
+# The embedding and reranker models are not here: they run in the embeddings/reranker services (docker-compose).
+# HF_HUB_OFFLINE=1 below means only baked models load: changing IMAGE_EMBEDDING_MODEL means changing its RUN line.
 # fastembed's default cache is under /tmp; pin it so the baked BM25 model is found at runtime.
 ENV FASTEMBED_CACHE_PATH=/opt/fastembed
-RUN python -c "from sentence_transformers import SentenceTransformer, CrossEncoder; SentenceTransformer('intfloat/multilingual-e5-base'); CrossEncoder('cross-encoder/mmarco-mMiniLMv2-L12-H384-v1')"
 RUN python -c "from fastembed import SparseTextEmbedding; SparseTextEmbedding('Qdrant/bm25')"
 RUN python -c "from fastembed import ImageEmbedding; ImageEmbedding('Qdrant/clip-ViT-B-32-vision')"
 ENV HF_HUB_OFFLINE=1
