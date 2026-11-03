@@ -54,3 +54,11 @@ server {
         proxy_set_header Connection $http_connection;
     }
 }
+
+# Bare domain and www -> the app (the API only allows CORS from the app origin, so don't serve it here)
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name example.com www.example.com;
+    return 301 https://app.example.com$request_uri;
+}
