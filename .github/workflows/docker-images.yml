@@ -1,5 +1,5 @@
 # Builds the production images natively on arm64 (the server's arch) and pushes them to Docker Hub.
-# Repo settings needed: secrets DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (Read & Write), DOCKERHUB_REPO; variable NEXT_PUBLIC_API_URL (https://api.example.com).
+# Repo settings needed: secrets DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (Read & Write), DOCKERHUB_REPO, NEXT_PUBLIC_API_URL (https://api.example.com).
 name: docker-images
 
 on:
@@ -42,7 +42,7 @@ jobs:
           platforms: linux/arm64
           push: true
           build-args: |
-            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
           # :<name> is what the server pulls; :<name>-<sha> is kept for rollback
           tags: |
             ${{ env.IMAGE }}:${{ matrix.name }}
