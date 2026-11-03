@@ -12,3 +12,4 @@ backend/celerybeat-schedule*
 nginx/certs/
 nginx/prod.conf
 .pem
+docker-compose.prod.yml
