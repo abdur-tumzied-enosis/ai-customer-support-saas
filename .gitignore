@@ -10,3 +10,5 @@ backend/celerybeat-schedule*
 .superpowers/
 .docker/
 nginx/certs/
+nginx/prod.conf
+.pem

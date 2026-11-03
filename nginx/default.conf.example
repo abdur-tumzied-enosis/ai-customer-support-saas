@@ -1,5 +1,5 @@
 # The only public entry point. Cloudflare (SSL mode "Full (strict)") -> nginx :443 -> django / web on the
-# internal network. The nginx image runs envsubst on *.template at start, filling ${API_DOMAIN} / ${APP_DOMAIN}.
+# internal network. Copy to nginx/prod.conf (gitignored; mounted by docker-compose.prod.yml) and set server_name.
 # certs/origin.pem + certs/origin.key: Cloudflare Origin Certificate covering both domains (not in git).
 
 ssl_certificate     /etc/nginx/certs/origin.pem;
@@ -29,7 +29,7 @@ server {
 server {
     listen 443 ssl;
     http2 on;
-    server_name ${API_DOMAIN};
+    server_name api.example.com;
 
     # Collected by the django service on start (shared `static` volume): admin CSS/JS
     location /static/ {
@@ -46,7 +46,7 @@ server {
 server {
     listen 443 ssl;
     http2 on;
-    server_name ${APP_DOMAIN};
+    server_name app.example.com;
 
     location / {
         proxy_pass http://web:3000;
