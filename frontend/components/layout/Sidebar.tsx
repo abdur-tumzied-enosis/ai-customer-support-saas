@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { conversationApi } from "@/lib/api";
+import Logo from "@/components/layout/Logo";
 import {
 	LayoutDashboard,
 	MessageSquare,
@@ -67,7 +68,7 @@ export default function Sidebar() {
 		return (
 			<aside className="hidden md:flex md:w-64 border-r bg-background border-border">
 				<nav className="flex-1 p-4">
-					<div className="text-sm text-muted-foreground px-2 mb-2">Auto Magic Pro</div>
+					<Logo variant="icon" className="h-6 mx-2 mb-2 text-muted-foreground" />
 				</nav>
 			</aside>
 		);
@@ -85,11 +86,7 @@ export default function Sidebar() {
 				"flex items-center h-14 border-b border-border px-3",
 				isCollapsed ? "justify-center" : "justify-between"
 			)}>
-				{!isCollapsed && (
-					<span className="text-sm font-semibold text-foreground truncate">
-						Auto Magic Pro
-					</span>
-				)}
+				{!isCollapsed && <Logo className="h-5 text-foreground" />}
 				<Button
 					variant="ghost"
 					size="icon"

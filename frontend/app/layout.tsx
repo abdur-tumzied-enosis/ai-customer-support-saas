@@ -7,8 +7,11 @@ import CsrfTokenFetcher from "@/components/CsrfTokenFetcher";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-	title: "Auto Magic Pro",
+	metadataBase: new URL("https://tumaragent.com"),
+	title: { default: "TumarAgent", template: "%s · TumarAgent" },
 	description: "Multi-channel AI assistant dashboard",
+	applicationName: "TumarAgent",
+	openGraph: { siteName: "TumarAgent", title: "TumarAgent", description: "Multi-channel AI assistant dashboard", url: "/" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

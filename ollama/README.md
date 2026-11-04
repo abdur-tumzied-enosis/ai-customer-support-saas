@@ -1,4 +1,4 @@
-# Ollama Setup for Auto-Magic-Pro
+# Ollama Setup for TumarAgent
 
 This directory contains the Ollama configuration for local LLM inference.
 

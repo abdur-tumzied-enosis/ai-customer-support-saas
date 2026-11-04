@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import Logo from "@/components/layout/Logo";
 import {
 	LayoutDashboard,
 	MessageSquare,
@@ -52,9 +53,7 @@ export default function MobileSidebar({ open, onOpenChange }: MobileSidebarProps
 			>
 				{/* Header */}
 				<div className="flex items-center justify-between h-14 border-b border-border px-4">
-					<span className="text-sm font-semibold text-foreground">
-						Auto Magic Pro
-					</span>
+					<Logo className="h-5 text-foreground" />
 					<Button
 						variant="ghost"
 						size="icon"

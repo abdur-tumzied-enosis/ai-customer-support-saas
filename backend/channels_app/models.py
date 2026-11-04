@@ -3,7 +3,7 @@ Channels App Models
 ===================
 
 This module defines the core models for managing messaging channels, customer contacts,
-conversations, and messages within the Auto Magic Pro platform.
+conversations, and messages within the TumarAgent platform.
 
 Model Hierarchy:
     Project (from accounts)

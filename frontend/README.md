@@ -1,4 +1,4 @@
-# Auto Magic Pro — Frontend
+# TumarAgent — Frontend
 
 Next.js (App Router) + TypeScript + Tailwind starter for the UI.
 

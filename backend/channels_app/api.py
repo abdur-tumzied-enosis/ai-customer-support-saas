@@ -1091,7 +1091,7 @@ class ProjectWebhookTestView(APIView):
 	def post(self, request):
 		hook = _project_webhook(request)
 		try:
-			code = post_event(hook, build_event(hook.project_id, "ping", {"message": "Test event from Auto Magic Pro"}))
+			code = post_event(hook, build_event(hook.project_id, "ping", {"message": "Test event from TumarAgent"}))
 		except WebhookUrlError as e:
 			return _error("invalid_url", str(e), status.HTTP_400_BAD_REQUEST)
 		except requests.RequestException:

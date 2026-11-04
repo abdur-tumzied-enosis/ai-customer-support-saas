@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ArrowRight, Bot, FileText, MessageSquare, Zap, Shield, Users } from "lucide-react";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import SiteFooter from "@/components/layout/SiteFooter";
+import Logo from "@/components/layout/Logo";
 
 export default function LandingPage() {
 	return (
@@ -11,7 +12,7 @@ export default function LandingPage() {
 			{/* Header */}
 			<header className="border-b border-border">
 				<div className="container mx-auto px-6 py-4 flex items-center justify-between">
-					<div className="text-xl font-semibold">Auto Magic Pro</div>
+					<Logo className="h-7" />
 					<div className="flex items-center gap-4">
 						<ThemeToggle />
 						<Button variant="ghost" asChild>

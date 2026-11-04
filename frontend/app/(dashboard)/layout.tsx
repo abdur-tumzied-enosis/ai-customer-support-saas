@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRequireAuth } from "@/hooks/useAuth";
 import Sidebar from "@/components/layout/Sidebar";
 import MobileSidebar from "@/components/layout/MobileSidebar";
+import Logo from "@/components/layout/Logo";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -70,7 +71,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 							>
 								<Menu className="h-5 w-5" />
 							</Button>
-							<span className="text-sm font-medium text-foreground md:hidden">Auto Magic Pro</span>
+							<Logo variant="icon" className="h-6 text-foreground md:hidden" />
 						</div>
 						<div className="flex items-center gap-3">
 							<Input
