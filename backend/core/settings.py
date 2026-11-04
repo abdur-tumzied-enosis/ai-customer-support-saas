@@ -246,6 +246,7 @@ ADMIN_URL = env("ADMIN_URL", default="admin/")  # production: something unguessa
 # The public dashboard/marketing site (frontend). Widget "Powered by" + privacy links, emails.
 SITE_URL = env("SITE_URL", default="http://localhost:3000").rstrip("/")
 PRODUCT_NAME = env("PRODUCT_NAME", default="TumarAgent")
+EMAIL_LOGO_URL = env("EMAIL_LOGO_URL", default="")  # public PNG for the email header (app_logo/lockup_black.png); empty → text wordmark
 
 # Outgoing email (accounts.tasks.send_email): Gmail SMTP with an app password (Google account → Security → 2-Step
 # Verification → App passwords). No password set → emails print to the backend/celery log instead.

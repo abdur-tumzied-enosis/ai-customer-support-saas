@@ -62,6 +62,12 @@ class EmailFlowTests(TestCase):
 			unknown = self.client.post("/api/auth/password-reset/", {"email": "nobody@x.com"}, format="json")
 		assert unknown.json()["message"] == r.json()["message"] and len(mail.outbox) == 1
 		uid, token = re.search(r"uid=([^&]+)&token=(\S+)", mail.outbox[0].body).groups()
+		html, _ = mail.outbox[0].alternatives[0]
+		assert "<strong>Tumar</strong>Agent" in html and '<a href="' in html and f"reset-password?uid={uid}" in html
+		with self.settings(EMAIL_LOGO_URL="https://cdn.x/logo.png"):
+			send_email("bo@x.com", "s", "b")
+		html, _ = mail.outbox[-1].alternatives[0]
+		assert '<img src="https://cdn.x/logo.png" alt="TumarAgent"' in html and "<strong>Tumar</strong>" not in html
 		bad = self.client.post("/api/auth/password-reset/confirm/", {"uid": uid, "token": "nope", "new_password": "new-pass-456"}, format="json")
 		assert bad.status_code == 400
 		ok = self.client.post("/api/auth/password-reset/confirm/", {"uid": uid, "token": token, "new_password": "new-pass-456"}, format="json")
