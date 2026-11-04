@@ -247,6 +247,18 @@ ADMIN_URL = env("ADMIN_URL", default="admin/")  # production: something unguessa
 SITE_URL = env("SITE_URL", default="http://localhost:3000").rstrip("/")
 PRODUCT_NAME = env("PRODUCT_NAME", default="Auto Magic Pro")
 
+# Outgoing email (accounts.tasks.send_email): Gmail SMTP with an app password (Google account → Security → 2-Step
+# Verification → App passwords). No password set → emails print to the backend/celery log instead.
+EMAIL_HOST = env("EMAIL_HOST", default="smtp.gmail.com")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS = True
+EMAIL_TIMEOUT = 20
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST_PASSWORD else "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default=f"{PRODUCT_NAME} <{EMAIL_HOST_USER or 'noreply@localhost'}>")
+PASSWORD_RESET_TIMEOUT = 60 * 60  # reset links last an hour
+
 # HTTPS hardening; TLS terminates at the reverse proxy, which must set X-Forwarded-Proto
 if not DEBUG:
 	SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

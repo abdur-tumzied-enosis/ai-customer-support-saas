@@ -12,6 +12,8 @@ class User(AbstractUser):
     # Consent record: which terms/privacy version (frontend lib/site.ts termsVersion) was accepted, and when
     terms_version = models.CharField(max_length=32, blank=True, default="")
     terms_accepted_at = models.DateTimeField(null=True, blank=True)
+    # Signup sets False until the emailed code is entered; default True covers pre-existing and admin-made users
+    email_verified = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'auth_user'

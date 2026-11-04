@@ -1,29 +1,43 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { authApi } from "@/lib/api";
+import { formatError } from "@/lib/errors";
 
-export default function ResetPasswordPage() {
+// One page, two steps: no uid/token → ask for the email; the emailed link brings uid+token → set a new password
+function ResetPasswordForm() {
+	const params = useSearchParams();
+	const uid = params.get("uid");
+	const token = params.get("token");
 	const [email, setEmail] = useState("");
+	const [password, setPassword] = useState("");
+	const [confirmPassword, setConfirmPassword] = useState("");
+	const [error, setError] = useState("");
+	const [success, setSuccess] = useState("");
 	const [loading, setLoading] = useState(false);
-	const [success, setSuccess] = useState(false);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
+		setError("");
+		if (uid && token && password !== confirmPassword) {
+			setError("Passwords do not match");
+			return;
+		}
 		setLoading(true);
-
-		// TODO: Replace with actual API call
 		try {
-			// Simulate API call
-			await new Promise((resolve) => setTimeout(resolve, 1000));
-			setSuccess(true);
+			const res = uid && token
+				? await authApi.confirmPasswordReset({ uid, token, new_password: password })
+				: await authApi.requestPasswordReset(email.trim());
+			setSuccess(res.message);
 		} catch (err) {
-			// Handle error
+			setError(formatError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -34,39 +48,72 @@ export default function ResetPasswordPage() {
 			<CardHeader className="space-y-1">
 				<CardTitle className="text-2xl">Reset password</CardTitle>
 				<CardDescription>
-					Enter your email to receive a password reset link
+					{uid && token ? "Choose a new password" : "Enter your email to receive a password reset link"}
 				</CardDescription>
 			</CardHeader>
 			<CardContent>
 				{success ? (
 					<Alert>
-						<AlertDescription>
-							If an account with that email exists, we&apos;ve sent you a password reset link.
-						</AlertDescription>
+						<AlertDescription>{success}</AlertDescription>
 					</Alert>
 				) : (
 					<form onSubmit={handleSubmit} className="space-y-4">
-						<div className="space-y-2">
-							<Label htmlFor="email">Email</Label>
-							<Input
-								id="email"
-								type="email"
-								placeholder="you@example.com"
-								value={email}
-								onChange={(e) => setEmail(e.target.value)}
-								required
-								disabled={loading}
-							/>
-						</div>
+						{error && (
+							<Alert variant="destructive">
+								<AlertDescription>{error}</AlertDescription>
+							</Alert>
+						)}
+						{uid && token ? (
+							<>
+								<div className="space-y-2">
+									<Label htmlFor="password">New password</Label>
+									<Input
+										id="password"
+										type="password"
+										autoComplete="new-password"
+										value={password}
+										onChange={(e) => setPassword(e.target.value)}
+										required
+										minLength={8}
+										disabled={loading}
+									/>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="confirm-password">Confirm password</Label>
+									<Input
+										id="confirm-password"
+										type="password"
+										autoComplete="new-password"
+										value={confirmPassword}
+										onChange={(e) => setConfirmPassword(e.target.value)}
+										required
+										disabled={loading}
+									/>
+								</div>
+							</>
+						) : (
+							<div className="space-y-2">
+								<Label htmlFor="email">Email</Label>
+								<Input
+									id="email"
+									type="email"
+									placeholder="you@example.com"
+									value={email}
+									onChange={(e) => setEmail(e.target.value)}
+									required
+									disabled={loading}
+								/>
+							</div>
+						)}
 						<Button type="submit" className="w-full" disabled={loading}>
-							{loading ? "Sending..." : "Send reset link"}
+							{loading ? "Sending..." : uid && token ? "Set new password" : "Send reset link"}
 						</Button>
 					</form>
 				)}
 			</CardContent>
 			<CardFooter className="flex flex-col space-y-4">
 				<div className="text-sm text-center text-muted-foreground">
-					Remember your password?{" "}
+					{success && uid ? "Ready?" : "Remember your password?"}{" "}
 					<Link href="/sign-in" className="text-primary hover:underline font-medium">
 						Sign in
 					</Link>
@@ -76,4 +123,10 @@ export default function ResetPasswordPage() {
 	);
 }
 
-
+export default function ResetPasswordPage() {
+	return (
+		<Suspense>
+			<ResetPasswordForm />
+		</Suspense>
+	);
+}

@@ -10,13 +10,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useRouter } from "next/navigation";
 import { authApi } from "@/lib/api";
 import { formatError } from "@/lib/errors";
-import { useRedirectIfAuthenticated, useAuth } from "@/hooks/useAuth";
+import { useRedirectIfAuthenticated } from "@/hooks/useAuth";
 import { site } from "@/lib/site";
 
 export default function SignUpPage() {
 	const router = useRouter();
 	const { loading: authLoading } = useRedirectIfAuthenticated();
-	const { checkAuth } = useAuth();
 	const [firstName, setFirstName] = useState("");
 	const [lastName, setLastName] = useState("");
 	const [businessName, setBusinessName] = useState("");
@@ -70,11 +69,8 @@ export default function SignUpPage() {
 				terms_version: site.termsVersion, // the checkbox is required, so reaching here means accepted
 			});
 
-			// Refresh auth state in context
-			await checkAuth();
-
-			// Redirect to dashboard on success
-			router.push("/dashboard");
+			// Not signed in until the emailed code is entered
+			router.push(`/verify-email?email=${encodeURIComponent(email.trim())}`);
 		} catch (err) {
 			setError(formatError(err));
 		} finally {

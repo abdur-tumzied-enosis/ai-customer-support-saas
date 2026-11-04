@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
 	SignUpView, LoginView, LogoutView, CurrentUserView, CsrfTokenView,
 	ProfileView, ChangePasswordView, ExportDataView, DeleteAccountView,
+	VerifyEmailView, ResendVerificationView, PasswordResetRequestView, PasswordResetConfirmView,
 )
 
 urlpatterns = [
@@ -10,9 +11,12 @@ urlpatterns = [
 	path("logout/", LogoutView.as_view(), name="logout"),
 	path("me/", CurrentUserView.as_view(), name="current-user"),
 	path("csrf/", CsrfTokenView.as_view(), name="csrf-token"),
+	path("verify-email/", VerifyEmailView.as_view(), name="verify-email"),
+	path("verify-email/resend/", ResendVerificationView.as_view(), name="resend-verification"),
+	path("password-reset/", PasswordResetRequestView.as_view(), name="password-reset"),
+	path("password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
 	path("profile/", ProfileView.as_view(), name="profile"),
 	path("password/", ChangePasswordView.as_view(), name="change-password"),
 	path("export/", ExportDataView.as_view(), name="export-data"),
 	path("delete/", DeleteAccountView.as_view(), name="delete-account"),
 ]
-

@@ -49,6 +49,7 @@ class SignUpSerializer(serializers.Serializer):
 			last_name=last_name,
 			terms_version=validated_data.pop("terms_version"),
 			terms_accepted_at=timezone.now(),
+			email_verified=False,
 		)
 
 		# Always create a default project named "my_project"

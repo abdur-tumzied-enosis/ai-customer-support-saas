@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useRouter } from "next/navigation";
-import { authApi } from "@/lib/api";
+import { ApiError, authApi } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { useRedirectIfAuthenticated, useAuth } from "@/hooks/useAuth";
 
@@ -46,6 +46,10 @@ export default function SignInPage() {
 			// Redirect to dashboard on success
 			router.push("/dashboard");
 		} catch (err) {
+			if (err instanceof ApiError && err.code === "email_unverified") {
+				router.push(`/verify-email?email=${encodeURIComponent(email.trim())}`); // backend just sent a fresh code
+				return;
+			}
 			setError(formatError(err));
 		} finally {
 			setLoading(false);

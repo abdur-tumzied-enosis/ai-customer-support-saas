@@ -5,9 +5,13 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from rest_framework.throttling import SimpleRateThrottle
 from django.conf import settings
-from django.contrib.auth import login, logout, update_session_auth_hash
+from django.contrib.auth import get_user_model, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
 from django.core import serializers
+from django.core.cache import cache
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.storage import default_storage
 from django.core.serializers.json import DjangoJSONEncoder
@@ -17,9 +21,13 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
 from .serializers import SignUpSerializer, LoginSerializer, UserSerializer
 from .models import Project, ProjectUser
+from .tasks import queue_email
+import hmac
 import logging
+import secrets
 
 logger = logging.getLogger(__name__)
+User = get_user_model()
 
 
 class AuthThrottle(SimpleRateThrottle):
@@ -32,6 +40,139 @@ class AuthThrottle(SimpleRateThrottle):
 
 	def get_cache_key(self, request, view):
 		return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
+
+
+def _signed_in(request, user, message: str) -> Response:
+	login(request, user)
+	projects = ProjectUser.objects.filter(user=user).select_related("project")
+	projects_data = [
+		{
+			"id": pu.project.id,
+			"name": pu.project.name,
+			"slug": pu.project.slug,
+			"role": pu.role,
+		}
+		for pu in projects
+	]
+	return Response(
+		{
+			"success": True,
+			"message": message,
+			"data": {
+				"user": UserSerializer(user).data,
+				"projects": projects_data,
+			},
+		},
+		status=status.HTTP_200_OK,
+	)
+
+
+# --- Email verification (6-digit code) and password reset (signed link) ---------------------------------------
+
+OTP_TTL_SECONDS = 10 * 60
+OTP_MAX_ATTEMPTS = 5  # then the code is dropped and a new one must be requested
+OTP_RESEND_COOLDOWN_SECONDS = 60
+
+
+def send_verification_code(user) -> None:
+	code = f"{secrets.randbelow(10**6):06d}"
+	cache.set(f"email-otp:{user.pk}", {"code": code, "attempts": 0}, OTP_TTL_SECONDS)
+	queue_email(
+		user.email,
+		f"{code} is your {settings.PRODUCT_NAME} verification code",
+		f"Hi {user.first_name},\n\nYour verification code is {code}. It expires in 10 minutes.\n\n"
+		"If you didn't create an account, you can ignore this email.",
+	)
+
+
+def check_verification_code(user, code: str) -> bool:
+	# ponytail: attempt count is read-modify-write; parallel guesses can slip a few extra past it, the IP throttle caps that
+	key = f"email-otp:{user.pk}"
+	entry = cache.get(key)
+	if not entry:
+		return False
+	if hmac.compare_digest(entry["code"], code):
+		cache.delete(key)
+		return True
+	entry["attempts"] += 1
+	if entry["attempts"] >= OTP_MAX_ATTEMPTS:
+		cache.delete(key)
+	else:
+		cache.set(key, entry, OTP_TTL_SECONDS)
+	return False
+
+
+def _unverified_user(email: str):
+	return User.objects.filter(email__iexact=(email or "").strip(), email_verified=False, is_active=True).first()
+
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class VerifyEmailView(APIView):
+	permission_classes = [AllowAny]
+	throttle_classes = [AuthThrottle]
+
+	def post(self, request):
+		user = _unverified_user(request.data.get("email"))
+		if not user or not check_verification_code(user, str(request.data.get("code") or "").strip()):
+			raise ValidationError({"code": "Invalid or expired code"})
+		user.email_verified = True
+		user.save(update_fields=["email_verified"])
+		return _signed_in(request, user, "Email verified")
+
+
+class ResendVerificationView(APIView):
+	permission_classes = [AllowAny]
+	throttle_classes = [AuthThrottle]
+
+	def post(self, request):
+		user = _unverified_user(request.data.get("email"))
+		if user and cache.add(f"email-otp-sent:{user.pk}", 1, OTP_RESEND_COOLDOWN_SECONDS):
+			send_verification_code(user)
+		# Same answer either way: no account enumeration
+		return Response({"success": True, "message": "If that account needs verifying, a new code is on its way."})
+
+
+class PasswordResetRequestView(APIView):
+	permission_classes = [AllowAny]
+	throttle_classes = [AuthThrottle]
+
+	def post(self, request):
+		email = (request.data.get("email") or "").strip()
+		user = User.objects.filter(email__iexact=email, is_active=True).first() if email else None
+		if user:
+			uid = urlsafe_base64_encode(force_bytes(user.pk))
+			token = default_token_generator.make_token(user)
+			link = f"{settings.SITE_URL}/reset-password?uid={uid}&token={token}"
+			queue_email(
+				user.email,
+				f"Reset your {settings.PRODUCT_NAME} password",
+				f"Hi {user.first_name},\n\nReset your password here (valid for 1 hour):\n{link}\n\n"
+				"If you didn't ask for this, you can ignore this email; your password stays the same.",
+			)
+		return Response({"success": True, "message": "If an account with that email exists, we've sent a reset link."})
+
+
+class PasswordResetConfirmView(APIView):
+	permission_classes = [AllowAny]
+	throttle_classes = [AuthThrottle]
+
+	def post(self, request):
+		try:
+			user = User.objects.get(pk=force_str(urlsafe_base64_decode(request.data.get("uid") or "")))
+		except (User.DoesNotExist, ValueError, DjangoValidationError):
+			user = None
+		# The token is tied to the password hash, so it stops working once used
+		if not user or not default_token_generator.check_token(user, request.data.get("token") or ""):
+			raise ValidationError({"token": "This reset link is invalid or has expired"})
+		new_password = request.data.get("new_password") or ""
+		try:
+			validate_password(new_password, user)
+		except DjangoValidationError as e:
+			raise ValidationError({"new_password": e.messages})
+		user.set_password(new_password)
+		user.email_verified = True  # the link reached their inbox
+		user.save(update_fields=["password", "email_verified"])
+		return Response({"success": True, "message": "Password reset. You can sign in now."})
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -47,14 +188,15 @@ class SignUpView(APIView):
 			if not user:
 				raise ValidationError("Failed to create user")
 
-			# Log the user in
-			login(request, user)
+			# Signed in only once the emailed code is entered (VerifyEmailView)
+			send_verification_code(user)
 
 			response_data = {
 				"success": True,
 				"message": "User created successfully",
 				"data": {
 					"user": UserSerializer(user).data,
+					"verification_required": True,
 				},
 			}
 
@@ -73,31 +215,20 @@ class LoginView(APIView):
 		serializer = LoginSerializer(data=request.data)
 		if serializer.is_valid():
 			user = serializer.validated_data["user"]
-			login(request, user)
-
-			# Get user's projects
-			projects = ProjectUser.objects.filter(user=user).select_related("project")
-			projects_data = [
-				{
-					"id": pu.project.id,
-					"name": pu.project.name,
-					"slug": pu.project.slug,
-					"role": pu.role,
-				}
-				for pu in projects
-			]
-
-			return Response(
-				{
-					"success": True,
-					"message": "Login successful",
-					"data": {
-						"user": UserSerializer(user).data,
-						"projects": projects_data,
+			if not user.email_verified:
+				send_verification_code(user)  # password proven, so a fresh code is safe to send
+				return Response(
+					{
+						"success": False,
+						"error": {
+							"code": "email_unverified",
+							"message": "Verify your email: we sent you a new code.",
+							"details": None,
+						},
 					},
-				},
-				status=status.HTTP_200_OK,
-			)
+					status=status.HTTP_403_FORBIDDEN,
+				)
+			return _signed_in(request, user, "Login successful")
 		
 		# Raise ValidationError to use custom exception handler
 		raise ValidationError(serializer.errors)

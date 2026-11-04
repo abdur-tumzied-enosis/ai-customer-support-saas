@@ -178,6 +178,19 @@ export const authApi = {
 	changePassword: async (data: { current_password: string; new_password: string }) =>
 		apiFetch("/api/auth/password/", { method: "POST", json: data }),
 
+	// Signs the user in on success (same payload as login)
+	verifyEmail: async (data: { email: string; code: string }) =>
+		apiFetch("/api/auth/verify-email/", { method: "POST", json: data }),
+
+	resendVerification: async (email: string) =>
+		apiFetch("/api/auth/verify-email/resend/", { method: "POST", json: { email } }),
+
+	requestPasswordReset: async (email: string) =>
+		apiFetch("/api/auth/password-reset/", { method: "POST", json: { email } }),
+
+	confirmPasswordReset: async (data: { uid: string; token: string; new_password: string }) =>
+		apiFetch("/api/auth/password-reset/confirm/", { method: "POST", json: data }),
+
 	deleteAccount: async (password: string) => apiFetch("/api/auth/delete/", { method: "POST", json: { password } }),
 
 	// Top-level navigation: the session cookie goes along and Content-Disposition makes it a download
