@@ -1,11 +1,11 @@
 """
 Product catalog for image search: products with photos, plus the per-project image-search switch.
-Every route except features/ answers 404 feature_disabled unless the master, operator and tenant switches are all on.
+Catalog routes (products list/create/edit/delete, summary) are not image-gated; photo routes (images, confirm, file) answer 404 feature_disabled unless the master, operator and tenant switches are all on.
 """
 import uuid
 from decimal import Decimal, InvalidOperation
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.http import HttpResponseRedirect
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -136,18 +136,39 @@ def _parse_price(value):
 		d = Decimal(str(value).strip())
 	except InvalidOperation:
 		return None, "Price must be a number"
-	if not d.is_finite() or d < 0 or d >= Decimal(10) ** 10:
+	if not d.is_finite() or d < 0:
 		return None, "Price must be between 0 and 9,999,999,999.99"
-	return d.quantize(Decimal("0.01")), None
+	d = d.quantize(Decimal("0.01"))  # round first: 9999999999.996 becomes 10000000000.00 and must be rejected
+	if d >= Decimal(10) ** 10:
+		return None, "Price must be between 0 and 9,999,999,999.99"
+	return d, None
+
+
+def _clean_name(value):
+	"""(name, None) or (None, error)."""
+	if not isinstance(value, str):
+		return None, _kb_error("invalid_value", "name must be a string", status.HTTP_400_BAD_REQUEST)
+	name = value.strip()
+	if not 1 <= len(name) <= 255:
+		return None, _kb_error("invalid_name", "Name must be 1-255 characters", status.HTTP_400_BAD_REQUEST)
+	return name, None
+
+
+def _bad_body():
+	return _kb_error("invalid_value", "Request body must be an object", status.HTTP_400_BAD_REQUEST)
+
+
+def _duplicate():
+	return _kb_error("duplicate_external_id", "Another product already uses this ID", status.HTTP_400_BAD_REQUEST)
 
 
 def _clean_changes(data, kb, product):
 	"""({model field: value}, None) or (None, error) for the owner-editable fields present in `data`."""
 	out = {}
 	if "name" in data:
-		name = (data.get("name") or "").strip()
-		if not 1 <= len(name) <= 255:
-			return None, _kb_error("invalid_name", "Name must be 1-255 characters", status.HTTP_400_BAD_REQUEST)
+		name, err = _clean_name(data.get("name"))
+		if err:
+			return None, err
 		out["name"] = name
 	for key in ("description", "product_url"):
 		if key in data:
@@ -157,7 +178,7 @@ def _clean_changes(data, kb, product):
 	if "external_id" in data:
 		ext = str(data.get("external_id") or "").strip()[:255] or None
 		if ext and Product.objects.filter(kb=kb, external_id=ext).exclude(id=product.id).exists():
-			return None, _kb_error("duplicate_external_id", "Another product already uses this ID", status.HTTP_400_BAD_REQUEST)
+			return None, _duplicate()
 		out["external_id"] = ext
 	if "price" in data:
 		price, msg = _parse_price(data.get("price"))
@@ -188,25 +209,28 @@ class ProductListCreateView(APIView):
 		kb = _resolve_kb(pu.project, request.query_params.get("kb_id"))
 		if not kb:
 			return _not_found()
-		products = kb.products.all().select_related("kb__project").order_by("-created_at", "id")
+		products = kb.products.all().select_related("kb__project").prefetch_related("variants", "images").order_by("-created_at", "id")
 		return Response({"success": True, "data": [product_dict(p) for p in products]})
 
 	def post(self, request):
+		if not isinstance(request.data, dict):
+			return _bad_body()
 		pu = _project_user(request.user, request.data.get("project_id"))
 		if not pu:
 			return _denied()
-		_, err = _catalog_gate(request, pu.project, admin=False)
+		has_photos = "files" in request.data
+		# photos are confirmed by an admin only, so a member's uploading rows could never be confirmed
+		_, err = _catalog_gate(request, pu.project, admin=has_photos)
 		if err:
 			return err
-		has_photos = "files" in request.data
 		if has_photos and not pu.project.image_search_on:
 			return _disabled()
 		kb = _resolve_kb(pu.project, request.data.get("kb_id"))
 		if not kb:
 			return _not_found()
-		name = (request.data.get("name") or "").strip()
-		if not 1 <= len(name) <= 255:
-			return _kb_error("invalid_name", "Name must be 1-255 characters", status.HTTP_400_BAD_REQUEST)
+		_, err = _clean_name(request.data.get("name"))
+		if err:
+			return err
 		specs = []
 		if has_photos:
 			specs, err = _clean_specs(request, 0)
@@ -221,11 +245,17 @@ class ProductListCreateView(APIView):
 		for key, value in changes.items():
 			setattr(product, key, value)
 		product.status = compute_status(product, kb.product_fields.all())
-		if specs:
-			uploads = _reserve(product, specs)
-		else:
-			product.save()
-			uploads = []
+		try:
+			with transaction.atomic():
+				if specs:
+					uploads = _reserve(product, specs)
+				else:
+					product.save()
+					uploads = []
+		except IntegrityError:  # lost a race with a concurrent create using the same external_id
+			if product.external_id:
+				return _duplicate()
+			raise
 		data = {"product": product_dict(product), "uploads": uploads, "key_warning": not (product.external_id or product.sku)}
 		return Response({"success": True, "data": data}, status=status.HTTP_201_CREATED if specs else status.HTTP_200_OK)
 
@@ -245,6 +275,8 @@ class ProductDetailView(APIView):
 		product, err = _product_or_error(request, product_id, admin=False, catalog=True)
 		if err:
 			return err
+		if not isinstance(request.data, dict):
+			return _bad_body()
 		changes, err = _clean_changes(request.data, product.kb, product)
 		if err:
 			return err
@@ -259,7 +291,13 @@ class ProductDetailView(APIView):
 				return _kb_error("price_required", "A product needs a price to be active", status.HTTP_400_BAD_REQUEST)
 			product.status = "needs_info"  # un-hide, then compute_status decides
 		apply_owner_edit(product, changes, product.kb.product_fields.all())
-		product.save()
+		try:
+			with transaction.atomic():
+				product.save()
+		except IntegrityError:  # concurrent edit took this external_id
+			if "external_id" in changes:
+				return _duplicate()
+			raise
 		return Response({"success": True, "data": product_dict(product)})
 
 	def delete(self, request, product_id):

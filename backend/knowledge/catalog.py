@@ -104,7 +104,7 @@ def product_dict(p) -> dict:
 		"source": p.source,
 		"custom": p.custom,
 		"locked_fields": p.locked_fields,
-		"variants": [_variant_dict(v) for v in p.variants.all().order_by("label", "id")],
-		"images": [image_dict(i) for i in p.images.all().order_by("created_at", "id")],
+		"variants": [_variant_dict(v) for v in sorted(p.variants.all(), key=lambda v: (v.label, v.id))],
+		"images": [image_dict(i) for i in sorted(p.images.all(), key=lambda i: (i.created_at, i.id))],
 		"created_at": p.created_at.isoformat(),
 	}

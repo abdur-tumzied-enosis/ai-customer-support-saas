@@ -259,7 +259,9 @@ class ProductApiTests(TestCase):
 		img = ProductImage.objects.first()
 		self.pu.role = "member"
 		self.pu.save()
-		self.assertEqual(self.create().status_code, 201)  # members create and edit products
+		r = self.create()  # photos need confirm, which is admin-only, so a member cannot start an upload
+		self.assertEqual(r.status_code, 403)
+		self.assertEqual(r.json()["error"]["code"], "access_denied")
 		self.assertEqual(self.client.delete(f"/api/kb/products/{pid}/").status_code, 403)
 		self.assertEqual(self.confirm([img.id]).status_code, 403)
 		self.assertEqual(self.list_products().status_code, 200)
