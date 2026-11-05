@@ -827,3 +827,14 @@ def extract_product_candidates(kb_id: str, document_ids: list[str] | None = None
 
     kb = KnowledgeBase.objects.select_related("project").get(id=kb_id)
     return extract_candidates(kb, document_ids)
+
+
+@shared_task
+def fetch_product_images(product_id: str, image_srcs: list[str]) -> None:
+    """Download imported product photos (runs in the worker, never in the import request)."""
+    from .image_fetch import attach_product_images
+
+    product = Product.objects.select_related("kb__project").filter(id=product_id).first()
+    if product is None:
+        return
+    attach_product_images(product, image_srcs)
