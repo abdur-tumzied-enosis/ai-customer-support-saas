@@ -14,7 +14,7 @@ from django.core.files.storage import default_storage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from django.core.files.base import ContentFile
 from core.storage import ObjectTooLarge, delete_keys, read_capped, thumb_key
-from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, MAX_PRODUCT_IMAGE_BYTES, Product, ProductImage, product_image_path
+from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, MAX_PRODUCT_IMAGE_BYTES, Product, ProductImage, ProductSource, product_image_path
 from agents.vector_store import add_texts_to_collection
 from agents.image_search import NotAnImage, delete_images, embed_image, load_image, make_variants, upsert_image
 from usage.utils import record_image_usage
@@ -838,3 +838,38 @@ def fetch_product_images(product_id: str, image_srcs: list[str]) -> None:
     if product is None:
         return
     attach_product_images(product, image_srcs)
+
+
+@shared_task
+def sync_product_source(source_id: str) -> dict:
+    """Re-read one Sheet source with its saved mapping. Failures are saved on the source, never raised."""
+    from .product_sources import SheetNotPublic, TableError, apply_rows, fetch_sheet_csv, parse_table, sheet_export_url
+
+    source = ProductSource.objects.select_related("kb").filter(id=source_id, kind="sheet").first()
+    if source is None:
+        return {"error": "not_found"}
+    started = timezone.now()
+    try:
+        _, rows = parse_table("sheet.csv", fetch_sheet_csv(sheet_export_url(source.sheet_url)))
+        result = apply_rows(source.kb, source, rows, source.mapping, started)
+    except SheetNotPublic as e:
+        source.last_error = f"sheet_not_public: {e}"
+        source.save(update_fields=["last_error"])
+        return {"error": "sheet_not_public", "message": str(e)}
+    except (TableError, ValueError) as e:
+        source.last_error = f"{getattr(e, 'code', 'invalid_sheet')}: {e}"
+        source.save(update_fields=["last_error"])
+        return {"error": getattr(e, "code", "invalid_sheet"), "message": str(e)}
+    source.last_synced_at, source.last_error = started, ""
+    source.save(update_fields=["last_synced_at", "last_error"])
+    return result
+
+
+@shared_task
+def sync_product_sources() -> None:
+    """Hourly: sync every Sheet source. One failing source must not stop the others."""
+    for source_id in ProductSource.objects.filter(kind="sheet").values_list("id", flat=True):
+        try:
+            sync_product_source(str(source_id))
+        except Exception:
+            logger.exception("Product source %s sync crashed", source_id)

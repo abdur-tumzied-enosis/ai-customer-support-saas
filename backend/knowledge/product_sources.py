@@ -1,7 +1,9 @@
 import csv
 import io
 import re
+from urllib.parse import parse_qs, urlparse
 
+import requests
 from django.db.models import Q
 
 from .catalog import SourceRow, _attr_key, apply_source_row, normalise_name
@@ -166,3 +168,36 @@ def apply_rows(kb, source, rows: list[dict], mapping: dict, sync_started_at) -> 
 		product.save(update_fields=["status", "updated_at"])
 		result["hidden"] += 1
 	return result
+
+
+class SheetNotPublic(Exception):
+	pass
+
+
+_SHEET_ID = re.compile(r"^/spreadsheets/d/([A-Za-z0-9_-]+)")
+
+
+def sheet_export_url(sheet_url: str) -> str:
+	"""CSV export URL for a Google Sheet link. The host is fixed to docs.google.com (SSRF guard)."""
+	u = urlparse((sheet_url or "").strip())
+	m = _SHEET_ID.match(u.path)
+	if u.scheme != "https" or u.hostname != "docs.google.com" or not m:
+		raise ValueError("Paste a Google Sheets link (docs.google.com/spreadsheets/...)")
+	gid = (parse_qs(u.query).get("gid") or parse_qs(u.fragment).get("gid") or ["0"])[0]
+	if not gid.isdigit():
+		raise ValueError("Paste a Google Sheets link (docs.google.com/spreadsheets/...)")
+	return f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv&gid={gid}"
+
+
+def fetch_sheet_csv(url: str) -> bytes:
+	msg = "Share the sheet as 'Anyone with the link can view'."
+	try:
+		r = requests.get(url, timeout=15, allow_redirects=False)
+	except requests.RequestException:
+		raise SheetNotPublic("Could not reach Google Sheets. Try again later.")
+	# A redirect (to a login page) or non-200 means the sheet is not public.
+	if r.status_code != 200 or "text/html" in r.headers.get("Content-Type", "").lower() or r.content[:15].lstrip().lower().startswith((b"<!doctype", b"<html")):
+		raise SheetNotPublic(msg)
+	if len(r.content) > MAX_FILE_BYTES:
+		raise TableError("file_too_large", "The sheet is too large to import")
+	return r.content

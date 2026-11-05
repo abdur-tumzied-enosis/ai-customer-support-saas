@@ -14,7 +14,11 @@ from rest_framework.views import APIView
 from .candidate_views import _kb_for
 from .catalog import compute_status
 from .models import Product, ProductField, ProductSource
-from .product_sources import MAX_FILE_BYTES, TARGETS, TableError, apply_rows, guess_mapping, has_key, parse_table
+from .product_sources import (
+	MAX_FILE_BYTES, TARGETS, SheetNotPublic, TableError, apply_rows, fetch_sheet_csv, guess_mapping, has_key, parse_table,
+	sheet_export_url,
+)
+from .tasks import sync_product_source
 from .products import _bad_body, _catalog_gate, _denied, _not_found
 from .views import _kb_error, _project_user, _resolve_kb
 
@@ -274,3 +278,70 @@ def product_source_list(request):
 		return err
 	sources = kb.product_sources.order_by("-created_at", "id")
 	return Response({"success": True, "data": [_source_dict(s) for s in sources]})
+
+
+class SheetSourceCreateView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		kb, err = _kb_for(request, request.data, admin=True)
+		if err:
+			return err
+		sheet_url = str(request.data.get("sheet_url") or "").strip()
+		try:
+			data = fetch_sheet_csv(sheet_export_url(sheet_url))
+			headers, rows = parse_table("sheet.csv", data)
+		except ValueError as e:
+			return _bad("invalid_url", str(e))
+		except SheetNotPublic as e:
+			return _bad("sheet_not_public", str(e))
+		except TableError as e:
+			return _bad(e.code, e.message)
+		mapping, err = _clean_mapping(request.data.get("mapping"), headers)
+		if err:
+			return err
+		if not mapping.get("name"):
+			return _bad("name_required", "Choose which column holds the product name")
+		started = timezone.now()
+		with transaction.atomic():
+			source = ProductSource.objects.create(kb=kb, kind="sheet", mapping=mapping, sheet_url=sheet_url)
+			result = apply_rows(kb, source, rows, mapping, started)
+			source.last_synced_at = started
+			source.save(update_fields=["last_synced_at"])
+		return Response({"success": True, "data": {"source": _source_dict(source), "result": result}},
+			status=status.HTTP_201_CREATED)
+
+
+def _source_for(request, source_id):
+	"""(source, None) or (None, error); admin only."""
+	kb, err = _kb_for(request, request.data if request.method == "POST" else request.query_params, admin=True)
+	if err:
+		return None, err
+	source = kb.product_sources.filter(id=source_id).first()
+	return (source, None) if source else (None, _not_found())
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def product_source_sync(request, source_id):
+	source, err = _source_for(request, source_id)
+	if err:
+		return err
+	if source.kind != "sheet":
+		return _bad("not_a_sheet", "Only Google Sheet sources can be synced")
+	result = sync_product_source(str(source.id))
+	source.refresh_from_db()
+	if "error" in result:
+		return Response({"success": False, "error": {"code": result["error"], "message": result["message"]},
+			"data": {"source": _source_dict(source)}}, status=status.HTTP_400_BAD_REQUEST)
+	return Response({"success": True, "data": {"source": _source_dict(source), "result": result}})
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def product_source_delete(request, source_id):
+	source, err = _source_for(request, source_id)
+	if err:
+		return err
+	source.delete()  # products keep existing: source_ref is SET_NULL
+	return Response(status=status.HTTP_204_NO_CONTENT)
