@@ -971,12 +971,52 @@ export type ProductImage = {
 	thumb_url: string;
 };
 
+export type ProductStatus = "needs_info" | "active" | "hidden";
+
+export type ProductVariant = {
+	id?: string;
+	external_id: string | null;
+	sku: string;
+	label: string;
+	attributes: Record<string, string>;
+	price: string | null;
+	available: boolean;
+};
+
 export type Product = {
 	id: string;
+	kb_id: string;
+	external_id: string | null;
+	sku: string;
 	name: string;
 	description: string;
+	price: string | null;
+	currency: string;
+	available: boolean;
+	status: ProductStatus;
+	product_url: string;
+	source: string;
+	custom: Record<string, unknown>;
+	variants: ProductVariant[];
 	created_at: string;
 	images: ProductImage[];
+};
+
+export type ProductField = {
+	id: string;
+	kb_id: string;
+	key: string;
+	label: string;
+	kind: string;
+	choices: string[];
+	required: boolean;
+	show_to_agent: boolean;
+	position: number;
+};
+
+export type ProductPatch = Partial<Pick<Product, "name" | "description" | "sku" | "external_id" | "price" | "available" | "custom" | "product_url">> & {
+	status?: ProductStatus;
+	variants?: Omit<ProductVariant, "id">[];
 };
 
 export type Features = { image_search_available: boolean; image_search: boolean };
@@ -1032,9 +1072,34 @@ export const productApi = {
 	update: (id: string, data: { name?: string; description?: string }) =>
 		apiFetch<Product>(`/api/kb/products/${id}/`, { method: "PATCH", json: data }),
 
+	patch: async (id: string, data: ProductPatch) =>
+		(await apiFetch<Product>(`/api/kb/products/${id}/`, { method: "PATCH", json: data })).data,
+
+	// kb_id omitted: the backend uses the project's default KB
+	summary: async (projectId: string, kbId?: string) =>
+		(await apiFetch<{ counts: Record<ProductStatus, number>; currency: string }>(
+			`/api/kb/products/summary/?project_id=${encodeURIComponent(projectId)}${kbId ? `&kb_id=${encodeURIComponent(kbId)}` : ""}`
+		)).data,
+
 	remove: (id: string) => apiFetch<null>(`/api/kb/products/${id}/`, { method: "DELETE" }),
 
 	addImages: (id: string, files: File[]) => uploadProductPhotos(`/api/kb/products/${id}/images/`, {}, files),
 
 	removeImage: (imageId: string) => apiFetch<null>(`/api/kb/products/images/${imageId}/`, { method: "DELETE" }),
+};
+
+// Admin-only to change; any member can list
+export const productFieldApi = {
+	list: async (projectId: string, kbId: string) =>
+		(await apiFetch<ProductField[]>(
+			`/api/kb/product-fields/?project_id=${encodeURIComponent(projectId)}&kb_id=${encodeURIComponent(kbId)}`
+		)).data,
+
+	create: async (projectId: string, kbId: string, data: Partial<Omit<ProductField, "id" | "kb_id">>) =>
+		(await apiFetch<ProductField>("/api/kb/product-fields/", { method: "POST", json: { project_id: projectId, kb_id: kbId, ...data } })).data,
+
+	patch: async (id: string, data: Partial<Omit<ProductField, "id" | "kb_id">>) =>
+		(await apiFetch<ProductField>(`/api/kb/product-fields/${id}/`, { method: "PATCH", json: data })).data,
+
+	remove: (id: string) => apiFetch<null>(`/api/kb/product-fields/${id}/`, { method: "DELETE" }),
 };

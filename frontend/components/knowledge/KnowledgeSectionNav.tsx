@@ -31,7 +31,7 @@ type Props = {
 
 // One card per section, summarised from the lists the layout already holds.
 export default function KnowledgeSectionNav({ active, activeOnDesktopOnly = false }: Props) {
-	const { selectedKb, imageSearchOn, documents, documentsLoading, instructions, instructionsLoading, productStats, suggestionCount } = useKnowledge();
+	const { selectedKb, documents, documentsLoading, instructions, instructionsLoading, productStats, suggestionCount } = useKnowledge();
 
 	const docsPending = !selectedKb || (documentsLoading && documents.length === 0);
 	const files = documents.filter((d) => d.source_type !== "url");
@@ -52,7 +52,7 @@ export default function KnowledgeSectionNav({ active, activeOnDesktopOnly = fals
 	return (
 		<nav aria-label="Knowledge sections">
 			<ul className="space-y-2">
-				{KNOWLEDGE_SECTIONS.filter((s) => s.slug !== "products" || imageSearchOn).map(({ slug, name, icon: Icon }) => {
+				{KNOWLEDGE_SECTIONS.map(({ slug, name, icon: Icon }) => {
 					const isActive = slug === active;
 					return (
 						<li key={slug}>
@@ -70,6 +70,9 @@ export default function KnowledgeSectionNav({ active, activeOnDesktopOnly = fals
 										<span className="text-sm font-medium">{name}</span>
 										{slug === "suggestions" && !!suggestionCount && (
 											<Badge className="h-5 px-1.5 text-xs">{suggestionCount}</Badge>
+										)}
+										{slug === "products" && productStats && productStats !== "unavailable" && productStats.needsInfo > 0 && (
+											<Badge className="h-5 px-1.5 text-xs">{productStats.needsInfo}</Badge>
 										)}
 									</div>
 									<p className="truncate text-sm text-muted-foreground">{summaries[slug]}</p>
