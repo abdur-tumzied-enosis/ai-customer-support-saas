@@ -3,6 +3,7 @@ from .products import (
 	FeaturesView, ProductListCreateView, ProductDetailView, ProductImagesAddView,
 	ProductImageDetailView, ProductImageFileView, ProductImagesConfirmView,
 )
+from .catalog_views import product_summary
 from .suggestions import SuggestionDecisionView, SuggestionListView
 from .views import (
 	KnowledgeBaseListView, KnowledgeBaseDetailView,
@@ -40,6 +41,7 @@ urlpatterns = [
 	# Product catalog (image search)
 	path("features/", FeaturesView.as_view(), name="kb-features"),
 	path("products/", ProductListCreateView.as_view(), name="product-list-create"),
+	path("products/summary/", product_summary, name="product-summary"),
 	path("products/<uuid:product_id>/", ProductDetailView.as_view(), name="product-detail"),
 	path("products/<uuid:product_id>/images/", ProductImagesAddView.as_view(), name="product-images-add"),
 	path("products/images/confirm/", ProductImagesConfirmView.as_view(), name="product-images-confirm"),

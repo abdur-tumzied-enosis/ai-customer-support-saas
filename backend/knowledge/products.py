@@ -3,6 +3,7 @@ Product catalog for image search: products with photos, plus the per-project ima
 Every route except features/ answers 404 feature_disabled unless the master, operator and tenant switches are all on.
 """
 import uuid
+from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.http import HttpResponseRedirect
@@ -12,6 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.storage import delete_keys, object_size, presign_get, presign_put, thumb_key
+from .catalog import apply_owner_edit, compute_status, image_dict, product_dict
 from .models import MAX_IMAGES_PER_PRODUCT, MAX_PRODUCT_IMAGE_BYTES, Product, ProductImage, product_image_path
 from .tasks import embed_product_image
 from .views import _kb_error, _project_user, _resolve_kb
@@ -22,21 +24,6 @@ IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
 def _features(project) -> dict:
 	return {"image_search_available": project.image_search_available, "image_search": project.image_search_on}
-
-
-def _image_dict(img: ProductImage) -> dict:
-	url = f"/api/kb/products/images/{img.id}/file/"
-	return {"id": str(img.id), "status": img.status, "url": url, "thumb_url": f"{url}?size=thumb"}
-
-
-def _product_dict(p: Product) -> dict:
-	return {
-		"id": str(p.id),
-		"name": p.name,
-		"description": p.description,
-		"created_at": p.created_at.isoformat(),
-		"images": [_image_dict(i) for i in p.images.all().order_by("created_at", "id")],
-	}
 
 
 def _denied():
@@ -60,6 +47,16 @@ def _gate(request, project, admin: bool):
 		return None, _denied()
 	if not project.image_search_on:
 		return None, _disabled()
+	return pu, None
+
+
+def _catalog_gate(request, project, admin: bool):
+	"""(membership, None) or (None, error): membership and role checks only, no image-search switch."""
+	pu = _project_user(request.user, project.id)
+	if not pu:
+		return None, _not_found()
+	if admin and pu.role != "admin":
+		return None, _denied()
 	return pu, None
 
 
@@ -102,7 +99,7 @@ def _reserve(product: Product, specs) -> list:
 
 
 def _created(product: Product, uploads: list) -> Response:
-	return Response({"success": True, "data": {"product": _product_dict(product), "uploads": uploads}}, status=status.HTTP_201_CREATED)
+	return Response({"success": True, "data": {"product": product_dict(product), "uploads": uploads}}, status=status.HTTP_201_CREATED)
 
 
 class FeaturesView(APIView):
@@ -129,6 +126,55 @@ class FeaturesView(APIView):
 		return Response({"success": True, "data": _features(project)})
 
 
+def _parse_price(value):
+	"""(Decimal | None, None) or (None, error message): empty clears the price."""
+	if value is None or (isinstance(value, str) and not value.strip()):
+		return None, None
+	if isinstance(value, bool):
+		return None, "Price must be a number"
+	try:
+		d = Decimal(str(value).strip())
+	except InvalidOperation:
+		return None, "Price must be a number"
+	if not d.is_finite() or d < 0 or d >= Decimal(10) ** 10:
+		return None, "Price must be between 0 and 9,999,999,999.99"
+	return d.quantize(Decimal("0.01")), None
+
+
+def _clean_changes(data, kb, product):
+	"""({model field: value}, None) or (None, error) for the owner-editable fields present in `data`."""
+	out = {}
+	if "name" in data:
+		name = (data.get("name") or "").strip()
+		if not 1 <= len(name) <= 255:
+			return None, _kb_error("invalid_name", "Name must be 1-255 characters", status.HTTP_400_BAD_REQUEST)
+		out["name"] = name
+	for key in ("description", "product_url"):
+		if key in data:
+			out[key] = str(data.get(key) or "")
+	if "sku" in data:
+		out["sku"] = str(data.get("sku") or "").strip()[:128]
+	if "external_id" in data:
+		ext = str(data.get("external_id") or "").strip()[:255] or None
+		if ext and Product.objects.filter(kb=kb, external_id=ext).exclude(id=product.id).exists():
+			return None, _kb_error("duplicate_external_id", "Another product already uses this ID", status.HTTP_400_BAD_REQUEST)
+		out["external_id"] = ext
+	if "price" in data:
+		price, msg = _parse_price(data.get("price"))
+		if msg:
+			return None, _kb_error("invalid_price", msg, status.HTTP_400_BAD_REQUEST)
+		out["price"] = price
+	if "available" in data:
+		if not isinstance(data.get("available"), bool):
+			return None, _kb_error("invalid_value", "available must be a boolean", status.HTTP_400_BAD_REQUEST)
+		out["available"] = data["available"]
+	if "custom" in data:
+		if not isinstance(data.get("custom"), dict):
+			return None, _kb_error("invalid_value", "custom must be an object", status.HTTP_400_BAD_REQUEST)
+		out["custom"] = data["custom"]
+	return out, None
+
+
 class ProductListCreateView(APIView):
 	permission_classes = [IsAuthenticated]
 
@@ -136,41 +182,59 @@ class ProductListCreateView(APIView):
 		pu = _project_user(request.user, request.query_params.get("project_id"))
 		if not pu:
 			return _denied()
-		_, err = _gate(request, pu.project, admin=False)
+		_, err = _catalog_gate(request, pu.project, admin=False)
 		if err:
 			return err
 		kb = _resolve_kb(pu.project, request.query_params.get("kb_id"))
 		if not kb:
 			return _not_found()
-		return Response({"success": True, "data": [_product_dict(p) for p in kb.products.all().order_by("-created_at", "id")]})
+		products = kb.products.all().select_related("kb__project").order_by("-created_at", "id")
+		return Response({"success": True, "data": [product_dict(p) for p in products]})
 
 	def post(self, request):
 		pu = _project_user(request.user, request.data.get("project_id"))
 		if not pu:
 			return _denied()
-		_, err = _gate(request, pu.project, admin=True)
+		_, err = _catalog_gate(request, pu.project, admin=False)
 		if err:
 			return err
+		has_photos = "files" in request.data
+		if has_photos and not pu.project.image_search_on:
+			return _disabled()
 		kb = _resolve_kb(pu.project, request.data.get("kb_id"))
 		if not kb:
 			return _not_found()
 		name = (request.data.get("name") or "").strip()
 		if not 1 <= len(name) <= 255:
 			return _kb_error("invalid_name", "Name must be 1-255 characters", status.HTTP_400_BAD_REQUEST)
-		specs, err = _clean_specs(request, 0)
+		specs = []
+		if has_photos:
+			specs, err = _clean_specs(request, 0)
+			if err:
+				return err
+			if not specs:
+				return _kb_error("no_images", "At least one photo is required", status.HTTP_400_BAD_REQUEST)
+		product = Product(kb=kb)
+		changes, err = _clean_changes(request.data, kb, product)
 		if err:
 			return err
-		if not specs:
-			return _kb_error("no_images", "At least one photo is required", status.HTTP_400_BAD_REQUEST)
-		product = Product(kb=kb, name=name, description=request.data.get("description") or "")
-		return _created(product, _reserve(product, specs))
+		for key, value in changes.items():
+			setattr(product, key, value)
+		product.status = compute_status(product, kb.product_fields.all())
+		if specs:
+			uploads = _reserve(product, specs)
+		else:
+			product.save()
+			uploads = []
+		data = {"product": product_dict(product), "uploads": uploads, "key_warning": not (product.external_id or product.sku)}
+		return Response({"success": True, "data": data}, status=status.HTTP_201_CREATED if specs else status.HTTP_200_OK)
 
 
-def _product_or_error(request, product_id, admin: bool):
+def _product_or_error(request, product_id, admin: bool, catalog: bool = False):
 	product = Product.objects.filter(id=product_id).select_related("kb__project").first()
 	if not product:
 		return None, _not_found()
-	_, err = _gate(request, product.kb.project, admin)
+	_, err = (_catalog_gate if catalog else _gate)(request, product.kb.project, admin)
 	return (None, err) if err else (product, None)
 
 
@@ -178,21 +242,28 @@ class ProductDetailView(APIView):
 	permission_classes = [IsAuthenticated]
 
 	def patch(self, request, product_id):
-		product, err = _product_or_error(request, product_id, admin=True)
+		product, err = _product_or_error(request, product_id, admin=False, catalog=True)
 		if err:
 			return err
-		if "name" in request.data:
-			name = (request.data.get("name") or "").strip()
-			if not 1 <= len(name) <= 255:
-				return _kb_error("invalid_name", "Name must be 1-255 characters", status.HTTP_400_BAD_REQUEST)
-			product.name = name
-		if "description" in request.data:
-			product.description = request.data.get("description") or ""
+		changes, err = _clean_changes(request.data, product.kb, product)
+		if err:
+			return err
+		requested = request.data.get("status")
+		if "status" in request.data and requested not in ("active", "needs_info", "hidden"):
+			return _kb_error("invalid_status", "status must be active, needs_info or hidden", status.HTTP_400_BAD_REQUEST)
+		if requested == "hidden":
+			changes["status"] = "hidden"
+		elif requested in ("active", "needs_info"):
+			price = changes["price"] if "price" in changes else product.price
+			if requested == "active" and price is None:
+				return _kb_error("price_required", "A product needs a price to be active", status.HTTP_400_BAD_REQUEST)
+			product.status = "needs_info"  # un-hide, then compute_status decides
+		apply_owner_edit(product, changes, product.kb.product_fields.all())
 		product.save()
-		return Response({"success": True, "data": _product_dict(product)})
+		return Response({"success": True, "data": product_dict(product)})
 
 	def delete(self, request, product_id):
-		product, err = _product_or_error(request, product_id, admin=True)
+		product, err = _product_or_error(request, product_id, admin=True, catalog=True)
 		if err:
 			return err
 		product.delete()
@@ -266,7 +337,7 @@ class ProductImagesConfirmView(APIView):
 				transaction.on_commit(lambda i=str(img.id): embed_product_image.delay(i))
 			else:
 				delete_keys(img.file.name)
-		return Response({"success": True, "data": [_image_dict(i) for i in images]})
+		return Response({"success": True, "data": [image_dict(i) for i in images]})
 
 
 class ProductImageFileView(APIView):

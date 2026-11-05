@@ -76,3 +76,35 @@ def apply_owner_edit(product, changes: dict, fields) -> None:
 	product.locked_fields = locked
 	if "status" not in changes:
 		product.status = compute_status(product, fields)
+
+
+def image_dict(img) -> dict:
+	url = f"/api/kb/products/images/{img.id}/file/"
+	return {"id": str(img.id), "status": img.status, "url": url, "thumb_url": f"{url}?size=thumb"}
+
+
+def _variant_dict(v) -> dict:
+	return {"id": str(v.id), "external_id": v.external_id, "sku": v.sku, "label": v.label, "attributes": v.attributes,
+		"price": None if v.price is None else str(v.price), "available": v.available}
+
+
+def product_dict(p) -> dict:
+	return {
+		"id": str(p.id),
+		"kb_id": str(p.kb_id),
+		"external_id": p.external_id,
+		"sku": p.sku,
+		"name": p.name,
+		"description": p.description,
+		"price": None if p.price is None else str(p.price),
+		"currency": p.kb.project.currency,
+		"available": p.available,
+		"status": p.status,
+		"product_url": p.product_url,
+		"source": p.source,
+		"custom": p.custom,
+		"locked_fields": p.locked_fields,
+		"variants": [_variant_dict(v) for v in p.variants.all().order_by("label", "id")],
+		"images": [image_dict(i) for i in p.images.all().order_by("created_at", "id")],
+		"created_at": p.created_at.isoformat(),
+	}
