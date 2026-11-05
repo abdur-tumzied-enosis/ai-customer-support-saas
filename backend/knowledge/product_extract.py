@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 MAX_PAGES_PER_RUN = 50
 MAX_CHARS_PER_PAGE = 24000
 MAX_CANDIDATES_PER_PAGE = 30
+MAX_VARIANTS = 20
 EXTRACT_MAX_TOKENS = 4096
 COMPARED_FIELDS = ("description", "sku", "external_id", "price")
 
@@ -85,16 +86,22 @@ def _changes(product, payload: dict) -> dict:
 	return changes
 
 
+def _cut(value, n: int):
+	return value if value is None else str(value)[:n]
+
+
 def _candidate(kb, doc, url: str, item: ExtractedProduct):
 	srcs = {i.get("src") for i in doc.images_metadata or [] if isinstance(i, dict)}
 	variants = [
-		{"label": v.label, "sku": v.sku, "price": _price_str(parse_price(v.price_text)), "attributes": v.attributes}
-		for v in item.variants
+		{"label": _cut(v.label, 255), "sku": _cut(v.sku, 128), "price": _price_str(parse_price(v.price_text)),
+			"attributes": {_cut(k, 255): _cut(a, 255) for k, a in v.attributes.items()}}
+		for v in item.variants[:MAX_VARIANTS]
 	]
 	payload = {
-		"description": item.description, "external_id": item.external_id or None, "sku": item.sku,
-		"price": _price_str(parse_price(item.price_text)), "variants": variants,
-		"image_srcs": [s for s in item.image_srcs if s in srcs], "custom": item.custom,
+		"description": _cut(item.description, 2000), "external_id": _cut(item.external_id or None, 255),
+		"sku": _cut(item.sku, 128), "price": _price_str(parse_price(item.price_text)), "variants": variants,
+		"image_srcs": [s for s in item.image_srcs if s in srcs],
+		"custom": {_cut(k, 255): _cut(v, 255) for k, v in item.custom.items()},
 	}
 	first_attrs = variants[0]["attributes"] if variants else {}
 	product, _ = match_product(kb, payload["external_id"], payload["sku"], item.name, first_attrs)
@@ -103,31 +110,41 @@ def _candidate(kb, doc, url: str, item: ExtractedProduct):
 		changes = _changes(product, payload)
 		if not changes:
 			return None
+	name = item.name[:255]
+	if ProductCandidate.objects.filter(kb=kb, page_url=url, name=name, status="pending").exists():
+		return None
 	return ProductCandidate(
-		kb=kb, document=doc, page_url=url, name=item.name[:255], payload=payload,
+		kb=kb, document=doc, page_url=url, name=name, payload=payload,
 		confidence=min(1.0, max(0.0, float(item.confidence))), matched_product=product, changes=changes,
 	)
 
 
 def extract_candidates(kb: KnowledgeBase, document_ids: list[str] | None = None) -> int:
 	"""Write review candidates from the KB's pages. Never creates or edits a Product."""
+	ignored = list(IgnoredProductPage.objects.filter(kb=kb).values_list("url", flat=True))
 	docs = Document.objects.filter(kb=kb).exclude(markdown_content="").order_by("created_at")
 	if document_ids:
 		docs = docs.filter(id__in=document_ids)
-	ignored = set(IgnoredProductPage.objects.filter(kb=kb).values_list("url", flat=True))
-	created = 0
+	if ignored:
+		docs = docs.exclude(page_url__in=ignored).exclude(page_url="", uri__in=ignored)
+	created = attempted = failed = 0
 	for doc in docs[:MAX_PAGES_PER_RUN]:
 		url = doc.page_url or doc.uri
 		if url in ignored or not doc.markdown_content.strip():
 			continue
-		images = "\n".join(str(i.get("src")) for i in doc.images_metadata or [] if isinstance(i, dict) and i.get("src"))
-		user = f"URL: {url}\nTitle: {doc.page_title}\n\nImages:\n{images}\n\nContent:\n{doc.markdown_content[:MAX_CHARS_PER_PAGE]}"
+		attempted += 1
 		try:
+			images = "\n".join(str(i.get("src")) for i in doc.images_metadata or [] if isinstance(i, dict) and i.get("src"))
+			user = f"URL: {url}\nTitle: {doc.page_title}\n\nImages:\n{images}\n\nContent:\n{doc.markdown_content[:MAX_CHARS_PER_PAGE]}"
 			result = _ask(kb, doc, user)
+			rows = [c for c in (_candidate(kb, doc, url, p) for p in result.products[:MAX_CANDIDATES_PER_PAGE]) if c]
+			ProductCandidate.objects.bulk_create(rows)
 		except Exception:
+			failed += 1
 			logger.exception(f"Product extraction failed for {url!r}")
 			continue
-		rows = [c for c in (_candidate(kb, doc, url, p) for p in result.products[:MAX_CANDIDATES_PER_PAGE]) if c]
-		ProductCandidate.objects.bulk_create(rows)
 		created += len(rows)
+	if attempted and failed == attempted:
+		raise RuntimeError(f"product extraction: all {attempted} pages failed")
+	logger.info(f"Product extraction: attempted={attempted} failed={failed} candidates={created}")
 	return created
