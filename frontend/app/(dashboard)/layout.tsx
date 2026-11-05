@@ -19,7 +19,7 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import Link from "next/link";
-import { LogOut, Settings, Menu } from "lucide-react";
+import { LogOut, Settings, Menu, Building2 } from "lucide-react";
 import { authApi } from "@/lib/api";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -97,6 +97,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 										<Link href="/settings">
 											<Settings className="mr-2 h-4 w-4" />
 											<span>Account settings</span>
+										</Link>
+									</DropdownMenuItem>
+									<DropdownMenuItem asChild>
+										<Link href="/project-settings">
+											<Building2 className="mr-2 h-4 w-4" />
+											<span>Project settings</span>
 										</Link>
 									</DropdownMenuItem>
 									<DropdownMenuSeparator />

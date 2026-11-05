@@ -1007,6 +1007,19 @@ export const featuresApi = {
 		})).data,
 };
 
+export type ProjectSettings = { project_id: string; name: string; currency: string };
+
+export const projectSettingsApi = {
+	get: async (projectId: string) =>
+		(await apiFetch<ProjectSettings>(`/api/projects/settings/?project_id=${encodeURIComponent(projectId)}`)).data,
+
+	update: async (projectId: string, data: { name?: string; currency?: string }) =>
+		(await apiFetch<ProjectSettings>("/api/projects/settings/", {
+			method: "PATCH",
+			json: { project_id: projectId, ...data },
+		})).data,
+};
+
 export const productApi = {
 	list: async (projectId: string, kbId: string) =>
 		(await apiFetch<Product[]>(
