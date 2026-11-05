@@ -146,6 +146,8 @@ def apply_source_row(kb, source, row: SourceRow, sync_started_at, fields=None) -
 				new.save()
 		except IntegrityError:
 			return "rejected"
+		if row.attributes:  # a variant carries the attributes so the next sync matches this row by name + attributes
+			ProductVariant.objects.create(product=new, label=row.variant_label, attributes=row.attributes)
 		return "created"
 
 	locked = set(product.locked_fields or [])
@@ -172,7 +174,8 @@ def apply_source_row(kb, source, row: SourceRow, sync_started_at, fields=None) -
 	product.source_ref = source
 	if product.status == "hidden" and "status" not in locked:
 		product.status = "needs_info"  # back in the source after a removal: let compute_status decide
-	product.status = compute_status(product, fields)
+	if "status" not in locked or product.price is None:  # a locked status holds, except active needs a price (DB constraint)
+		product.status = compute_status(product, fields)
 	cleared = had_price and product.price is None
 	changed = before != snapshot()
 	product.last_seen_at = sync_started_at

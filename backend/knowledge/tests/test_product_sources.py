@@ -111,6 +111,36 @@ class ProductSourceTests(TestCase):
 		self.assertTrue(res["rejected"][0]["message"])
 		self.assertEqual(Product.objects.get(external_id="A1").name, "Shoe")
 
+	def test_same_name_different_variant_makes_two_products_and_resync_is_stable(self):
+		text = "name,price,size\nShirt,100,S\nShirt,120,L\n"
+		res = self.upload(text).json()["data"]["result"]
+		self.assertEqual((res["created"], res["updated"], res["rejected"]), (2, 0, []))
+		self.assertEqual(Product.objects.filter(kb=self.kb).count(), 2)
+		res = self.upload(text).json()["data"]["result"]
+		self.assertEqual((res["created"], res["updated"], res["unchanged"]), (0, 0, 2))
+		self.assertEqual(Product.objects.filter(kb=self.kb).count(), 2)
+
+	def test_repeated_name_without_key_or_variant_rejected(self):
+		res = self.upload("name,price\nShoe,100\nshoe ,200\n").json()["data"]["result"]
+		self.assertEqual(res["created"], 1)
+		self.assertEqual([r["row"] for r in res["rejected"]], [3])
+		self.assertEqual(str(Product.objects.get(kb=self.kb).price), "100.00")
+
+	def test_locked_status_survives_sync(self):
+		self.upload("id,name,price\nA1,Shoe,100\n")
+		Product.objects.filter(external_id="A1").update(status="needs_info", locked_fields=["status"])
+		self.upload("id,name,price\nA1,Shoe,150\n")  # compute_status alone would make it active
+		p = Product.objects.get(external_id="A1")
+		self.assertEqual((str(p.price), p.status), ("150.00", "needs_info"))
+
+	def test_locked_active_status_still_needs_info_when_price_cleared(self):
+		self.upload("id,name,price\nA1,Shoe,100\n")
+		Product.objects.filter(external_id="A1").update(locked_fields=["status"])
+		with patch("knowledge.catalog.queue_email"):
+			self.upload("id,name,price\nA1,Shoe,\n")  # DB constraint: active requires a price
+		p = Product.objects.get(external_id="A1")
+		self.assertEqual((p.price, p.status), (None, "needs_info"))
+
 	def test_key_warning_when_no_key_column(self):
 		r = self.client.post(BASE + "csv/preview/", self.body(csv_file("name,price\nShoe,100\n")), format="multipart")
 		self.assertTrue(r.json()["data"]["key_warning"])

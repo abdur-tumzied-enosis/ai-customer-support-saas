@@ -4,7 +4,7 @@ import re
 
 from django.db.models import Q
 
-from .catalog import SourceRow, apply_source_row
+from .catalog import SourceRow, _attr_key, apply_source_row, normalise_name
 from .models import Product
 
 TARGETS = ["external_id", "sku", "name", "price", "description", "available", "variant_label", "product_url"]
@@ -122,10 +122,12 @@ def _source_row(raw: dict, mapping: dict) -> SourceRow:
 		return None if not col else raw.get(col, "").strip()
 
 	available = get("available")
+	variant = get("variant_label") or ""
 	return SourceRow(
 		external_id=get("external_id") or None, sku=get("sku") or "", name=get("name") or "",
 		price_text=get("price"), available=None if available is None or available == "" else _to_available(available),
-		description=get("description"), product_url=get("product_url"), variant_label=get("variant_label") or "",
+		description=get("description"), product_url=get("product_url"), variant_label=variant,
+		attributes={"variant": variant} if variant else {},
 		custom={k[7:]: raw.get(col, "").strip() for k, col in mapping.items() if k.startswith("custom:") and col},
 	)
 
@@ -135,10 +137,15 @@ def apply_rows(kb, source, rows: list[dict], mapping: dict, sync_started_at) -> 
 	fields = list(kb.product_fields.all())
 	result = {"created": 0, "updated": 0, "unchanged": 0, "hidden": 0, "rejected": []}
 	seen_ids: set[str] = set()
+	seen_names: set[tuple] = set()
 	for n, raw in enumerate(rows, start=2):  # row 1 is the header
 		row = _source_row(raw, mapping)
 		if row.external_id and row.external_id in seen_ids:
 			result["rejected"].append({"row": n, "message": f"ID {row.external_id} already appears earlier in this file"})
+			continue
+		name_key = None if row.external_id else (normalise_name(row.name), _attr_key(row.attributes))
+		if name_key and name_key[0] and name_key in seen_names:
+			result["rejected"].append({"row": n, "message": "This name already appears earlier in this file"})
 			continue
 		outcome = apply_source_row(kb, source, row, sync_started_at, fields)
 		if outcome == "rejected":
@@ -147,6 +154,8 @@ def apply_rows(kb, source, rows: list[dict], mapping: dict, sync_started_at) -> 
 			continue
 		if row.external_id:
 			seen_ids.add(row.external_id)
+		elif name_key:
+			seen_names.add(name_key)
 		result[outcome] += 1
 	stale = Product.objects.filter(source_ref=source).exclude(status="hidden").filter(
 		Q(last_seen_at__isnull=True) | Q(last_seen_at__lt=sync_started_at))
