@@ -4,6 +4,7 @@ from .products import (
 	ProductImageDetailView, ProductImageFileView, ProductImagesConfirmView,
 )
 from .catalog_views import ProductFieldDetailView, ProductFieldListCreateView, product_summary
+from .candidate_views import candidate_ignore_page, candidate_import, candidate_list, product_extract
 from .suggestions import SuggestionDecisionView, SuggestionListView
 from .views import (
 	KnowledgeBaseListView, KnowledgeBaseDetailView,
@@ -42,6 +43,10 @@ urlpatterns = [
 	path("features/", FeaturesView.as_view(), name="kb-features"),
 	path("products/", ProductListCreateView.as_view(), name="product-list-create"),
 	path("products/summary/", product_summary, name="product-summary"),
+	path("products/candidates/", candidate_list, name="product-candidates"),
+	path("products/candidates/import/", candidate_import, name="product-candidates-import"),
+	path("products/candidates/ignore-page/", candidate_ignore_page, name="product-candidates-ignore-page"),
+	path("products/extract/", product_extract, name="product-extract"),
 	path("products/<uuid:product_id>/", ProductDetailView.as_view(), name="product-detail"),
 	path("products/<uuid:product_id>/images/", ProductImagesAddView.as_view(), name="product-images-add"),
 	path("products/images/confirm/", ProductImagesConfirmView.as_view(), name="product-images-confirm"),
