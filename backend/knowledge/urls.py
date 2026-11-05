@@ -3,7 +3,7 @@ from .products import (
 	FeaturesView, ProductListCreateView, ProductDetailView, ProductImagesAddView,
 	ProductImageDetailView, ProductImageFileView, ProductImagesConfirmView,
 )
-from .catalog_views import product_summary
+from .catalog_views import ProductFieldDetailView, ProductFieldListCreateView, product_summary
 from .suggestions import SuggestionDecisionView, SuggestionListView
 from .views import (
 	KnowledgeBaseListView, KnowledgeBaseDetailView,
@@ -47,6 +47,9 @@ urlpatterns = [
 	path("products/images/confirm/", ProductImagesConfirmView.as_view(), name="product-images-confirm"),
 	path("products/images/<uuid:image_id>/", ProductImageDetailView.as_view(), name="product-image-detail"),
 	path("products/images/<uuid:image_id>/file/", ProductImageFileView.as_view(), name="product-image-file"),
+
+	path("product-fields/", ProductFieldListCreateView.as_view(), name="product-field-list-create"),
+	path("product-fields/<uuid:field_id>/", ProductFieldDetailView.as_view(), name="product-field-detail"),
 
 	# Agent memory review queue
 	path("suggestions/", SuggestionListView.as_view(), name="suggestion-list"),
