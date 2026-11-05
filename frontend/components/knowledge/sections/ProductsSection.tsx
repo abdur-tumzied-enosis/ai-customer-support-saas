@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Tag } from "lucide-react";
 import ProductCatalog from "@/components/knowledge/ProductCatalog";
@@ -26,30 +27,35 @@ export default function ProductsSection() {
 	const kbId = selectedKb?.id;
 	const [products, setProducts] = useState<Product[] | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [loadFailed, setLoadFailed] = useState(false);
 	const [tab, setTab] = useState<Tab>("all");
 	const [editing, setEditing] = useState<Product | null>(null);
 
 	const load = useCallback(async () => {
 		if (!projectId || !kbId) return;
+		setError(null);
 		try {
-			const list = await productApi.list(projectId, kbId);
-			setProducts(list);
-			reportProducts(list);
+			setProducts(await productApi.list(projectId, kbId));
 		} catch (err) {
 			setError(formatError(err));
+			setLoadFailed(true);
 		}
-	}, [projectId, kbId, reportProducts]);
+	}, [projectId, kbId]);
+
+	// Single place that tells the context about the list, whoever changed it
+	useEffect(() => {
+		if (products) reportProducts(products);
+	}, [products, reportProducts]);
 
 	useEffect(() => {
 		setProducts(null);
+		setLoadFailed(false);
 		setEditing(null);
 		load();
 	}, [load]);
 
 	const replace = (saved: Product) => {
-		const next = (products ?? []).map((p) => (p.id === saved.id ? saved : p));
-		setProducts(next);
-		reportProducts(next);
+		setProducts((prev) => (prev ?? []).map((p) => (p.id === saved.id ? saved : p)));
 	};
 
 	const needsInfo = products?.filter((p) => p.status === "needs_info").length ?? 0;
@@ -67,6 +73,10 @@ export default function ProductsSection() {
 					{error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
 					{!selectedKb ? (
 						<p className="text-center py-4 text-muted-foreground">No knowledge base selected</p>
+					) : products === null && loadFailed ? (
+						<div className="flex justify-center py-4">
+							<Button variant="outline" onClick={() => { setLoadFailed(false); load(); }}>Retry</Button>
+						</div>
 					) : products === null ? (
 						<div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
 					) : (
@@ -105,7 +115,7 @@ export default function ProductsSection() {
 						<CardDescription>Photos let the assistant recognise a product when a customer sends a picture</CardDescription>
 					</CardHeader>
 					<CardContent>
-						<ProductCatalog projectId={projectId} kbId={selectedKb.id} isAdmin={isAdmin} onProductsChange={reportProducts} />
+						<ProductCatalog projectId={projectId} kbId={selectedKb.id} isAdmin={isAdmin} onProductsChange={setProducts} />
 					</CardContent>
 				</Card>
 			)}
