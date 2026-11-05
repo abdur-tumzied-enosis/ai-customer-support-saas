@@ -33,6 +33,8 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 	const [preview, setPreview] = useState<CsvPreview | null>(null);
 	const [mapping, setMapping] = useState<Record<string, string | null>>({});
 	const [sheetUrl, setSheetUrl] = useState("");
+	// Which source the confirm step is for: the chosen file, or the sheet URL that was previewed
+	const [previewOf, setPreviewOf] = useState<"file" | "sheet">("file");
 
 	const load = useCallback(async () => {
 		try {
@@ -68,8 +70,20 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 	const choose = (f: File | null) => {
 		setFile(f);
 		setPreview(null);
+		setPreviewOf("file");
 		if (f) run("preview", async () => {
 			const p = await productSourceApi.previewCsv(projectId, kbId, f);
+			setPreview(p);
+			setMapping(p.mapping);
+		});
+	};
+
+	const previewSheet = () => {
+		setFile(null);
+		setPreview(null);
+		setPreviewOf("sheet");
+		run("preview", async () => {
+			const p = await productSourceApi.previewSheet(projectId, kbId, sheetUrl.trim());
 			setPreview(p);
 			setMapping(p.mapping);
 		});
@@ -79,7 +93,8 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 	const remap = (target: string, col: string) => {
 		const next = { ...mapping, [target]: col || null };
 		setMapping(next);
-		if (file) run("preview", async () => setPreview(await productSourceApi.previewCsv(projectId, kbId, file, next)));
+		if (previewOf === "sheet") run("preview", async () => setPreview(await productSourceApi.previewSheet(projectId, kbId, sheetUrl.trim(), next)));
+		else if (file) run("preview", async () => setPreview(await productSourceApi.previewCsv(projectId, kbId, file, next)));
 	};
 
 	const importCsv = () => file && run("csv", async () => {
@@ -91,8 +106,9 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 	});
 
 	const addSheet = () => run("sheet", async () => {
-		const { source, result } = await productSourceApi.createSheet(projectId, kbId, sheetUrl.trim());
+		const { source, result } = await productSourceApi.createSheet(projectId, kbId, sheetUrl.trim(), mapping);
 		setSheetUrl("");
+		setPreview(null);
 		setSources((s) => [source, ...(s ?? [])]);
 		summarize(result);
 	});
@@ -133,30 +149,6 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 				<h3 className="font-medium">Upload a CSV or Excel file</h3>
 				<Input type="file" accept=".csv,.xlsx" key={sources?.length} onChange={(e) => choose(e.target.files?.[0] ?? null)} />
 				{busy === "preview" && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-				{preview && (
-					<div className="space-y-3">
-						<p className="text-sm text-muted-foreground">Confirm which column holds each detail.</p>
-						<div className="grid gap-2 sm:grid-cols-2">
-							{TARGETS.map((t) => (
-								<label key={t.key} className="flex items-center justify-between gap-2 text-sm">
-									{t.label}
-									<select
-										className="h-9 rounded-md border bg-background px-2"
-										value={mapping[t.key] ?? ""}
-										onChange={(e) => remap(t.key, e.target.value)}
-									>
-										<option value="">Not in file</option>
-										{headers.map((h) => <option key={h} value={h}>{h}</option>)}
-									</select>
-								</label>
-							))}
-						</div>
-						{preview.key_warning && <Alert><AlertDescription>{KEY_WARNING}</AlertDescription></Alert>}
-						<Button onClick={importCsv} disabled={!mapping.name || busy !== null}>
-							{busy === "csv" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Import {file?.name}
-						</Button>
-					</div>
-				)}
 			</section>
 
 			<section className="space-y-3">
@@ -164,11 +156,36 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 				<p className="text-sm text-muted-foreground">The sheet must be shared as &quot;Anyone with the link can view&quot;.</p>
 				<div className="flex gap-2">
 					<Input value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/..." />
-					<Button onClick={addSheet} disabled={!sheetUrl.trim() || busy !== null}>
-						{busy === "sheet" && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Link
+					<Button onClick={previewSheet} disabled={!sheetUrl.trim() || busy !== null}>
+						Preview
 					</Button>
 				</div>
 			</section>
+
+			{preview && (
+				<div className="space-y-3">
+					<p className="text-sm text-muted-foreground">Confirm which column holds each detail.</p>
+					<div className="grid gap-2 sm:grid-cols-2">
+						{TARGETS.map((t) => (
+							<label key={t.key} className="flex items-center justify-between gap-2 text-sm">
+								{t.label}
+								<select
+									className="h-9 rounded-md border bg-background px-2"
+									value={mapping[t.key] ?? ""}
+									onChange={(e) => remap(t.key, e.target.value)}
+								>
+									<option value="">Not in file</option>
+									{headers.map((h) => <option key={h} value={h}>{h}</option>)}
+								</select>
+							</label>
+						))}
+					</div>
+					{preview.key_warning && <Alert><AlertDescription>{KEY_WARNING}</AlertDescription></Alert>}
+					<Button onClick={previewOf === "sheet" ? addSheet : importCsv} disabled={!mapping.name || busy !== null}>
+						{busy === (previewOf === "sheet" ? "sheet" : "csv") && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Import {previewOf === "sheet" ? "sheet" : file?.name}
+					</Button>
+				</div>
+			)}
 
 			<section className="space-y-2">
 				<h3 className="font-medium">Sources</h3>

@@ -1170,10 +1170,16 @@ export const productSourceApi = {
 	createCsv: (projectId: string, kbId: string, file: File, mapping: Record<string, string | null>) =>
 		uploadForm<{ source: ProductSource; result: SourceResult }>("/api/kb/products/sources/csv/", csvForm(projectId, kbId, file, mapping)),
 
-	createSheet: async (projectId: string, kbId: string, sheetUrl: string, mapping?: Record<string, string | null>) =>
-		(await apiFetch<{ source: ProductSource; result: SourceResult }>("/api/kb/products/sources/sheet/", {
+	previewSheet: async (projectId: string, kbId: string, sheetUrl: string, mapping?: Record<string, string | null>) =>
+		(await apiFetch<CsvPreview>("/api/kb/products/sources/sheet/preview/", {
 			method: "POST",
 			json: { project_id: projectId, kb_id: kbId, sheet_url: sheetUrl, ...(mapping ? { mapping } : {}) },
+		})).data,
+
+	createSheet: async (projectId: string, kbId: string, sheetUrl: string, mapping: Record<string, string | null>) =>
+		(await apiFetch<{ source: ProductSource; result: SourceResult }>("/api/kb/products/sources/sheet/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, sheet_url: sheetUrl, mapping },
 		})).data,
 
 	sync: async (projectId: string, kbId: string, id: string) =>

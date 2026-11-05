@@ -280,6 +280,37 @@ def product_source_list(request):
 	return Response({"success": True, "data": [_source_dict(s) for s in sources]})
 
 
+def _read_sheet(request):
+	"""((headers, rows), None) or (None, error) for the posted sheet_url."""
+	sheet_url = str(request.data.get("sheet_url") or "").strip()
+	try:
+		return parse_table("sheet.csv", fetch_sheet_csv(sheet_export_url(sheet_url))), None
+	except ValueError as e:
+		return None, _bad("invalid_url", str(e))
+	except SheetNotPublic as e:
+		return None, _bad("sheet_not_public", str(e))
+	except TableError as e:
+		return None, _bad(e.code, e.message)
+
+
+class SheetSourcePreviewView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		kb, err = _kb_for(request, request.data, admin=True)
+		if err:
+			return err
+		table, err = _read_sheet(request)
+		if err:
+			return err
+		headers, rows = table
+		mapping, err = _clean_mapping(request.data.get("mapping"), headers)
+		if err:
+			return err
+		return Response({"success": True, "data": {
+			"headers": headers, "mapping": mapping, "sample": rows[:5], "key_warning": not has_key(mapping)}})
+
+
 class SheetSourceCreateView(APIView):
 	permission_classes = [IsAuthenticated]
 
@@ -288,15 +319,10 @@ class SheetSourceCreateView(APIView):
 		if err:
 			return err
 		sheet_url = str(request.data.get("sheet_url") or "").strip()
-		try:
-			data = fetch_sheet_csv(sheet_export_url(sheet_url))
-			headers, rows = parse_table("sheet.csv", data)
-		except ValueError as e:
-			return _bad("invalid_url", str(e))
-		except SheetNotPublic as e:
-			return _bad("sheet_not_public", str(e))
-		except TableError as e:
-			return _bad(e.code, e.message)
+		table, err = _read_sheet(request)
+		if err:
+			return err
+		headers, rows = table
 		mapping, err = _clean_mapping(request.data.get("mapping"), headers)
 		if err:
 			return err

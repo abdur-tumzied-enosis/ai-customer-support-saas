@@ -5,6 +5,7 @@ from .products import (
 )
 from .catalog_views import (
 	CsvSourceCreateView, CsvSourcePreviewView, ProductFieldDetailView, ProductFieldListCreateView, SheetSourceCreateView,
+	SheetSourcePreviewView,
 	product_source_delete, product_source_list, product_source_sync, product_summary,
 )
 from .candidate_views import candidate_ignore_page, candidate_import, candidate_list, product_extract
@@ -49,6 +50,7 @@ urlpatterns = [
 	path("products/sources/", product_source_list, name="product-sources"),
 	path("products/sources/csv/preview/", CsvSourcePreviewView.as_view(), name="product-source-csv-preview"),
 	path("products/sources/csv/", CsvSourceCreateView.as_view(), name="product-source-csv"),
+	path("products/sources/sheet/preview/", SheetSourcePreviewView.as_view(), name="product-source-sheet-preview"),
 	path("products/sources/sheet/", SheetSourceCreateView.as_view(), name="product-source-sheet"),
 	path("products/sources/<uuid:source_id>/sync/", product_source_sync, name="product-source-sync"),
 	path("products/sources/<uuid:source_id>/", product_source_delete, name="product-source-delete"),

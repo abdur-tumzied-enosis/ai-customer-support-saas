@@ -78,6 +78,34 @@ class SheetSourceTests(TestCase):
 			r = self.create()
 		self.assertEqual((r.status_code, r.json()["error"]["code"]), (400, "sheet_not_public"))
 
+	def preview(self, body=CSV, ctype="text/csv", **extra):
+		with patch("knowledge.product_sources.requests.get", return_value=resp(body, 200, ctype)):
+			return self.client.post(BASE + "sheet/preview/", {**self.ids(), "sheet_url": SHEET, **extra}, format="json")
+
+	def test_preview_returns_guess_and_commits_nothing(self):
+		r = self.preview()
+		self.assertEqual(r.status_code, 200, r.content)
+		data = r.json()["data"]
+		self.assertEqual(data["headers"], ["id", "name", "price"])
+		self.assertEqual((data["mapping"]["name"], data["mapping"]["price"]), ("name", "price"))
+		self.assertEqual([r["name"] for r in data["sample"]], ["Shoe", "Bag"])
+		self.assertFalse(data["key_warning"])
+		self.assertEqual((ProductSource.objects.count(), Product.objects.count()), (0, 0))
+
+	def test_preview_key_warning_follows_mapping(self):
+		r = self.preview(mapping={"name": "name", "external_id": None})
+		self.assertTrue(r.json()["data"]["key_warning"])
+
+	def test_preview_admin_only(self):
+		self.client.force_authenticate(user=self.member)
+		self.assertEqual(self.preview().status_code, 403)
+
+	def test_preview_error_codes(self):
+		r = self.preview(b"<html>Sign in</html>", "text/html")
+		self.assertEqual(r.json()["error"]["code"], "sheet_not_public")
+		r = self.client.post(BASE + "sheet/preview/", {**self.ids(), "sheet_url": "https://evil.example.com/x"}, format="json")
+		self.assertEqual(r.json()["error"]["code"], "invalid_url")
+
 	def create_ok(self):
 		with patch("knowledge.product_sources.requests.get", return_value=resp()):
 			r = self.create()
