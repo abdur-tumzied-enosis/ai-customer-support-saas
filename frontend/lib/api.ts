@@ -1103,3 +1103,106 @@ export const productFieldApi = {
 
 	remove: (id: string) => apiFetch<null>(`/api/kb/product-fields/${id}/`, { method: "DELETE" }),
 };
+
+export type SourceResult = { created: number; updated: number; unchanged: number; hidden: number; rejected: { row: number; message: string }[] };
+
+export type ProductSource = {
+	id: string;
+	kind: "csv" | "sheet";
+	mapping: Record<string, string | null>;
+	sheet_url: string;
+	last_synced_at: string | null;
+	last_error: string;
+	key_warning: boolean;
+	created_at: string;
+};
+
+export type CsvPreview = { headers: string[]; mapping: Record<string, string | null>; sample: Record<string, string>[]; key_warning: boolean };
+
+export type ProductCandidate = {
+	id: string;
+	name: string;
+	confidence: number;
+	low_confidence: boolean;
+	payload: { description?: string; sku?: string; external_id?: string | null; price?: string | null; image_srcs?: string[] };
+	matched_product_id: string | null;
+	changes: Record<string, { old: string | null; new: string | null }>;
+	status: string;
+};
+
+export type CandidatePage = { page_url: string; page_title: string; candidates: ProductCandidate[] };
+
+// multipart: apiFetch forces a JSON content type, so the file upload sends its own request
+async function uploadForm<T>(path: string, form: FormData): Promise<T> {
+	const csrf = getCsrfToken();
+	const res = await fetch(`${API_BASE_URL}${path}`, {
+		method: "POST",
+		body: form,
+		credentials: "include",
+		headers: csrf ? { "X-CSRFToken": csrf } : {},
+	});
+	const data = (await res.json()) as ApiResponse<T>;
+	if (!res.ok || !data.success) {
+		throw new ApiError(data.success ? { code: "request_failed", message: `Request failed with status ${res.status}` } : data.error);
+	}
+	return data.data;
+}
+
+const csvForm = (projectId: string, kbId: string, file: File, mapping?: Record<string, string | null>) => {
+	const form = new FormData();
+	form.append("project_id", projectId);
+	form.append("kb_id", kbId);
+	form.append("file", file);
+	if (mapping) form.append("mapping", JSON.stringify(mapping));
+	return form;
+};
+
+const q = (projectId: string, kbId: string) => `project_id=${encodeURIComponent(projectId)}&kb_id=${encodeURIComponent(kbId)}`;
+
+// Admin-only
+export const productSourceApi = {
+	list: async (projectId: string, kbId: string) =>
+		(await apiFetch<ProductSource[]>(`/api/kb/products/sources/?${q(projectId, kbId)}`)).data,
+
+	previewCsv: (projectId: string, kbId: string, file: File, mapping?: Record<string, string | null>) =>
+		uploadForm<CsvPreview>("/api/kb/products/sources/csv/preview/", csvForm(projectId, kbId, file, mapping)),
+
+	createCsv: (projectId: string, kbId: string, file: File, mapping: Record<string, string | null>) =>
+		uploadForm<{ source: ProductSource; result: SourceResult }>("/api/kb/products/sources/csv/", csvForm(projectId, kbId, file, mapping)),
+
+	createSheet: async (projectId: string, kbId: string, sheetUrl: string, mapping?: Record<string, string | null>) =>
+		(await apiFetch<{ source: ProductSource; result: SourceResult }>("/api/kb/products/sources/sheet/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, sheet_url: sheetUrl, ...(mapping ? { mapping } : {}) },
+		})).data,
+
+	sync: async (projectId: string, kbId: string, id: string) =>
+		(await apiFetch<{ source: ProductSource; result: SourceResult }>(`/api/kb/products/sources/${id}/sync/`, {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId },
+		})).data,
+
+	remove: (projectId: string, kbId: string, id: string) =>
+		apiFetch<null>(`/api/kb/products/sources/${id}/?${q(projectId, kbId)}`, { method: "DELETE" }),
+};
+
+export const candidateApi = {
+	list: async (projectId: string, kbId: string) =>
+		(await apiFetch<{ pages: CandidatePage[]; ignored_pages: string[] }>(`/api/kb/products/candidates/?${q(projectId, kbId)}`)).data,
+
+	// Admin-only from here
+	import: async (projectId: string, kbId: string, ids: string[]) =>
+		(await apiFetch<{ imported: number; updated: number; rejected: { id: string; message: string }[] }>("/api/kb/products/candidates/import/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, ids },
+		})).data,
+
+	ignorePage: (projectId: string, kbId: string, pageUrl: string) =>
+		apiFetch<{ ignored: number }>("/api/kb/products/candidates/ignore-page/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, page_url: pageUrl },
+		}),
+
+	extract: (projectId: string, kbId: string) =>
+		apiFetch<{ queued: boolean }>("/api/kb/products/extract/", { method: "POST", json: { project_id: projectId, kb_id: kbId } }),
+};

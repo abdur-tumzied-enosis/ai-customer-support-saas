@@ -11,7 +11,9 @@ import NeedsInfoBanner from "@/components/knowledge/catalog/NeedsInfoBanner";
 import ProductTable from "@/components/knowledge/catalog/ProductTable";
 import ProductEditor from "@/components/knowledge/catalog/ProductEditor";
 import { useKnowledge } from "@/components/knowledge/KnowledgeContext";
-import { productApi, type Product, type ProductStatus } from "@/lib/api";
+import ProductSourcesPanel from "@/components/knowledge/catalog/ProductSourcesPanel";
+import CandidateReview from "@/components/knowledge/catalog/CandidateReview";
+import { candidateApi, productApi, type CandidatePage, type Product, type ProductStatus } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 
 type Tab = "all" | ProductStatus;
@@ -21,6 +23,7 @@ const TABS: { value: Tab; label: string }[] = [
 	{ value: "active", label: "Active" },
 	{ value: "hidden", label: "Hidden" },
 ];
+type View = "products" | "sources" | "review";
 
 export default function ProductsSection() {
 	const { projectId, selectedKb, isAdmin, imageSearchOn, reportProducts } = useKnowledge();
@@ -30,6 +33,8 @@ export default function ProductsSection() {
 	const [loadFailed, setLoadFailed] = useState(false);
 	const [tab, setTab] = useState<Tab>("all");
 	const [editing, setEditing] = useState<Product | null>(null);
+	const [view, setView] = useState<View>("products");
+	const [pages, setPages] = useState<CandidatePage[]>([]);
 
 	const load = useCallback(async () => {
 		if (!projectId || !kbId) return;
@@ -42,6 +47,18 @@ export default function ProductsSection() {
 		}
 	}, [projectId, kbId]);
 
+	const loadCandidates = useCallback(async () => {
+		if (!projectId || !kbId) return;
+		try {
+			setPages((await candidateApi.list(projectId, kbId)).pages);
+		} catch (err) {
+			setError(formatError(err));
+		}
+	}, [projectId, kbId]);
+
+	// Imports and syncs change both lists
+	const refresh = () => { load(); loadCandidates(); };
+
 	// Single place that tells the context about the list, whoever changed it
 	useEffect(() => {
 		if (products) reportProducts(products);
@@ -51,13 +68,16 @@ export default function ProductsSection() {
 		setProducts(null);
 		setLoadFailed(false);
 		setEditing(null);
+		setPages([]);
 		load();
-	}, [load]);
+		loadCandidates();
+	}, [load, loadCandidates]);
 
 	const replace = (saved: Product) => {
 		setProducts((prev) => (prev ?? []).map((p) => (p.id === saved.id ? saved : p)));
 	};
 
+	const reviewCount = pages.reduce((n, p) => n + p.candidates.length, 0);
 	const needsInfo = products?.filter((p) => p.status === "needs_info").length ?? 0;
 	// The list endpoint has no status filter, so the tabs filter here
 	const shown = products?.filter((p) => tab === "all" || p.status === tab) ?? [];
@@ -81,6 +101,27 @@ export default function ProductsSection() {
 						<div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
 					) : (
 						<>
+							<Tabs value={view} onValueChange={(v) => setView(v as View)}>
+								<TabsList>
+									<TabsTrigger value="products">Products</TabsTrigger>
+									{isAdmin && <TabsTrigger value="sources">Sources</TabsTrigger>}
+									<TabsTrigger value="review">Review ({reviewCount})</TabsTrigger>
+								</TabsList>
+							</Tabs>
+							{view === "sources" && isAdmin && projectId && kbId && (
+								<ProductSourcesPanel projectId={projectId} kbId={kbId} onChanged={refresh} />
+							)}
+							{view === "review" && projectId && kbId && (
+								<CandidateReview
+									projectId={projectId}
+									kbId={kbId}
+									pages={pages}
+									currency={products[0]?.currency ?? "BDT"}
+									isAdmin={isAdmin}
+									onChanged={refresh}
+								/>
+							)}
+							{view === "products" && (<>
 							<NeedsInfoBanner count={needsInfo} />
 							<Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
 								<TabsList>
@@ -102,6 +143,7 @@ export default function ProductsSection() {
 								onEdit={setEditing}
 								onSavePrice={async (p, price) => replace(await productApi.patch(p.id, { price }))}
 							/>
+							</>)}
 						</>
 					)}
 				</CardContent>
