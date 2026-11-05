@@ -138,7 +138,12 @@ def _parse_price(value):
 		return None, "Price must be a number"
 	if not d.is_finite() or d < 0:
 		return None, "Price must be between 0 and 9,999,999,999.99"
-	d = d.quantize(Decimal("0.01"))  # round first: 9999999999.996 becomes 10000000000.00 and must be rejected
+	if d >= Decimal(10) ** 10:  # can never be valid; also keeps quantize below within the 28-digit context
+		return None, "Price must be between 0 and 9,999,999,999.99"
+	try:
+		d = d.quantize(Decimal("0.01"))  # round first: 9999999999.996 becomes 10000000000.00 and must be rejected
+	except InvalidOperation:
+		return None, "Price must be between 0 and 9,999,999,999.99"
 	if d >= Decimal(10) ** 10:
 		return None, "Price must be between 0 and 9,999,999,999.99"
 	return d, None

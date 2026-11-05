@@ -113,6 +113,13 @@ class CatalogApiTests(TestCase):
 			self.assertEqual(r.status_code, 400, bad)
 			self.assertEqual(r.json()["error"]["code"], "invalid_price", bad)
 
+	def test_huge_finite_price_rejected_without_product_row(self):
+		for bad in ("1e30", "1" + "0" * 40):
+			r = self.create(price=bad)
+			self.assertEqual(r.status_code, 400, bad)
+			self.assertEqual(r.json()["error"]["code"], "invalid_price", bad)
+		self.assertEqual(Product.objects.count(), 0)
+
 	def test_duplicate_external_id(self):
 		self.assertEqual(self.create(external_id="E1").status_code, 200)
 		r = self.create(name="Other", external_id="E1")
