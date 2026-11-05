@@ -31,7 +31,7 @@ def _candidate_dict(c) -> dict:
 	return {
 		"id": str(c.id), "name": c.name, "confidence": c.confidence, "low_confidence": c.confidence < LOW_CONFIDENCE,
 		"payload": c.payload, "matched_product_id": str(c.matched_product_id) if c.matched_product_id else None,
-		"changes": c.changes, "status": c.status,
+		"changes": c.changes, "status": c.status, "matched_by": (c.payload or {}).get("matched_by", ""),
 	}
 
 
@@ -95,7 +95,8 @@ def _update_matched(product, payload, fields):
 		setattr(product, field, new)
 		changed = True
 	if changed:
-		product.status = compute_status(product, fields)
+		if "status" not in locked or product.price is None:  # same rule as apply_source_row
+			product.status = compute_status(product, fields)
 		product.save()
 
 
@@ -146,6 +147,11 @@ def candidate_import(request):
 			continue
 		first_attrs = ((p.get("variants") or [{}])[0] or {}).get("attributes") or {}
 		with transaction.atomic():
+			# lock the row: two imports of one candidate at once must not both create a product
+			cand = kb.product_candidates.select_for_update().filter(id=cand.id, status="pending").first()
+			if not cand:
+				rejected.append({"id": cid, "message": "Candidate not found or already handled"})
+				continue
 			product, _ = match_product(kb, ext, p.get("sku") or "", cand.name, first_attrs)
 			if product:
 				new_ext = p.get("external_id")

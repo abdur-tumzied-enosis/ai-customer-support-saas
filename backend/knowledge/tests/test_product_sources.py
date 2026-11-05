@@ -187,6 +187,73 @@ class ProductSourceTests(TestCase):
 		r = self.client.get(BASE, {"project_id": str(self.project.id), "kb_id": str(self.kb.id)})
 		self.assertEqual(r.status_code, 403)
 
+	def reupload(self, text, source=None):
+		source = source or ProductSource.objects.get(kb=self.kb)
+		return self.client.post(f"{BASE}{source.id}/upload/", self.body(csv_file(text)), format="multipart")
+
+	def test_keyed_rows_with_same_name_stay_separate(self):
+		text = "id,name,price\nX1,T-shirt,500\nX2,T-shirt,650\n"
+		res = self.upload(text).json()["data"]["result"]
+		self.assertEqual((res["created"], res["rejected"]), (2, []))
+		prices = dict(Product.objects.values_list("external_id", "price"))
+		self.assertEqual({k: str(v) for k, v in prices.items()}, {"X1": "500.00", "X2": "650.00"})
+		res = self.reupload(text).json()["data"]["result"]
+		self.assertEqual((res["created"], res["updated"], res["unchanged"], res["hidden"]), (0, 0, 2, 0))
+
+	def test_keyed_row_backfills_key_on_name_match(self):
+		Product.objects.create(kb=self.kb, name="Shoe", price=100)
+		self.upload("id,name,price\nA1,Shoe,120\n")
+		p = Product.objects.get(kb=self.kb)
+		self.assertEqual((p.external_id, str(p.price)), ("A1", "120.00"))
+
+	def test_owner_save_locks_only_changed_fields(self):
+		self.upload("id,name,price\nA1,Shoe,100\n")
+		p = Product.objects.get(external_id="A1")
+		r = self.client.patch(f"/api/kb/products/{p.id}/", {"name": "Shoe", "price": "100", "description": "Comfy",
+			"available": True, "external_id": "A1", "sku": "", "product_url": "", "custom": {}}, format="json")
+		self.assertEqual(r.status_code, 200, r.content)
+		self.assertEqual(r.json()["data"]["locked_fields"], ["description"])
+		self.reupload("id,name,price\nA1,Shoe,150\n")
+		p.refresh_from_db()
+		self.assertEqual((str(p.price), p.description), ("150.00", "Comfy"))
+
+	def test_unhide_then_removal_hides_again(self):
+		self.upload("id,name,price\nA1,Shoe,100\nA2,Bag,50\n")
+		p = Product.objects.get(external_id="A2")
+		url = f"/api/kb/products/{p.id}/"
+		self.assertEqual(self.client.patch(url, {"status": "hidden"}, format="json").json()["data"]["status"], "hidden")
+		self.assertEqual(self.client.patch(url, {"status": "active"}, format="json").json()["data"]["status"], "active")
+		self.reupload("id,name,price\nA1,Shoe,100\n")
+		p.refresh_from_db()
+		self.assertEqual(p.status, "hidden")
+
+	def test_reupload_uses_saved_mapping(self):
+		self.upload("Code,Title,Cost\nA1,Shoe,100\n", mapping={"external_id": "Code", "name": "Title", "price": "Cost"})
+		r = self.reupload("Code,Title,Cost\nA1,Shoe,130\n")
+		self.assertEqual(r.status_code, 200, r.content)
+		self.assertEqual(r.json()["data"]["result"]["updated"], 1)
+		self.assertEqual(str(Product.objects.get(external_id="A1").price), "130.00")
+		self.assertEqual(ProductSource.objects.count(), 1)
+
+	def test_reupload_hides_missing_product(self):
+		self.upload("id,name,price\nA1,Shoe,100\nA2,Bag,50\n")
+		res = self.reupload("id,name,price\nA1,Shoe,100\n").json()["data"]["result"]
+		self.assertEqual(res["hidden"], 1)
+		self.assertEqual(Product.objects.get(external_id="A2").status, "hidden")
+
+	def test_reupload_mismatched_header_changes_nothing(self):
+		self.upload("id,name,price\nA1,Shoe,100\nA2,Bag,50\n")
+		r = self.reupload("id,name,cost\nA1,Shoe,999\n")
+		self.assertEqual((r.status_code, r.json()["error"]["code"]), (400, "mapping_mismatch"))
+		self.assertIn("price", r.json()["error"]["message"])
+		self.assertEqual(sorted(Product.objects.values_list("status", "price")), [("active", 50), ("active", 100)])
+
+	def test_reupload_member_403(self):
+		self.upload("id,name,price\nA1,Shoe,100\n")
+		ProjectUser.objects.filter(user=self.user).update(role="member")
+		self.assertEqual(self.reupload("id,name,price\nA1,Shoe,200\n").status_code, 403)
+		self.assertEqual(str(Product.objects.get(external_id="A1").price), "100.00")
+
 	def test_list_sources(self):
 		self.upload("id,name,price\nA1,Shoe,100\n")
 		r = self.client.get(BASE, {"project_id": str(self.project.id), "kb_id": str(self.kb.id)})

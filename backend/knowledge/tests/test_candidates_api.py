@@ -112,6 +112,18 @@ class CandidatesApiTests(TestCase):
 		self.assertEqual(p.price, Decimal("450"))
 		self.assertEqual(p.locked_fields, [])
 
+	def test_list_returns_matched_by(self):
+		self.cand("A", matched_by="name")
+		c = self.client.get(URL, self.base).json()["data"]["pages"][0]["candidates"][0]
+		self.assertEqual(c["matched_by"], "name")
+
+	def test_matched_import_keeps_locked_status(self):
+		p = Product.objects.create(kb=self.kb, name="Shirt", sku="S1", price=Decimal("400"), status="needs_info",
+			locked_fields=["status"])
+		self.do_import(self.cand("Shirt", sku="S1", price="450"))
+		p.refresh_from_db()
+		self.assertEqual((p.price, p.status), (Decimal("450"), "needs_info"))
+
 	def test_two_candidates_for_one_product_create_one(self):
 		out = self.do_import(self.cand("Shirt", price="500"), self.cand("Shirt", page="https://shop.test/p2", price="550"))
 		self.assertEqual((out["imported"], out["updated"], out["rejected"]), (1, 1, []))

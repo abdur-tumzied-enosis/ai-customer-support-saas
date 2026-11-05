@@ -104,12 +104,13 @@ def _candidate(kb, doc, url: str, item: ExtractedProduct):
 		"custom": {_cut(k, 255): _cut(v, 255) for k, v in item.custom.items()},
 	}
 	first_attrs = variants[0]["attributes"] if variants else {}
-	product, _ = match_product(kb, payload["external_id"], payload["sku"], item.name, first_attrs)
+	product, matched_by = match_product(kb, payload["external_id"], payload["sku"], item.name, first_attrs)
 	changes = {}
 	if product:
 		changes = _changes(product, payload)
 		if not changes:
 			return None
+	payload["matched_by"] = matched_by  # the review shows "Matched by name" so the owner can check it
 	name = item.name[:255]
 	if ProductCandidate.objects.filter(kb=kb, page_url=url, name=name, status="pending").exists():
 		return None

@@ -344,6 +344,8 @@ class ProductDetailView(APIView):
 			if requested == "active" and price is None:
 				return _kb_error("price_required", "A product needs a price to be active", status.HTTP_400_BAD_REQUEST)
 			product.status = "needs_info"  # un-hide, then compute_status decides
+			# unlock status so a later removal from the source hides it again
+			product.locked_fields = [k for k in (product.locked_fields or []) if k != "status"]
 		apply_owner_edit(product, changes, product.kb.product_fields.all())
 		with transaction.atomic():
 			try:

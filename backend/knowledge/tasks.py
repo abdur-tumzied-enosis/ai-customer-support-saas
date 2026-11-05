@@ -843,14 +843,17 @@ def fetch_product_images(product_id: str, image_srcs: list[str]) -> None:
 @shared_task
 def sync_product_source(source_id: str) -> dict:
     """Re-read one Sheet source with its saved mapping. Failures are saved on the source, never raised."""
-    from .product_sources import SheetNotPublic, TableError, apply_rows, fetch_sheet_csv, parse_table, sheet_export_url
+    from .product_sources import (
+        SheetNotPublic, TableError, apply_rows, check_headers, fetch_sheet_csv, parse_table, sheet_export_url,
+    )
 
     source = ProductSource.objects.select_related("kb").filter(id=source_id, kind="sheet").first()
     if source is None:
         return {"error": "not_found"}
     started = timezone.now()
     try:
-        _, rows = parse_table("sheet.csv", fetch_sheet_csv(sheet_export_url(source.sheet_url)))
+        headers, rows = parse_table("sheet.csv", fetch_sheet_csv(sheet_export_url(source.sheet_url)))
+        check_headers(source.mapping, headers)
         result = apply_rows(source.kb, source, rows, source.mapping, started)
     except SheetNotPublic as e:
         source.last_error = f"sheet_not_public: {e}"

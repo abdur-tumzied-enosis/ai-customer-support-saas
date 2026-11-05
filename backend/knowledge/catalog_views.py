@@ -15,8 +15,8 @@ from .candidate_views import _kb_for
 from .catalog import compute_status
 from .models import Product, ProductField, ProductSource
 from .product_sources import (
-	MAX_FILE_BYTES, TARGETS, SheetNotPublic, TableError, apply_rows, fetch_sheet_csv, guess_mapping, has_key, parse_table,
-	sheet_export_url,
+	MAX_FILE_BYTES, TARGETS, SheetNotPublic, TableError, apply_rows, check_headers, fetch_sheet_csv, guess_mapping, has_key,
+	parse_table, sheet_export_url,
 )
 from .tasks import sync_product_source
 from .products import _bad_body, _catalog_gate, _denied, _not_found
@@ -268,6 +268,33 @@ class CsvSourceCreateView(APIView):
 			source.save(update_fields=["last_synced_at"])
 		return Response({"success": True, "data": {"source": _source_dict(source), "result": result}},
 			status=status.HTTP_201_CREATED)
+
+
+class CsvSourceUploadView(APIView):
+	"""A new version of a CSV source's file: the saved mapping applies, and rows missing from it are hidden."""
+	permission_classes = [IsAuthenticated]
+	parser_classes = [MultiPartParser]
+
+	def post(self, request, source_id):
+		source, err = _source_for(request, source_id)
+		if err:
+			return err
+		if source.kind != "csv":
+			return _bad("not_a_csv", "Only CSV sources take a new file")
+		table, err = _read_upload(request)
+		if err:
+			return err
+		headers, rows = table
+		try:
+			check_headers(source.mapping, headers)
+		except TableError as e:
+			return _bad(e.code, e.message)
+		started = timezone.now()
+		with transaction.atomic():
+			result = apply_rows(source.kb, source, rows, source.mapping, started)
+			source.last_synced_at, source.last_error = started, ""
+			source.save(update_fields=["last_synced_at", "last_error"])
+		return Response({"success": True, "data": {"source": _source_dict(source), "result": result}})
 
 
 @api_view(["GET"])

@@ -120,6 +120,7 @@ export default function CandidateReview({ projectId, kbId, pages, currency, isAd
 									<span className="flex flex-wrap items-center gap-2">
 										<span className="font-medium">{c.name}</span>
 										{c.matched_product_id ? <Badge variant="secondary">Update</Badge> : <Badge variant="outline">New</Badge>}
+										{c.matched_by === "name" && <Badge variant="outline">Matched by name</Badge>}
 										{c.low_confidence && <Badge variant="outline">Check this one</Badge>}
 									</span>
 									{c.matched_product_id ? (

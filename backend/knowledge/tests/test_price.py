@@ -15,6 +15,8 @@ CASES = [
     ("Regular 1500 now 1200", "1200"),
     ("Price 1200 was 1500", "1200"),           # "was" sits between 1200 and 1500
     ("Regular 1,500, now 1,200", "1200"),      # same as the ৳ case with ৳ deleted
+    ("মূল্য: ৳১২০০", "1200"),                  # মূল্য is plain "price", not a regular-price hint
+    ("নিয়মিত ৳১৫০০, এখন ৳১২০০", "1200"),
     ("", None),
     (None, None),
     ("call for price", None),

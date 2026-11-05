@@ -65,6 +65,7 @@ class ProductExtractTest(TestCase):
 		c = ProductCandidate.objects.get()
 		self.assertEqual(c.matched_product, p)
 		self.assertEqual(c.changes, {"price": {"old": "450", "new": "500"}})
+		self.assertEqual(c.payload["matched_by"], "name")
 
 	def test_locked_field_not_in_changes(self):
 		Product.objects.create(kb=self.kb, name="Shirt", price=Decimal("450"), status="active", locked_fields=["price"])

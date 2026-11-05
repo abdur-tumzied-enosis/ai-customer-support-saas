@@ -45,6 +45,33 @@ class SheetUrlTests(TestCase):
 			self.assertEqual((g.call_args.kwargs["timeout"], g.call_args.kwargs["allow_redirects"]), (15, False))
 
 
+	def redirect(self, location, status=307):
+		return MagicMock(status_code=status, content=b"", headers={"Location": location})
+
+	def test_fetch_follows_google_redirects(self):
+		chain = [self.redirect("https://doc-0s-sheets.googleusercontent.com/export/abc"), resp()]
+		with patch("knowledge.product_sources.requests.get", side_effect=chain) as g:
+			self.assertEqual(fetch_sheet_csv("https://docs.google.com/x"), CSV)
+		self.assertEqual(g.call_args_list[1].args[0], "https://doc-0s-sheets.googleusercontent.com/export/abc")
+		for c in g.call_args_list:
+			self.assertEqual((c.kwargs["timeout"], c.kwargs["allow_redirects"]), (15, False))
+
+	def test_fetch_rejects_off_allowlist_redirect(self):
+		for loc in ("https://evil.example.com/x", "http://doc-0s.googleusercontent.com/x",
+				"https://accounts.google.com/ServiceLogin", "https://evilgoogleusercontent.com/x"):
+			with patch("knowledge.product_sources.requests.get", side_effect=[self.redirect(loc), resp()]) as g:
+				with self.assertRaises(SheetNotPublic):
+					fetch_sheet_csv("https://docs.google.com/x")
+			self.assertEqual(g.call_count, 1, loc)
+
+	def test_fetch_redirect_hop_limit(self):
+		loop = [self.redirect("https://docs.google.com/x") for _ in range(4)] + [resp()]
+		with patch("knowledge.product_sources.requests.get", side_effect=loop) as g:
+			with self.assertRaises(SheetNotPublic):
+				fetch_sheet_csv("https://docs.google.com/x")
+		self.assertEqual(g.call_count, 4)  # the first request plus 3 hops
+
+
 @override_settings(IMAGE_SEARCH_ENABLED=False)
 class SheetSourceTests(TestCase):
 	def setUp(self):
@@ -123,6 +150,17 @@ class SheetSourceTests(TestCase):
 		self.assertEqual(str(Product.objects.get(external_id="A1").price), "120.00")
 		src.refresh_from_db()
 		self.assertEqual(src.last_error, "")
+
+	def test_sync_with_renamed_column_changes_nothing(self):
+		self.create_ok()
+		src = ProductSource.objects.get()
+		with patch("knowledge.product_sources.requests.get", return_value=resp(b"id,title,cost\nA1,Shoe,120\n")):
+			result = sync_product_source(str(src.id))
+		self.assertEqual(result["error"], "mapping_mismatch")
+		src.refresh_from_db()
+		self.assertTrue(src.last_error.startswith("mapping_mismatch:"), src.last_error)
+		self.assertIn("price", src.last_error)
+		self.assertEqual(sorted(Product.objects.values_list("status", "price")), [("active", 50), ("active", 100)])
 
 	def test_sync_now_endpoint(self):
 		self.create_ok()

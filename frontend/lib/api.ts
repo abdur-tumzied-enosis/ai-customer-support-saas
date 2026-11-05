@@ -1128,6 +1128,7 @@ export type ProductCandidate = {
 	matched_product_id: string | null;
 	changes: Record<string, { old: string | null; new: string | null }>;
 	status: string;
+	matched_by: "" | "external_id" | "sku" | "name";
 };
 
 export type CandidatePage = { page_url: string; page_title: string; candidates: ProductCandidate[] };
@@ -1187,6 +1188,10 @@ export const productSourceApi = {
 			method: "POST",
 			json: { project_id: projectId, kb_id: kbId },
 		})).data,
+
+	// A new version of a CSV source's file; the source's saved mapping applies
+	reupload: (projectId: string, kbId: string, id: string, file: File) =>
+		uploadForm<{ source: ProductSource; result: SourceResult }>(`/api/kb/products/sources/${id}/upload/`, csvForm(projectId, kbId, file)),
 
 	remove: (projectId: string, kbId: string, id: string) =>
 		apiFetch<null>(`/api/kb/products/sources/${id}/?${q(projectId, kbId)}`, { method: "DELETE" }),

@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 
 from accounts.models import ProjectUser
 from accounts.tasks import queue_email
@@ -82,6 +83,8 @@ def match_product(kb, external_id, sku, name, attributes: dict) -> tuple[Product
 	if not wanted_name:
 		return None, ""
 	wanted_attrs = _attr_key(attributes)
+	if external_id or sku:  # a keyed row never takes over a product with another key (same key matched above)
+		products = products.filter(Q(external_id__isnull=True) | Q(external_id=""), sku="")
 	for candidate in products.prefetch_related("variants"):
 		if normalise_name(candidate.name) != wanted_name:
 			continue
@@ -93,9 +96,10 @@ def match_product(kb, external_id, sku, name, attributes: dict) -> tuple[Product
 def apply_owner_edit(product, changes: dict, fields) -> None:
 	locked = list(product.locked_fields or [])
 	for key, value in changes.items():
-		setattr(product, key, value)
-		if key not in locked:
+		# the editor sends every field: only a value the owner really changed is locked against syncs
+		if getattr(product, key) != value and key not in locked:
 			locked.append(key)
+		setattr(product, key, value)
 	product.locked_fields = locked
 	if "status" not in changes:
 		product.status = compute_status(product, fields)
@@ -132,7 +136,7 @@ def apply_source_row(kb, source, row: SourceRow, sync_started_at, fields=None) -
 		return "rejected"
 	fields = list(kb.product_fields.all()) if fields is None else fields
 	price = parse_price(row.price_text) if row.price_text is not None else None
-	product, _ = match_product(kb, row.external_id, row.sku, row.name, row.attributes)
+	product, matched_by = match_product(kb, row.external_id, row.sku, row.name, row.attributes)
 	if product is None:
 		new = Product(
 			kb=kb, source=source.kind, source_ref=source, external_id=row.external_id or None, sku=row.sku or "",
@@ -154,10 +158,15 @@ def apply_source_row(kb, source, row: SourceRow, sync_started_at, fields=None) -
 
 	def snapshot():
 		return (product.name, product.description, product.price, product.available, product.product_url,
-			product.custom, product.status)
+			product.custom, product.status, product.external_id, product.sku)
 
 	before = snapshot()
 	had_price = product.price is not None
+	if matched_by == "name" and not (product.external_id or product.sku):  # backfill the key so later syncs match by it
+		if row.external_id and "external_id" not in locked:
+			product.external_id = row.external_id
+		if row.sku and "sku" not in locked:
+			product.sku = row.sku
 	if "name" not in locked:
 		product.name = row.name.strip()[:255]
 	if row.description is not None and "description" not in locked:

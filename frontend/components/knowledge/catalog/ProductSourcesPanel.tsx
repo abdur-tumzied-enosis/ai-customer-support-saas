@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2 } from "lucide-react";
 import { productSourceApi, type CsvPreview, type ProductSource, type SourceResult } from "@/lib/api";
@@ -119,6 +119,12 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 		summarize(result);
 	});
 
+	const reupload = (id: string, f: File) => run(id, async () => {
+		const { source, result } = await productSourceApi.reupload(projectId, kbId, id, f);
+		setSources((s) => (s ?? []).map((x) => (x.id === id ? source : x)));
+		summarize(result);
+	});
+
 	const remove = (id: string) => {
 		if (!window.confirm("Remove this source? Its products stay in your catalog.")) return;
 		run(id, async () => {
@@ -155,7 +161,11 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 				<h3 className="font-medium">Link a Google Sheet</h3>
 				<p className="text-sm text-muted-foreground">The sheet must be shared as &quot;Anyone with the link can view&quot;.</p>
 				<div className="flex gap-2">
-					<Input value={sheetUrl} onChange={(e) => setSheetUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/..." />
+					<Input value={sheetUrl} onChange={(e) => {
+							setSheetUrl(e.target.value);
+							// a new URL needs its own preview: never import it with the old one's mapping
+							if (previewOf === "sheet") setPreview(null);
+						}} placeholder="https://docs.google.com/spreadsheets/..." />
 					<Button onClick={previewSheet} disabled={!sheetUrl.trim() || busy !== null}>
 						Preview
 					</Button>
@@ -200,6 +210,18 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 									<Button size="sm" variant="outline" disabled={busy !== null} onClick={() => sync(s.id)}>
 										{busy === s.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Sync now
 									</Button>
+								)}
+								{s.kind === "csv" && (
+									<label className={buttonVariants({ size: "sm", variant: "outline", className: "cursor-pointer focus-within:ring-2 focus-within:ring-ring" })}>
+										{busy === s.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Upload new version
+										<input
+											type="file"
+											accept=".csv,.xlsx"
+											className="sr-only"
+											disabled={busy !== null}
+											onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) reupload(s.id, f); }}
+										/>
+									</label>
 								)}
 								<Button size="sm" variant="outline" disabled={busy !== null} onClick={() => remove(s.id)}>Remove</Button>
 							</span>

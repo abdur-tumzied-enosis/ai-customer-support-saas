@@ -1,9 +1,10 @@
 import csv
 import io
 import re
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
+from django.db import transaction
 from django.db.models import Q
 
 from .catalog import SourceRow, _attr_key, apply_source_row, normalise_name
@@ -134,6 +135,14 @@ def _source_row(raw: dict, mapping: dict) -> SourceRow:
 	)
 
 
+def check_headers(mapping: dict, headers: list[str]) -> None:
+	"""A mapped column that is gone from the file would blank that field on every row: refuse the whole sync."""
+	missing = [col for col in mapping.values() if col and col not in headers]
+	if missing:
+		raise TableError("mapping_mismatch", "Columns missing from the file: " + ", ".join(missing))
+
+
+@transaction.atomic
 def apply_rows(kb, source, rows: list[dict], mapping: dict, sync_started_at) -> dict:
 	"""Apply every row through apply_source_row, then hide this source's products that were not seen."""
 	fields = list(kb.product_fields.all())
@@ -145,7 +154,7 @@ def apply_rows(kb, source, rows: list[dict], mapping: dict, sync_started_at) -> 
 		if row.external_id and row.external_id in seen_ids:
 			result["rejected"].append({"row": n, "message": f"ID {row.external_id} already appears earlier in this file"})
 			continue
-		name_key = None if row.external_id else (normalise_name(row.name), _attr_key(row.attributes))
+		name_key = None if row.external_id or row.sku else (normalise_name(row.name), _attr_key(row.attributes))
 		if name_key and name_key[0] and name_key in seen_names:
 			result["rejected"].append({"row": n, "message": "This name already appears earlier in this file"})
 			continue
@@ -189,13 +198,30 @@ def sheet_export_url(sheet_url: str) -> str:
 	return f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv&gid={gid}"
 
 
+MAX_REDIRECTS = 3
+
+
+def _google_host(url: str) -> bool:
+	u = urlparse(url)
+	host = u.hostname or ""
+	return u.scheme == "https" and (host == "docs.google.com" or host.endswith(".googleusercontent.com"))
+
+
 def fetch_sheet_csv(url: str) -> bytes:
 	msg = "Share the sheet as 'Anyone with the link can view'."
-	try:
-		r = requests.get(url, timeout=15, allow_redirects=False)
-	except requests.RequestException:
-		raise SheetNotPublic("Could not reach Google Sheets. Try again later.")
-	# A redirect (to a login page) or non-200 means the sheet is not public.
+	# Redirects are followed by hand so every hop stays on Google (SSRF guard); a login page is off the allowlist.
+	for _ in range(MAX_REDIRECTS + 1):
+		try:
+			r = requests.get(url, timeout=15, allow_redirects=False)
+		except requests.RequestException:
+			raise SheetNotPublic("Could not reach Google Sheets. Try again later.")
+		if r.status_code not in (301, 302, 303, 307, 308):
+			break
+		url = urljoin(url, r.headers.get("Location") or "")
+		if not r.headers.get("Location") or not _google_host(url):
+			raise SheetNotPublic(msg)
+	else:
+		raise SheetNotPublic(msg)
 	if r.status_code != 200 or "text/html" in r.headers.get("Content-Type", "").lower() or r.content[:15].lstrip().lower().startswith((b"<!doctype", b"<html")):
 		raise SheetNotPublic(msg)
 	if len(r.content) > MAX_FILE_BYTES:
