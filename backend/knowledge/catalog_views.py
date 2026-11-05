@@ -1,15 +1,20 @@
+import json
 import re
 
 from django.db import IntegrityError, transaction
 from django.db.models import Count
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .candidate_views import _kb_for
 from .catalog import compute_status
-from .models import Product, ProductField
+from .models import Product, ProductField, ProductSource
+from .product_sources import MAX_FILE_BYTES, TARGETS, TableError, apply_rows, guess_mapping, has_key, parse_table
 from .products import _bad_body, _catalog_gate, _denied, _not_found
 from .views import _kb_error, _project_user, _resolve_kb
 
@@ -172,3 +177,100 @@ class ProductFieldDetailView(APIView):
 			field.delete()  # values stay in Product.custom
 			recompute_kb_status(field.kb)
 		return Response({"success": True, "data": None})
+
+
+def _source_dict(s) -> dict:
+	return {"id": str(s.id), "kind": s.kind, "mapping": s.mapping, "sheet_url": s.sheet_url,
+		"last_synced_at": s.last_synced_at.isoformat() if s.last_synced_at else None, "last_error": s.last_error,
+		"key_warning": not has_key(s.mapping), "created_at": s.created_at.isoformat()}
+
+
+def _read_upload(request):
+	"""((headers, rows), None) or (None, error) from the multipart `file`."""
+	upload = request.FILES.get("file")
+	if upload is None:
+		return None, _bad("invalid_value", "file is required")
+	if upload.size > MAX_FILE_BYTES:
+		return None, _bad("file_too_large", "The file is larger than 5 MB")
+	try:
+		return parse_table(upload.name, upload.read()), None
+	except TableError as e:
+		return None, _bad(e.code, e.message)
+
+
+def _clean_mapping(raw, headers):
+	"""(mapping, None) or (None, error). `raw` is a dict or a JSON string; None means "guess"."""
+	if raw in (None, ""):
+		return guess_mapping(headers), None
+	if isinstance(raw, str):
+		try:
+			raw = json.loads(raw)
+		except ValueError:
+			return None, _bad("invalid_value", "mapping must be a JSON object")
+	if not isinstance(raw, dict):
+		return None, _bad("invalid_value", "mapping must be a JSON object")
+	mapping = {}
+	for target, col in raw.items():
+		valid_target = target in TARGETS or (isinstance(target, str) and re.fullmatch(r"custom:[a-z][a-z0-9_]{0,63}", target))
+		if not valid_target or not (col is None or isinstance(col, str)):
+			return None, _bad("invalid_value", f"Unknown mapping target {target}")
+		if col and col not in headers:
+			return None, _bad("invalid_value", f"Column {col} is not in the file")
+		mapping[target] = col or None
+	return mapping, None
+
+
+class CsvSourcePreviewView(APIView):
+	permission_classes = [IsAuthenticated]
+	parser_classes = [MultiPartParser]
+
+	def post(self, request):
+		kb, err = _kb_for(request, request.data, admin=True)
+		if err:
+			return err
+		table, err = _read_upload(request)
+		if err:
+			return err
+		headers, rows = table
+		mapping, err = _clean_mapping(request.data.get("mapping"), headers)
+		if err:
+			return err
+		return Response({"success": True, "data": {
+			"headers": headers, "mapping": mapping, "sample": rows[:5], "key_warning": not has_key(mapping)}})
+
+
+class CsvSourceCreateView(APIView):
+	permission_classes = [IsAuthenticated]
+	parser_classes = [MultiPartParser]
+
+	def post(self, request):
+		kb, err = _kb_for(request, request.data, admin=True)
+		if err:
+			return err
+		table, err = _read_upload(request)
+		if err:
+			return err
+		headers, rows = table
+		mapping, err = _clean_mapping(request.data.get("mapping"), headers)
+		if err:
+			return err
+		if not mapping.get("name"):
+			return _bad("name_required", "Choose which column holds the product name")
+		started = timezone.now()
+		with transaction.atomic():
+			source = ProductSource.objects.create(kb=kb, kind="csv", mapping=mapping)
+			result = apply_rows(kb, source, rows, mapping, started)
+			source.last_synced_at = started
+			source.save(update_fields=["last_synced_at"])
+		return Response({"success": True, "data": {"source": _source_dict(source), "result": result}},
+			status=status.HTTP_201_CREATED)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def product_source_list(request):
+	kb, err = _kb_for(request, request.query_params, admin=True)
+	if err:
+		return err
+	sources = kb.product_sources.order_by("-created_at", "id")
+	return Response({"success": True, "data": [_source_dict(s) for s in sources]})

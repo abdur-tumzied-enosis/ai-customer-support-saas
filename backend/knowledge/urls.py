@@ -3,7 +3,10 @@ from .products import (
 	FeaturesView, ProductListCreateView, ProductDetailView, ProductImagesAddView,
 	ProductImageDetailView, ProductImageFileView, ProductImagesConfirmView,
 )
-from .catalog_views import ProductFieldDetailView, ProductFieldListCreateView, product_summary
+from .catalog_views import (
+	CsvSourceCreateView, CsvSourcePreviewView, ProductFieldDetailView, ProductFieldListCreateView, product_source_list,
+	product_summary,
+)
 from .candidate_views import candidate_ignore_page, candidate_import, candidate_list, product_extract
 from .suggestions import SuggestionDecisionView, SuggestionListView
 from .views import (
@@ -43,6 +46,9 @@ urlpatterns = [
 	path("features/", FeaturesView.as_view(), name="kb-features"),
 	path("products/", ProductListCreateView.as_view(), name="product-list-create"),
 	path("products/summary/", product_summary, name="product-summary"),
+	path("products/sources/", product_source_list, name="product-sources"),
+	path("products/sources/csv/preview/", CsvSourcePreviewView.as_view(), name="product-source-csv-preview"),
+	path("products/sources/csv/", CsvSourceCreateView.as_view(), name="product-source-csv"),
 	path("products/candidates/", candidate_list, name="product-candidates"),
 	path("products/candidates/import/", candidate_import, name="product-candidates-import"),
 	path("products/candidates/ignore-page/", candidate_ignore_page, name="product-candidates-ignore-page"),
