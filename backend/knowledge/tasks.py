@@ -818,3 +818,12 @@ def cleanup_abandoned_uploads() -> None:
     Document.objects.filter(id__in=[d.id for d in docs]).delete()
     if images or docs:
         logger.info(f"Cleaned up {len(images)} abandoned photo and {len(docs)} document uploads")
+
+
+@shared_task
+def extract_product_candidates(kb_id: str, document_ids: list[str] | None = None) -> int:
+    """Read a KB's pages and write review candidates (never products). Returns how many were created."""
+    from .product_extract import extract_candidates
+
+    kb = KnowledgeBase.objects.select_related("project").get(id=kb_id)
+    return extract_candidates(kb, document_ids)

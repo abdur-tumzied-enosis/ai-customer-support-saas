@@ -317,6 +317,30 @@ class ProductImage(models.Model):
 		return super().delete(*args, **kwargs)
 
 
+class ProductCandidate(models.Model):
+	STATUS_CHOICES = [("pending", "Pending"), ("imported", "Imported"), ("ignored", "Ignored")]
+
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="product_candidates")
+	document = models.ForeignKey(Document, on_delete=models.SET_NULL, null=True, blank=True, related_name="product_candidates")
+	page_url = models.TextField(blank=True, default="")
+	name = models.CharField(max_length=255)
+	payload = models.JSONField(default=dict)
+	confidence = models.FloatField(default=0)
+	status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending")
+	matched_product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+	changes = models.JSONField(default=dict, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+
+class IgnoredProductPage(models.Model):
+	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="ignored_product_pages")
+	url = models.CharField(max_length=1000)
+
+	class Meta:
+		constraints = [models.UniqueConstraint(fields=["kb", "url"], name="ignored_product_page_unique_per_kb")]
+
+
 class IngestionJob(models.Model):
 	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="ingestions")
