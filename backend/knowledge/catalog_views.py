@@ -1,3 +1,5 @@
+import re
+
 from django.db import IntegrityError, transaction
 from django.db.models import Count
 from rest_framework import status
@@ -52,14 +54,17 @@ def _bad(code, message):
 	return _kb_error(code, message, status.HTTP_400_BAD_REQUEST)
 
 
+_KEY_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
 def _clean_field(data, field):
 	"""(values, None) or (None, error) for the editable fields present in `data`; `field` is the existing row or None."""
 	out = {}
 	if field is None:
 		key = data.get("key")
-		if not isinstance(key, str) or not key.strip():
-			return None, _bad("invalid_value", "key is required")
-		out["key"] = key.strip()[:64]
+		if not isinstance(key, str) or not _KEY_RE.fullmatch(key):
+			return None, _bad("invalid_value", "key must be 1-64 characters: a lowercase letter, then lowercase letters, digits or underscores")
+		out["key"] = key
 	if "label" in data or field is None:
 		label = data.get("label")
 		if not isinstance(label, str) or not label.strip():
@@ -121,12 +126,13 @@ class ProductFieldListCreateView(APIView):
 		values, err = _clean_field(request.data, None)
 		if err:
 			return err
-		try:
-			with transaction.atomic():
-				field = ProductField.objects.create(kb=kb, **values)
-				recompute_kb_status(kb)
-		except IntegrityError:
-			return _bad("duplicate_key", "A field with this key already exists")
+		with transaction.atomic():
+			try:
+				with transaction.atomic():
+					field = ProductField.objects.create(kb=kb, **values)
+			except IntegrityError:
+				return _bad("duplicate_key", "A field with this key already exists")
+			recompute_kb_status(kb)
 		return Response({"success": True, "data": _field_dict(field)}, status=status.HTTP_201_CREATED)
 
 

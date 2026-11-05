@@ -1,4 +1,7 @@
+from unittest import mock
+
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -94,3 +97,22 @@ class ProductFieldTests(TestCase):
 		fid = ProductField.objects.get().id
 		self.assertEqual(self.client.patch(f"/api/kb/product-fields/{fid}/", {"label": "x"}, format="json").status_code, 403)
 		self.assertEqual(self.client.delete(f"/api/kb/product-fields/{fid}/").status_code, 403)
+
+	def test_invalid_keys_rejected(self):
+		for key in ("Size", "has space", "a" * 65, "1abc", "a.b", "\u00e9a"):
+			r = self.make_field(key=key)
+			self.assertEqual(r.status_code, 400, key)
+			self.assertEqual(r.json()["error"]["code"], "invalid_value", key)
+		self.assertEqual(ProductField.objects.filter(kb=self.kb).count(), 0)
+
+	def test_valid_key_boundaries(self):
+		self.assertEqual(self.make_field(key="a" * 64).status_code, 201)
+		self.assertEqual(self.make_field(key="size_2").status_code, 201)
+		self.assertTrue(ProductField.objects.filter(kb=self.kb, key="a" * 64).exists())
+
+	def test_recompute_integrity_error_not_duplicate_key(self):
+		# the server error is handled (not re-raised) by the stack, so assert a 500 that is not the duplicate_key envelope
+		with mock.patch("knowledge.catalog_views.recompute_kb_status", side_effect=IntegrityError("boom")):
+			r = self.make_field()
+		self.assertEqual(r.status_code, 500)
+		self.assertNotIn("duplicate_key", r.content.decode())
