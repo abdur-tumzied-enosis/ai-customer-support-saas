@@ -12,6 +12,9 @@ CASES = [
     ("1,200.50", "1200.50"),
     ("৳1,200 (regular ৳1,500)", "1200"),       # regular price excluded
     ("Regular ৳1,500, now ৳1,200", "1200"),    # sale after regular
+    ("Regular 1500 now 1200", "1200"),
+    ("Price 1200 was 1500", "1200"),           # "was" sits between 1200 and 1500
+    ("Regular 1,500, now 1,200", "1200"),      # same as the ৳ case with ৳ deleted
     ("", None),
     (None, None),
     ("call for price", None),

@@ -12,9 +12,12 @@ def parse_price(raw: str | None) -> Decimal | None:
     if not raw:
         return None
     text = CURRENCY.sub(" ", raw.translate(BENGALI_DIGITS))
+    prev_end = 0
     for m in AMOUNT.finditer(text):
-        before = text[max(0, m.start() - 20):m.start()].lower()
-        if any(hint in before for hint in REGULAR_HINTS):
+        # keyword must sit between the previous amount and this one
+        gap = text[prev_end:m.start()].lower()
+        prev_end = m.end()
+        if any(hint in gap for hint in REGULAR_HINTS):
             continue
         value = Decimal(m.group().replace(",", ""))
         return value if value > 0 else None
