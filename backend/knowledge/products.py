@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.storage import delete_keys, object_size, presign_get, presign_put, thumb_key
-from .catalog import apply_owner_edit, compute_status, image_dict, product_dict
+from .catalog import apply_owner_edit, compute_status, image_dict, product_dict, save_variants
 from .models import MAX_IMAGES_PER_PRODUCT, MAX_PRODUCT_IMAGE_BYTES, Product, ProductImage, product_image_path
 from .tasks import embed_product_image
 from .views import _kb_error, _project_user, _resolve_kb
@@ -201,6 +201,42 @@ def _clean_changes(data, kb, product):
 	return out, None
 
 
+def _clean_variants(value):
+	"""(list of cleaned variant dicts, None) or (None, error)."""
+	def bad(msg):
+		return None, _kb_error("invalid_value", msg, status.HTTP_400_BAD_REQUEST)
+
+	if not isinstance(value, list):
+		return bad("variants must be a list")
+	out, seen = [], set()
+	for item in value:
+		if not isinstance(item, dict):
+			return bad("Each variant must be an object")
+		label = item.get("label")
+		if not isinstance(label, str) or not 1 <= len(label.strip()) <= 255:
+			return bad("Each variant needs a label of 1-255 characters")
+		attributes = item.get("attributes") if item.get("attributes") is not None else {}
+		if not isinstance(attributes, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in attributes.items()):
+			return bad("Variant attributes must be an object of text values")
+		for key in ("external_id", "sku"):
+			if item.get(key) is not None and not isinstance(item[key], str):
+				return bad(f"Variant {key} must be a string")
+		price, msg = _parse_price(item.get("price"))
+		if msg:
+			return None, _kb_error("invalid_price", msg, status.HTTP_400_BAD_REQUEST)
+		available = item.get("available", True)
+		if not isinstance(available, bool):
+			return bad("Variant available must be a boolean")
+		ext = (item.get("external_id") or "").strip()[:255] or None
+		if ext:
+			if ext in seen:
+				return None, _kb_error("duplicate_variant_key", "Two variants share the same ID", status.HTTP_400_BAD_REQUEST)
+			seen.add(ext)
+		out.append({"external_id": ext, "sku": (item.get("sku") or "").strip()[:128], "label": label.strip(),
+			"attributes": attributes, "price": price, "available": available})
+	return out, None
+
+
 class ProductListCreateView(APIView):
 	permission_classes = [IsAuthenticated]
 
@@ -243,6 +279,11 @@ class ProductListCreateView(APIView):
 				return err
 			if not specs:
 				return _kb_error("no_images", "At least one photo is required", status.HTTP_400_BAD_REQUEST)
+		variants = None
+		if "variants" in request.data:
+			variants, err = _clean_variants(request.data.get("variants"))
+			if err:
+				return err
 		product = Product(kb=kb)
 		changes, err = _clean_changes(request.data, kb, product)
 		if err:
@@ -257,6 +298,8 @@ class ProductListCreateView(APIView):
 				else:
 					product.save()
 					uploads = []
+				if variants is not None:
+					save_variants(product, variants)
 		except IntegrityError:  # lost a race with a concurrent create using the same external_id
 			if product.external_id:
 				return _duplicate()
@@ -285,6 +328,11 @@ class ProductDetailView(APIView):
 		changes, err = _clean_changes(request.data, product.kb, product)
 		if err:
 			return err
+		variants = None
+		if "variants" in request.data:
+			variants, err = _clean_variants(request.data.get("variants"))
+			if err:
+				return err
 		requested = request.data.get("status")
 		if "status" in request.data and requested not in ("active", "needs_info", "hidden"):
 			return _kb_error("invalid_status", "status must be active, needs_info or hidden", status.HTTP_400_BAD_REQUEST)
@@ -299,6 +347,8 @@ class ProductDetailView(APIView):
 		try:
 			with transaction.atomic():
 				product.save()
+				if variants is not None:
+					save_variants(product, variants)
 		except IntegrityError:  # concurrent edit took this external_id
 			if "external_id" in changes:
 				return _duplicate()

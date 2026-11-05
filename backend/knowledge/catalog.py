@@ -1,7 +1,9 @@
 import unicodedata
 from decimal import Decimal
 
-from .models import Product
+from django.db import transaction
+
+from .models import Product, ProductVariant
 from .price import BENGALI_DIGITS
 
 
@@ -31,6 +33,22 @@ def compute_status(product, fields) -> str:
 	if any(v.available and effective_price(product, v) is None for v in variants):
 		return "needs_info"
 	return "active"
+
+
+def save_variants(product, items: list[dict]) -> None:
+	"""Replace the product's whole variant set with cleaned `items`, then recompute and save its status."""
+	with transaction.atomic():
+		product.variants.all().delete()
+		ProductVariant.objects.bulk_create([
+			ProductVariant(
+				product=product, external_id=i.get("external_id"), sku=i.get("sku", ""), label=i["label"],
+				attributes=i.get("attributes") or {}, price=i.get("price"), available=i.get("available", True),
+			)
+			for i in items
+		])
+		getattr(product, "_prefetched_objects_cache", {}).pop("variants", None)  # drop any stale prefetch
+		product.status = compute_status(product, product.kb.product_fields.all())
+		product.save()
 
 
 def sellable(product) -> bool:
