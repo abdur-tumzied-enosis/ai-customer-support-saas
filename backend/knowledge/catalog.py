@@ -1,16 +1,14 @@
-import re
 import unicodedata
 from decimal import Decimal
 
 from .models import Product
 from .price import BENGALI_DIGITS
 
-_PUNCT = re.compile(r"[^\w\s]|_", re.UNICODE)
-
 
 def normalise_name(text: str) -> str:
 	text = unicodedata.normalize("NFKC", text or "").casefold().translate(BENGALI_DIGITS)
-	return " ".join(_PUNCT.sub(" ", text).split())
+	text = "".join(" " if unicodedata.category(ch)[0] in "PS" else ch for ch in text)
+	return " ".join(text.split())
 
 
 def effective_price(product, variant=None) -> Decimal | None:

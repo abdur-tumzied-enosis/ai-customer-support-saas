@@ -53,6 +53,11 @@ class CatalogRulesTest(TestCase):
 		self.assertEqual(normalise_name("Saree ৪৫০"), normalise_name("saree 450"))
 		self.assertEqual(normalise_name("  Red-Saree!!  Big "), "red saree big")
 
+	def test_normalise_keeps_bengali_marks(self):
+		self.assertEqual(normalise_name("শাড়ি"), "শাড়ি")
+		self.assertNotEqual(normalise_name("কি"), normalise_name("কী"))
+		self.assertEqual(normalise_name("শাড়ি, লাল!"), "শাড়ি লাল")
+
 	def test_match_external_id_beats_sku(self):
 		by_sku = Product.objects.create(kb=self.kb, name="a", sku="S1")
 		by_ext = Product.objects.create(kb=self.kb, name="b", external_id="E1")
@@ -91,7 +96,7 @@ class CatalogRulesTest(TestCase):
 		self.assertEqual(p.status, "active")
 
 	def test_apply_owner_edit_status_is_owner_choice(self):
-		p = Product.objects.create(kb=self.kb, name="x", price=Decimal("5"), status="active")
-		apply_owner_edit(p, {"status": "hidden"}, [])
-		self.assertEqual(p.status, "hidden")
+		p = Product.objects.create(kb=self.kb, name="x", price=Decimal("500"), status="active")
+		apply_owner_edit(p, {"status": "needs_info"}, [])
+		self.assertEqual(p.status, "needs_info")
 		self.assertIn("status", p.locked_fields)
