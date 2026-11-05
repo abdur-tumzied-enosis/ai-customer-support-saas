@@ -3,6 +3,7 @@ from .views import (
 	SignUpView, LoginView, LogoutView, CurrentUserView, CsrfTokenView,
 	ProfileView, ChangePasswordView, ExportDataView, DeleteAccountView,
 	VerifyEmailView, ResendVerificationView, PasswordResetRequestView, PasswordResetConfirmView,
+	ProjectSettingsView,
 )
 
 urlpatterns = [
@@ -19,4 +20,9 @@ urlpatterns = [
 	path("password/", ChangePasswordView.as_view(), name="change-password"),
 	path("export/", ExportDataView.as_view(), name="export-data"),
 	path("delete/", DeleteAccountView.as_view(), name="delete-account"),
+]
+
+# Mounted at /api/projects/ in core/urls.py
+project_urlpatterns = [
+	path("settings/", ProjectSettingsView.as_view(), name="project-settings"),
 ]

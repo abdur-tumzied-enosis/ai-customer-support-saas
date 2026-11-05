@@ -92,3 +92,8 @@ class LoginSerializer(serializers.Serializer):
 
 		return attrs
 
+
+
+class ProjectSettingsSerializer(serializers.Serializer):
+	name = serializers.CharField(max_length=255, required=False)
+	currency = serializers.RegexField(r"^[A-Z]{3}$", required=False)

@@ -19,7 +19,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
-from .serializers import SignUpSerializer, LoginSerializer, UserSerializer
+from .serializers import SignUpSerializer, LoginSerializer, UserSerializer, ProjectSettingsSerializer
 from .models import Project, ProjectUser
 from .tasks import queue_email
 import hmac
@@ -420,3 +420,50 @@ class DeleteAccountView(APIView):
 		user.delete()
 		logger.info("Account deleted: %s", user_id)
 		return Response({"success": True, "message": "Account deleted"})
+
+
+def _project_settings_dict(project: Project) -> dict:
+	return {"project_id": str(project.id), "name": project.name, "currency": project.currency}
+
+
+class ProjectSettingsView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def _membership(self, request, project_id, admin: bool):
+		try:
+			qs = ProjectUser.objects.filter(project_id=project_id, user=request.user)
+			if admin:
+				qs = qs.filter(role="admin")
+			return qs.select_related("project").first()
+		except (DjangoValidationError, ValueError):
+			return None
+
+	def _denied(self):
+		return Response(
+			{"success": False, "error": {"code": "access_denied", "message": "No access to this project"}},
+			status=status.HTTP_403_FORBIDDEN,
+		)
+
+	def get(self, request):
+		pu = self._membership(request, request.query_params.get("project_id"), admin=False)
+		if not pu:
+			return self._denied()
+		return Response({"success": True, "data": _project_settings_dict(pu.project)})
+
+	def patch(self, request):
+		pu = self._membership(request, request.data.get("project_id"), admin=True)
+		if not pu:
+			return self._denied()
+		serializer = ProjectSettingsSerializer(data=request.data)
+		if not serializer.is_valid():
+			code = "invalid_currency" if "currency" in serializer.errors else "invalid_value"
+			message = "Currency must be a three-letter uppercase code" if code == "invalid_currency" else "Invalid name"
+			return Response({"success": False, "error": {"code": code, "message": message}}, status=status.HTTP_400_BAD_REQUEST)
+		project = pu.project
+		fields = []
+		for key, value in serializer.validated_data.items():
+			setattr(project, key, value.strip() if key == "name" else value)
+			fields.append(key)
+		if fields:
+			project.save(update_fields=fields)
+		return Response({"success": True, "data": _project_settings_dict(project)})
