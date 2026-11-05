@@ -291,19 +291,20 @@ class ProductListCreateView(APIView):
 		for key, value in changes.items():
 			setattr(product, key, value)
 		product.status = compute_status(product, kb.product_fields.all())
-		try:
-			with transaction.atomic():
-				if specs:
-					uploads = _reserve(product, specs)
-				else:
-					product.save()
-					uploads = []
-				if variants is not None:
-					save_variants(product, variants)
-		except IntegrityError:  # lost a race with a concurrent create using the same external_id
-			if product.external_id:
-				return _duplicate()
-			raise
+		with transaction.atomic():
+			try:
+				with transaction.atomic():
+					if specs:
+						uploads = _reserve(product, specs)
+					else:
+						product.save()
+						uploads = []
+			except IntegrityError:  # lost a race with a concurrent create using the same external_id
+				if product.external_id:
+					return _duplicate()
+				raise
+			if variants is not None:
+				save_variants(product, variants)
 		data = {"product": product_dict(product), "uploads": uploads, "key_warning": not (product.external_id or product.sku)}
 		return Response({"success": True, "data": data}, status=status.HTTP_201_CREATED if specs else status.HTTP_200_OK)
 
@@ -344,15 +345,16 @@ class ProductDetailView(APIView):
 				return _kb_error("price_required", "A product needs a price to be active", status.HTTP_400_BAD_REQUEST)
 			product.status = "needs_info"  # un-hide, then compute_status decides
 		apply_owner_edit(product, changes, product.kb.product_fields.all())
-		try:
-			with transaction.atomic():
-				product.save()
-				if variants is not None:
-					save_variants(product, variants)
-		except IntegrityError:  # concurrent edit took this external_id
-			if "external_id" in changes:
-				return _duplicate()
-			raise
+		with transaction.atomic():
+			try:
+				with transaction.atomic():
+					product.save()
+			except IntegrityError:  # concurrent edit took this external_id
+				if "external_id" in changes:
+					return _duplicate()
+				raise
+			if variants is not None:
+				save_variants(product, variants)
 		return Response({"success": True, "data": product_dict(product)})
 
 	def delete(self, request, product_id):
