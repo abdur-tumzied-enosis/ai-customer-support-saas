@@ -76,6 +76,7 @@ export type OrderFilters = {
 	date_to?: string;
 	is_test?: string;
 	q?: string;
+	conversation_id?: string;
 };
 
 export type OrderRow = {
@@ -128,6 +129,28 @@ export type OrderInstruction = {
 	knowledge_base_id: string | null;
 	created_at: string;
 	updated_at: string;
+};
+
+export type PrefillLine = { product_id: string; name: string; variant_id: string | null; quantity: number };
+
+export type Prefill = {
+	items: PrefillLine[];
+	customer: Partial<Record<"customer_name" | "customer_phone" | "customer_address" | "zone_name" | "customer_note", string>>;
+	needs_price: { product_id: string; name: string }[];
+};
+
+export const orderFromChatApi = {
+	prefill: (conversationId: string) =>
+		apiFetch<Prefill>("/api/orders/from-chat/", { method: "POST", json: { conversation_id: conversationId } }),
+	create: (
+		conversationId: string,
+		items: { product_id: string; variant_id: string | null; quantity: number }[],
+		customer: Record<string, string>
+	) =>
+		apiFetch<{ order_number: number | null; status: string; problems?: { message: string }[] }>("/api/orders/", {
+			method: "POST",
+			json: { conversation_id: conversationId, items, customer },
+		}),
 };
 
 export const orderInstructionApi = {

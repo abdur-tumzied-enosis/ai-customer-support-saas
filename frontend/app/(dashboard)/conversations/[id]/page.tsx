@@ -7,6 +7,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import MessageComposer from "@/components/chat/MessageComposer";
 import MemoryDialog from "@/components/chat/MemoryDialog";
+import CreateFromChatDialog from "@/components/orders/CreateFromChatDialog";
+import ConversationOrders from "@/components/orders/ConversationOrders";
 import { conversationApi, featuresApi, type Conversation, type ConversationMessage } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
@@ -25,6 +27,8 @@ export default function ConversationThreadPage() {
 	const [waitingForReply, setWaitingForReply] = useState(false);
 	const [conversation, setConversation] = useState<Conversation | null>(null);
 	const { projects } = useAuth();
+	const [orderDialogOpen, setOrderDialogOpen] = useState(false);
+	const [ordersVersion, setOrdersVersion] = useState(0);
 	const projectId = projects.length > 0 ? String(projects[0].id) : "";
 	const [imageSearchOn, setImageSearchOn] = useState(false);
 	const pollingIntervals = useRef<Map<string, NodeJS.Timeout>>(new Map());
@@ -348,9 +352,22 @@ export default function ConversationThreadPage() {
 							</div>
 						</div>
 					</div>
+					<Button variant="outline" size="sm" onClick={() => setOrderDialogOpen(true)} disabled={projects.length === 0}>
+						Create order
+					</Button>
 					<MemoryDialog conversationId={conversationId} />
+					<CreateFromChatDialog
+						open={orderDialogOpen}
+						onOpenChange={setOrderDialogOpen}
+						conversationId={conversationId}
+						onCreated={() => setOrdersVersion((v) => v + 1)}
+					/>
 				</div>
 			</div>
+
+			{projects.length > 0 && (
+				<ConversationOrders projectId={String(projects[0].id)} conversationId={conversationId} version={ordersVersion} />
+			)}
 
 			{/* Error Message */}
 			{error && (
