@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import validate_email
 from django.http import Http404
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,6 +14,7 @@ from .access import project_for
 from .models import OrderSettings
 from .prompt import build_order_prompt
 from .requirements import check
+from .instructions import RESOLVE_SCOPES, find_order_instructions
 from .setup import run_setup
 
 CHANNELS = {"facebook", "instagram", "whatsapp", "widget"}
@@ -260,3 +262,38 @@ class SetupStatusView(APIView):
 			return error
 		settings, _ = OrderSettings.objects.get_or_create(project=project)
 		return _ok({"status": settings.setup_status, "report": settings.setup_report})
+
+
+class InstructionReviewView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project, error = _scoped(request, admin=False)
+		if error:
+			return error
+		return _ok([
+			{"id": str(i.id), "label": i.label, "excerpt": i.message[:160]} for i in find_order_instructions(project)
+		])
+
+
+class InstructionResolveView(APIView):
+	"""Converts or turns off existing order-taking instructions. Nothing is deleted."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		project, error = _scoped(request, admin=True, project_id=request.data.get("project_id"))
+		if error:
+			return error
+		action = request.data.get("action")
+		if action not in RESOLVE_SCOPES:
+			return _err("invalid_action", "action must be convert or turn_off", 400)
+		ids = request.data.get("ids")
+		if not isinstance(ids, list) or not ids:
+			return _err("invalid_ids", "ids must be a non-empty list", 400)
+		try:
+			updated = CustomInstruction.objects.filter(project=project, id__in=ids).update(
+				scope=RESOLVE_SCOPES[action], updated_at=timezone.now(),
+			)
+		except (ValueError, ValidationError):
+			return _err("invalid_ids", "ids must be instruction ids", 400)
+		return _ok({"updated": updated, "scope": RESOLVE_SCOPES[action]})
