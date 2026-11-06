@@ -16,9 +16,9 @@ const CHANNELS = [
 	{ value: "widget", label: "Website widget" },
 ];
 
-type Props = { projectId: string; onSaved: () => void };
+type Props = { projectId: string; onSaved: () => void; saveLabel?: string };
 
-export default function SetupStepSettings({ projectId, onSaved }: Props) {
+export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Save and continue" }: Props) {
 	const [draft, setDraft] = useState<OrderSettings | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -57,7 +57,6 @@ export default function SetupStepSettings({ projectId, onSaved }: Props) {
 				channels: draft!.channels,
 				zones: draft!.zones,
 				payment_methods: draft!.payment_methods,
-				form_fields: draft!.form_fields,
 				notification_emails: draft!.notification_emails,
 			});
 			onSaved();
@@ -148,7 +147,7 @@ export default function SetupStepSettings({ projectId, onSaved }: Props) {
 
 			<div className="flex justify-end">
 				<Button onClick={save} disabled={busy}>
-					{busy ? "Saving…" : "Save and continue"}
+					{busy ? "Saving…" : saveLabel}
 				</Button>
 			</div>
 		</div>

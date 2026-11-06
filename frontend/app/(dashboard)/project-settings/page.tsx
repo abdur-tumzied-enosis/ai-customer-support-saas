@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -151,6 +152,18 @@ export default function ProjectSettingsPage() {
 							</Button>
 						)}
 					</form>
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle>Orders</CardTitle>
+					<CardDescription>Let the assistant take orders, and manage the orders list.</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<Link href="/project-settings/orders" className="text-sm text-primary underline">
+						Order settings
+					</Link>
 				</CardContent>
 			</Card>
 

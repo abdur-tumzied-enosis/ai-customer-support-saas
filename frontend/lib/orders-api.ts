@@ -119,3 +119,33 @@ export type OrderDetail = OrderRow & {
 	items: OrderItemRow[];
 	history: { from_status: string; to_status: string; actor_type: string; actor_id: string; created_at: string }[];
 };
+
+export type OrderInstruction = {
+	id: string;
+	label: string;
+	message: string;
+	scope?: "general" | "order" | "off";
+	knowledge_base_id: string | null;
+	created_at: string;
+	updated_at: string;
+};
+
+export const orderInstructionApi = {
+	list: (projectId: string) =>
+		apiFetch<{ instructions: OrderInstruction[]; count: number }>(`/api/kb/instructions/${withProject(projectId)}`),
+	create: (projectId: string, data: { label: string; message: string; scope: "order" }) =>
+		apiFetch<{ instruction: OrderInstruction; warnings: string[] }>("/api/kb/instructions/", {
+			method: "POST",
+			json: { project_id: projectId, ...data },
+		}),
+	update: (id: string, data: { label?: string; message?: string; scope?: "order" | "off" }) =>
+		apiFetch<{ instruction: OrderInstruction; warnings: string[] }>(`/api/kb/instructions/${id}/`, {
+			method: "PATCH",
+			json: data,
+		}),
+	improve: (projectId: string, text: string) =>
+		apiFetch<{ suggestion: string; why: string }>("/api/kb/instructions/improve/", {
+			method: "POST",
+			json: { project_id: projectId, text, scope: "order" },
+		}),
+};
