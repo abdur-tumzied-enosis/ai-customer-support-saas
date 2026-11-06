@@ -107,6 +107,13 @@ class OrdersApiTest(TestCase):
 		self.assertTrue(results[str(mine_b.id)]["ok"])
 		self.assertFalse(results[str(other_order.id)]["ok"])
 
+	def test_filter_by_conversation(self):
+		order = self.submitted()
+		self.submitted()
+		self.client.force_authenticate(user=self.admin)
+		r = self.client.get("/api/orders/", {"project_id": str(self.project.id), "conversation_id": str(order.conversation_id)})
+		self.assertEqual(r.json()["data"]["count"], 1, r.content)
+
 	def test_two_staff_edits_both_in_history(self):
 		order = self.submitted()
 		self.client.force_authenticate(user=self.admin)

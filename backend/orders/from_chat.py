@@ -81,7 +81,7 @@ def prefill_from_conversation(conversation) -> dict:
 				needs_price.append({"product_id": str(product.id), "name": product.name})
 			continue
 		items.append({
-			"product_id": str(product.id), "variant_id": str(variant.id) if variant else None,
+			"product_id": str(product.id), "name": product.name, "variant_id": str(variant.id) if variant else None,
 			"quantity": item.quantity,
 		})
 	return {"items": items, "customer": result.customer.model_dump(exclude_none=True), "needs_price": needs_price}

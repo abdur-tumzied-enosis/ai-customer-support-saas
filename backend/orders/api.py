@@ -435,6 +435,11 @@ def _filtered_orders(project, params):
 		qs = qs.exclude(status__in=HIDDEN_STATUSES)
 	if params.get("channel"):
 		qs = qs.filter(channel=params["channel"])
+	if params.get("conversation_id"):
+		try:
+			qs = qs.filter(conversation_id=params["conversation_id"])
+		except (ValueError, ValidationError):
+			return None, _err("invalid_conversation", "conversation_id must be an id", 400)
 	for key, lookup in (("date_from", "created_at__date__gte"), ("date_to", "created_at__date__lte")):
 		if params.get(key):
 			day = parse_date(params[key])
