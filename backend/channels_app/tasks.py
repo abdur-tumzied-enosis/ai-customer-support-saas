@@ -11,6 +11,10 @@ from agents.rag import generate_reply, Context, ToolDeps, ChatMessage
 from agents.vector_store import get_retriever
 from agents.web_crawl_retriever import get_web_crawl_retriever
 from agents.api_tool import collect_api_domains
+from orders.guard import trace_unconfirmed
+from orders.prompt import build_order_prompt
+from orders.service import ordering_active
+from orders.tools import build_order_tools
 from usage.utils import estimate_tokens
 
 import logging
@@ -107,6 +111,13 @@ def build_reply_context(project, knowledge_base: KnowledgeBase, conversation=Non
 		retriever_factory=get_retriever,
 		retrieved_factory_for_crawler_url_context=lambda: get_web_crawl_retriever(str(knowledge_base.id), k=10)
 	)
+	order_settings = ordering_active(conversation) if conversation else None
+	if order_settings:
+		context.order_tools = build_order_tools(conversation, order_settings, context)
+		order_texts = [i.message for i in CustomInstruction.effective_order_instructions(str(project.id), str(knowledge_base.id))]
+		context.custom_instructions = custom_instructions + [
+			{"label": "Order taking", "message": build_order_prompt(order_settings, order_texts, project.currency)},
+		]
 	return context, deps
 
 
@@ -127,6 +138,7 @@ def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: 
 		setattr(exc, "api_calls", context.api_call_log)  # lets the caller avoid re-sending POSTs on retry
 		setattr(exc, "trace", context.trace)
 		raise
+	trace_unconfirmed(context, reply_text)
 	logger.info(f"Reply text: {reply_text}")
 	return reply_text, context
 
