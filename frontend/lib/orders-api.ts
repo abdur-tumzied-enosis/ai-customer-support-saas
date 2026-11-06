@@ -18,11 +18,21 @@ export type OrderSettings = {
 	payment_methods: PaymentMethod[];
 	form_fields: { optional: string[]; custom: CustomField[] };
 	notification_emails: string[];
+	live_lookup: LiveLookup;
 	draft_expiry_hours: number;
 	enabled: boolean;
 	test_mode: boolean;
 	currency: string;
 	prompt_preview: string;
+};
+
+export type LiveHeader = { name: string; value?: string; has_value?: boolean };
+export type LiveLookup = {
+	enabled: boolean;
+	url_template: string;
+	price_path: string;
+	available_path: string | null;
+	headers: LiveHeader[];
 };
 
 export type SetupState = {
