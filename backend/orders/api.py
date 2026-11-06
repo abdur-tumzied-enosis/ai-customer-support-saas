@@ -4,7 +4,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import Q
-from django.http import Http404
+from django.http import Http404, HttpResponse
 from django.utils.dateparse import parse_date
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
@@ -19,6 +19,7 @@ from .service import OrderValidationError, apply_lines, set_status, update_custo
 from .totals import collect_amount
 from .prompt import build_order_prompt
 from .requirements import check
+from .export import write_orders_csv
 from .guard import check_instruction
 from .improve import NoSafeSuggestion, improve
 from .instructions import RESOLVE_SCOPES, find_order_instructions
@@ -418,6 +419,34 @@ def _apply_edit(order, request) -> None:
 		set_status(order, data["status"], ("user", str(request.user.id)))
 
 
+def _filtered_orders(project, params):
+	"""The project's orders matching the list filters: (queryset, None), or (None, error response)."""
+	qs = Order.objects.filter(project=project)
+	if params.get("status"):
+		if params["status"] not in ORDER_STATUSES:
+			return None, _err("invalid_status", "unknown status", 400)
+		qs = qs.filter(status=params["status"])
+	else:
+		qs = qs.exclude(status__in=HIDDEN_STATUSES)
+	if params.get("channel"):
+		qs = qs.filter(channel=params["channel"])
+	for key, lookup in (("date_from", "created_at__date__gte"), ("date_to", "created_at__date__lte")):
+		if params.get(key):
+			day = parse_date(params[key])
+			if day is None:
+				return None, _err("invalid_date", f"{key} must be YYYY-MM-DD", 400)
+			qs = qs.filter(**{lookup: day})
+	if params.get("is_test") in ("true", "false"):
+		qs = qs.filter(is_test=params["is_test"] == "true")
+	if params.get("q"):
+		text = params["q"].strip()
+		match = Q(customer_name__icontains=text) | Q(customer_phone__icontains=text)
+		if text.isdigit():
+			match |= Q(number=int(text))
+		qs = qs.filter(match)
+	return qs, None
+
+
 class OrdersListView(APIView):
 	permission_classes = [IsAuthenticated]
 
@@ -425,37 +454,34 @@ class OrdersListView(APIView):
 		project, error = _scoped(request, admin=False)
 		if error:
 			return error
-		params = request.query_params
-		qs = Order.objects.filter(project=project)
-		if params.get("status"):
-			if params["status"] not in ORDER_STATUSES:
-				return _err("invalid_status", "unknown status", 400)
-			qs = qs.filter(status=params["status"])
-		else:
-			qs = qs.exclude(status__in=HIDDEN_STATUSES)
-		if params.get("channel"):
-			qs = qs.filter(channel=params["channel"])
-		for key, lookup in (("date_from", "created_at__date__gte"), ("date_to", "created_at__date__lte")):
-			if params.get(key):
-				day = parse_date(params[key])
-				if day is None:
-					return _err("invalid_date", f"{key} must be YYYY-MM-DD", 400)
-				qs = qs.filter(**{lookup: day})
-		if params.get("is_test") in ("true", "false"):
-			qs = qs.filter(is_test=params["is_test"] == "true")
-		if params.get("q"):
-			text = params["q"].strip()
-			match = Q(customer_name__icontains=text) | Q(customer_phone__icontains=text)
-			if text.isdigit():
-				match |= Q(number=int(text))
-			qs = qs.filter(match)
+		qs, error = _filtered_orders(project, request.query_params)
+		if error:
+			return error
 		try:
-			page = max(int(params.get("page", 1)), 1)
-			size = min(max(int(params.get("page_size", 25)), 1), 100)
+			page = max(int(request.query_params.get("page", 1)), 1)
+			size = min(max(int(request.query_params.get("page_size", 25)), 1), 100)
 		except ValueError:
 			return _err("invalid_page", "page and page_size must be numbers", 400)
 		orders = qs.order_by("-created_at")[(page - 1) * size: page * size]
 		return _ok({"orders": [_order_row(o) for o in orders], "count": qs.count()})
+
+
+class OrdersExportView(APIView):
+	"""CSV of the orders matching the list filters."""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project, error = _scoped(request, admin=False)
+		if error:
+			return error
+		qs, error = _filtered_orders(project, request.query_params)
+		if error:
+			return error
+		# shortcut: the whole file is built in memory, fine for one shop's export; stream it past tens of thousands of orders
+		response = HttpResponse(content_type="text/csv")
+		response["Content-Disposition"] = 'attachment; filename="orders.csv"'
+		write_orders_csv(response, qs.order_by("-created_at").prefetch_related("items"))
+		return response
 
 
 class OrderDetailView(APIView):

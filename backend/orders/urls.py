@@ -2,11 +2,12 @@ from django.urls import path
 
 from .api import (
 	BulkStatusView, DisableView, EnableView, InstructionResolveView, InstructionReviewView, OrderDetailView,
-	OrdersListView, RequirementsView, SetupRunView, SetupStatusView, SettingsView, TestModeView,
+	OrdersExportView, OrdersListView, RequirementsView, SetupRunView, SetupStatusView, SettingsView, TestModeView,
 )
 
 urlpatterns = [
 	path("", OrdersListView.as_view(), name="order-list"),
+	path("export.csv", OrdersExportView.as_view(), name="order-export"),
 	path("<uuid:order_id>/", OrderDetailView.as_view(), name="order-detail"),
 	path("bulk-status/", BulkStatusView.as_view(), name="order-bulk-status"),
 	path("settings/", SettingsView.as_view(), name="order-settings"),
