@@ -498,11 +498,11 @@ class OrdersListView(APIView):
 
 
 class OrdersExportView(APIView):
-	"""CSV of the orders matching the list filters."""
+	"""CSV of the orders matching the list filters. Admins only: the export carries every customer's details."""
 	permission_classes = [IsAuthenticated]
 
 	def get(self, request):
-		project, error = _scoped(request, admin=False)
+		project, error = _scoped(request, admin=True)
 		if error:
 			return error
 		qs, error = _filtered_orders(project, request.query_params)
