@@ -540,6 +540,7 @@ def _instruction_to_dict(inst: CustomInstruction) -> dict:
         "knowledge_base_name": inst.knowledge_base.name if inst.knowledge_base else None,
         "api_tool_enabled": inst.api_tool_enabled,
         "api_domains": public_api_domains(inst.api_domains),
+        "scope": inst.scope,
         "created_at": inst.created_at.isoformat(),
         "updated_at": inst.updated_at.isoformat(),
     }
@@ -660,6 +661,13 @@ class CustomInstructionListCreateView(APIView):
             except ApiConfigError as e:
                 return _api_config_error(e)
 
+            scope = request.data.get('scope', 'general')
+            if scope not in dict(CustomInstruction.SCOPE_CHOICES):
+                return Response(
+                    {"success": False, "error": {"code": "invalid_scope", "message": "scope must be general, order or off"}},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             # Create instruction
             instruction = CustomInstruction.objects.create(
                 project=project,
@@ -668,6 +676,7 @@ class CustomInstructionListCreateView(APIView):
                 message=message,
                 api_tool_enabled=api_tool_enabled,
                 api_domains=api_domains,
+                scope=scope,
             )
 
             return Response({
@@ -744,6 +753,13 @@ class CustomInstructionDetailView(APIView):
                 instruction.label = request.data['label'].strip()
             if 'message' in request.data:
                 instruction.message = request.data['message'].strip()
+            if 'scope' in request.data:
+                if request.data['scope'] not in dict(CustomInstruction.SCOPE_CHOICES):
+                    return Response(
+                        {"success": False, "error": {"code": "invalid_scope", "message": "scope must be general, order or off"}},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                instruction.scope = request.data['scope']
             try:
                 instruction.api_tool_enabled, instruction.api_domains = apply_api_config(
                     request.data, instruction.api_tool_enabled, instruction.api_domains
@@ -836,7 +852,7 @@ class CustomInstructionResolveView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            instructions = list(CustomInstruction.effective(project_id, kb_id).select_related('knowledge_base'))
+            instructions = list(CustomInstruction.visible(project_id, kb_id).select_related('knowledge_base'))
             # "knowledge_base" when the KB adds its own on top of the shared ones
             source = "knowledge_base" if any(inst.knowledge_base_id for inst in instructions) else "project"
             result = [_instruction_to_dict(inst) for inst in instructions]
