@@ -7,12 +7,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from knowledge.models import CustomInstruction, Product
+from knowledge.models import CustomInstruction, KnowledgeBase, Product
 
 from .access import project_for
 from .models import OrderSettings
 from .prompt import build_order_prompt
 from .requirements import check
+from .setup import run_setup
 
 CHANNELS = {"facebook", "instagram", "whatsapp", "widget"}
 
@@ -31,10 +32,10 @@ def _err(code: str, message: str, http_status: int):
 	return Response({"success": False, "error": {"code": code, "message": message}}, status=http_status)
 
 
-def _scoped(request, admin: bool):
-	"""(project, None) for an allowed caller, else (None, error response)."""
+def _scoped(request, admin: bool, project_id=None):
+	"""(project, None) for an allowed caller, else (None, error response). project_id defaults to the query string."""
 	try:
-		return project_for(request, request.query_params.get("project_id"), admin=admin), None
+		return project_for(request, project_id or request.query_params.get("project_id"), admin=admin), None
 	except Http404:
 		return None, _err("not_found", "Project not found", 404)
 	except PermissionDenied:
@@ -230,3 +231,32 @@ class TestModeView(APIView):
 		settings.test_mode = flag
 		settings.save(update_fields=["test_mode", "updated_at"])
 		return _ok({"test_mode": flag})
+
+
+class SetupRunView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		project, error = _scoped(request, admin=True, project_id=request.data.get("project_id"))
+		if error:
+			return error
+		kb_id = request.data.get("kb_id")
+		try:
+			kb_ok = KnowledgeBase.objects.filter(pk=kb_id, project=project).exists()
+		except (ValueError, ValidationError):
+			kb_ok = False
+		if not kb_ok:
+			return _err("invalid_kb", "Knowledge base not found in this project", 400)
+		run_setup(str(project.id), str(kb_id))
+		return _ok({"status": "running"}, 202)
+
+
+class SetupStatusView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project, error = _scoped(request, admin=True)
+		if error:
+			return error
+		settings, _ = OrderSettings.objects.get_or_create(project=project)
+		return _ok({"status": settings.setup_status, "report": settings.setup_report})
