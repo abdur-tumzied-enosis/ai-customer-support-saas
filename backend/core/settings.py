@@ -36,6 +36,7 @@ INSTALLED_APPS = [
 	"channels_app",
 	"agents",
 	"knowledge",
+	"orders",
 	"subscriptions",
 	"usage",
 	"analytics",
