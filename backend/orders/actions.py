@@ -95,8 +95,8 @@ def execute_run(run_id: int) -> None:
 		return _finish(run, "failed", headers, error=e.message)
 	except OutboundError as e:
 		return _finish(run, "failed", headers, error=str(e))
-	except Exception:  # one order must not stop the bulk run; the cause stays in the server log
-		logger.exception("Action run %s failed unexpectedly", run_id)
+	except Exception as e:  # one order must not stop the bulk run
+		logger.error("Action run %s failed unexpectedly: %s", run_id, type(e).__name__)  # no message or traceback: either may echo a secret
 		return _finish(run, "failed", headers, error="Unexpected error")
 	if result.status not in action.success_codes:
 		return _finish(run, "failed", headers, http_status=result.status, excerpt=result.text, error=f"HTTP {result.status}")
