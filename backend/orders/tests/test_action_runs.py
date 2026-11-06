@@ -126,3 +126,27 @@ class ActionRunTest(TestCase):
 		self.assertEqual(r.status_code, 409, r.content)
 		self.assertEqual(r.json()["error"]["details"], ["1001"])  # the frontend reads details as a list
 		self.assertEqual(OrderActionRun.objects.count(), 1)  # nothing queued, not even the other two orders
+
+	def test_queued_run_counts_as_sent(self):
+		OrderActionRun.objects.create(action=self.action, order=self.orders[0], status="queued")
+		result, request = self.run_all(orders=[self.orders[0]], responses=[])
+		self.assertEqual(result["already_sent"], [1001])
+		self.assertEqual(result["queued"], [])
+		request.assert_not_called()
+
+	def test_claim_skips_run_that_is_not_queued(self):
+		done = OrderActionRun.objects.create(action=self.action, order=self.orders[0], status="succeeded")
+		with patch("orders.actions.safe_request") as request:
+			execute_run(done.id)
+		request.assert_not_called()
+
+	def test_cancelled_during_call_keeps_cancelled(self):
+		def cancel_then_ok(*args, **kwargs):
+			Order.objects.filter(pk=self.orders[0].pk).update(status="cancelled")
+			return OK
+		self.run_all(orders=[self.orders[0]], responses=cancel_then_ok)
+		self.orders[0].refresh_from_db()
+		self.assertEqual(self.orders[0].status, "cancelled")
+		self.assertEqual(self.orders[0].tracking_number, "T123")
+		run = OrderActionRun.objects.get(order=self.orders[0])
+		self.assertIn("cancelled", run.error)

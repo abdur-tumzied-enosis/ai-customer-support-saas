@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .http import OutboundError, safe_request
-from .models import OrderActionRun
+from .models import Order, OrderActionRun
 from .service import OrderStatusError, set_status
 from .tasks import run_action_run
 from .templates import TemplateError, build_context, dig, render
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 EXCERPT_CHARS = 500
 REDACTED = "***"
+SENT_STATUSES = ("queued", "running", "succeeded")  # a send that is pending or done counts as sent
 SENDABLE = ("new", "confirmed", "shipped", "delivered")  # never a draft, cancelled or abandoned order
 
 
@@ -27,7 +28,7 @@ def redact(text: str, headers: list[dict]) -> str:
 
 def already_sent_orders(action, orders) -> list:
 	done = set(
-		OrderActionRun.objects.filter(action=action, status="succeeded", order__in=orders).values_list("order_id", flat=True)
+		OrderActionRun.objects.filter(action=action, status__in=SENT_STATUSES, order__in=orders).values_list("order_id", flat=True)
 	)
 	return [o for o in orders if o.id in done]
 
@@ -73,10 +74,16 @@ def _apply_success(action, order, text: str) -> str:
 		else:
 			note = "The response had no tracking number at the mapped path"
 	if action.success_status:
-		try:
-			set_status(order, action.success_status, ("system", action.name))
-		except OrderStatusError as e:
-			note = e.message
+		with transaction.atomic():  # the courier call took seconds: re-read before changing the status
+			locked = Order.objects.select_for_update().get(pk=order.pk)
+			if locked.status in ("cancelled", "abandoned"):
+				return note or f"Order was {locked.status} meanwhile; its status was not changed"
+			if locked.status == action.success_status:
+				return note
+			try:
+				set_status(locked, action.success_status, ("system", action.name))
+			except OrderStatusError as e:
+				note = e.message
 	return note
 
 
@@ -84,8 +91,9 @@ def execute_run(run_id: int) -> None:
 	"""Send one order's request. Every failure is recorded on this run only; the caller never sees it raised."""
 	run = OrderActionRun.objects.select_related("action", "order").get(pk=run_id)
 	action, order, headers = run.action, run.order, run.action.headers
+	if OrderActionRun.objects.filter(pk=run_id, status="queued").update(status="running") == 0:
+		return  # already claimed by another delivery of this task, or finished
 	run.status = "running"
-	run.save(update_fields=["status"])
 	try:
 		context = build_context(order)
 		url = render(action.url, context, "url")
