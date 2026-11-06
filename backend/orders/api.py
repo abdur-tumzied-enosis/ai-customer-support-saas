@@ -1,3 +1,4 @@
+import uuid
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import PermissionDenied, ValidationError
@@ -15,7 +16,9 @@ from knowledge.models import CustomInstruction, KnowledgeBase, Product
 
 from .access import project_for
 from .action_config import ActionError, header_summary, validate_action
-from .models import Order, OrderAction, OrderSettings
+from .actions import already_sent_orders, execute_run, run_action_for_orders, SENDABLE
+from .tasks import run_action_run
+from .models import Order, OrderAction, OrderActionRun, OrderSettings
 from .service import (
 	OrderStatusError, OrderValidationError, apply_lines, get_or_create_draft, set_status, submit_order, update_customer,
 	validate_for_submit,
@@ -681,3 +684,131 @@ class ActionDetailView(APIView):
 			return err
 		action.delete()
 		return _ok({"deleted": True})
+
+
+def _run_dict(run) -> dict:
+	return {
+		"id": run.id, "action_id": run.action_id, "action_name": run.action.name, "order_id": str(run.order_id),
+		"status": run.status, "attempt": run.attempt, "http_status": run.http_status, "error": run.error,
+		"response_excerpt": run.response_excerpt, "created_at": run.created_at.isoformat(),
+		"finished_at": run.finished_at.isoformat() if run.finished_at else None,
+	}
+
+
+def _uuids(values) -> list | None:
+	try:
+		return [uuid.UUID(str(v)) for v in values]
+	except (ValueError, TypeError):
+		return None
+
+
+def _sent_conflict(numbers: list):
+	return Response({"success": False, "error": {
+		"code": "already_sent", "message": "Some orders were already sent by this action",
+		"order_numbers": numbers,
+	}}, status=409)
+
+
+class ActionRunView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, action_id):
+		action, err = _action_or_error(request, action_id)
+		if err:
+			return err
+		raw = request.data.get("order_ids")
+		ids = _uuids(raw) if isinstance(raw, list) and raw else None
+		if not ids:
+			return _err("invalid_ids", "order_ids must be a non-empty list", 400)
+		force = bool(request.data.get("force"))
+		orders = list(Order.objects.filter(project=action.project, id__in=ids, status__in=SENDABLE))
+		with transaction.atomic():
+			OrderAction.objects.select_for_update().get(pk=action.pk)  # one bulk run at a time per action
+			sent = already_sent_orders(action, orders)
+			if sent and not force:
+				return _sent_conflict([o.number for o in sent])
+			result = run_action_for_orders(action, orders, ("user", str(request.user.id)), force=force)
+		return _ok(result)
+
+
+class ActionProgressView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request, action_id):
+		action, err = _action_or_error(request, action_id)
+		if err:
+			return err
+		runs = OrderActionRun.objects.filter(action=action)
+		if request.query_params.get("order_ids"):
+			ids = _uuids(request.query_params["order_ids"].split(","))
+			if ids is None:
+				return _err("invalid_ids", "order_ids must be UUIDs", 400)
+			runs = runs.filter(order_id__in=ids)
+		latest = {}  # newest run per order decides its status
+		for order_id, status in runs.order_by("order_id", "-id").values_list("order_id", "status"):
+			latest.setdefault(order_id, status)
+		counts = {"queued": 0, "running": 0, "succeeded": 0, "failed": 0}
+		for status in latest.values():
+			counts[status] = counts.get(status, 0) + 1
+		return _ok({"counts": counts, "total": len(latest)})
+
+
+class ActionRunListView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		order, err = _order_or_error(request, request.query_params.get("order_id"))
+		if err:
+			return err
+		runs = OrderActionRun.objects.filter(order=order).select_related("action").order_by("-created_at", "-id")
+		return _ok([_run_dict(r) for r in runs])
+
+
+class ActionRunRetryView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, run_id):
+		run = OrderActionRun.objects.select_related("action", "order").filter(pk=run_id).first()
+		if run is None:
+			return _err("not_found", "Run not found", 404)
+		_, err = _scoped(request, admin=False, project_id=run.action.project_id)
+		if err:
+			return err
+		if run.status != "failed":
+			return _err("not_retryable", "Only a failed run can be retried", 409)
+		with transaction.atomic():
+			OrderAction.objects.select_for_update().get(pk=run.action_id)
+			if already_sent_orders(run.action, [run.order]):  # a later attempt may already have succeeded
+				return _sent_conflict([run.order.number])
+			new = OrderActionRun.objects.create(
+				action=run.action, order=run.order, status="queued", attempt=run.attempt + 1,
+				actor_type="user", actor_id=str(request.user.id),
+			)
+			transaction.on_commit(lambda: run_action_run.delay(new.id))
+		return _ok(_run_dict(new), 201)
+
+
+class ActionTestView(APIView):
+	"""Runs one order's request now, in this request, and records it like any other run."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, action_id):
+		action, err = _action_or_error(request, action_id)
+		if err:
+			return err
+		try:
+			number = int(request.data.get("order_number"))
+		except (TypeError, ValueError):
+			return _err("invalid_order", "order_number must be a number", 400)
+		order = Order.objects.filter(project=action.project, number=number, status__in=SENDABLE).first()
+		if order is None:
+			return _err("not_found", "No sendable order with that number", 404)
+		if already_sent_orders(action, [order]) and not request.data.get("force"):
+			return _sent_conflict([number])
+		run = OrderActionRun.objects.create(
+			action=action, order=order, status="queued", actor_type="user", actor_id=str(request.user.id),
+		)
+		execute_run(run.id)
+		run.refresh_from_db()
+		return _ok({"ok": run.status == "succeeded", "http_status": run.http_status, "error": run.error,
+		            "response_excerpt": run.response_excerpt})

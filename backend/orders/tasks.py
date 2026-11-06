@@ -30,3 +30,10 @@ def expire_stale_drafts() -> int:
 				)
 				abandoned += 1
 	return abandoned
+
+
+@shared_task
+def run_action_run(run_id: int) -> None:
+	from .actions import execute_run  # actions imports this module
+
+	execute_run(run_id)

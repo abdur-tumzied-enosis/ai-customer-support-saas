@@ -97,6 +97,10 @@ class OrderStatusHistory(models.Model):
 	created_at = models.DateTimeField(auto_now_add=True)
 
 
+def default_success_codes() -> list[int]:
+	return [200, 201, 202, 204]
+
+
 class OrderAction(models.Model):
 	project = models.ForeignKey("accounts.Project", on_delete=models.CASCADE, related_name="order_actions")
 	name = models.CharField(max_length=255)
@@ -106,7 +110,7 @@ class OrderAction(models.Model):
 	body_template = models.TextField(blank=True, default="")
 	response_mapping = models.JSONField(default=dict, blank=True)  # {"tracking_number": "data.tracking"}
 	success_status = models.CharField(max_length=16, blank=True, default="")
-	success_codes = models.JSONField(default=list, blank=True)
+	success_codes = models.JSONField(default=default_success_codes, blank=True)
 	auto_run = models.BooleanField(default=False)
 	is_active = models.BooleanField(default=True)
 	created_at = models.DateTimeField(auto_now_add=True)
