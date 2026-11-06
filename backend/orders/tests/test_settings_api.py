@@ -3,6 +3,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
+from knowledge.models import CustomInstruction, KnowledgeBase
 from orders.models import OrderSettings
 
 User = get_user_model()
@@ -46,6 +47,13 @@ class SettingsApiTest(TestCase):
 		self.client.force_authenticate(user=self.member)
 		r = self.client.patch(self.url, {"zones": [{"name": "Dhaka", "charge": "60"}]}, format="json")
 		self.assertEqual(r.status_code, 403, r.content)
+
+	def test_prompt_preview_includes_kb_order_instructions(self):
+		kb = KnowledgeBase.objects.create(project=self.project, name="Products", vector_collection="vc-prev")
+		CustomInstruction.objects.create(project=self.project, knowledge_base=kb, label="Landmark", message="Ask for a landmark.", scope="order")
+		self.client.force_authenticate(user=self.member)
+		r = self.client.get(self.url)
+		self.assertIn("Ask for a landmark.", r.json()["data"]["prompt_preview"])
 
 	def test_prompt_preview_contains_zone_name(self):
 		OrderSettings.objects.create(project=self.project, zones=[{"name": "Dhaka", "charge": "60"}])

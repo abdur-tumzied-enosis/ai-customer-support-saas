@@ -48,7 +48,10 @@ def _rewrite(text: str, scope: str, project_id: str) -> Improvement:
 def improve(text: str, scope: str, project_id: str) -> dict:
 	"""A safer rewrite of the instruction, checked by the same guard as a save. One retry; nothing is applied."""
 	for _ in range(2):
-		candidate = _rewrite(text, scope, project_id)
+		try:
+			candidate = _rewrite(text, scope, project_id)
+		except ValueError:  # an unreadable answer counts as one failed attempt
+			continue
 		verdict = check_instruction(candidate.suggestion, project_id)
 		if not verdict.blocked and not verdict.warnings:
 			return {"suggestion": candidate.suggestion, "why": candidate.why}

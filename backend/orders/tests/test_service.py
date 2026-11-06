@@ -87,6 +87,18 @@ class ServiceTest(TestCase):
 		with self.assertRaises(ValidationError):
 			update_customer(order, {"favourite_colour": "red"}, self.settings)
 
+	def test_non_text_customer_field_is_validation_error(self):
+		order = get_or_create_draft(self.conv, self.settings)
+		with self.assertRaises(ValidationError):
+			update_customer(order, {"customer_phone": 12345678901}, self.settings)
+
+	def test_removed_variant_blocks_submit(self):
+		order = ready(self)
+		order.items.update(variant_label="Large")  # the variant was deleted: its link is now null
+		with self.assertRaises(OrderValidationError) as cm:
+			submit_order(order, ME)
+		self.assertIn("variant_removed", [p["code"] for p in cm.exception.problems])
+
 	def test_test_chat_marks_is_test(self):
 		self.assertTrue(get_or_create_draft(self.test_conv, self.settings).is_test)
 		self.assertFalse(get_or_create_draft(self.conv, self.settings).is_test)

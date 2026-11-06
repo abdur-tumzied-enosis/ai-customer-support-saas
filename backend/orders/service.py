@@ -130,6 +130,10 @@ def update_customer(order, data: dict, settings) -> None:
 	if unknown:
 		raise ValidationError(f"unknown field: {sorted(unknown)[0]}")
 	for key, value in data.items():
+		if key == "custom" and value is not None and not isinstance(value, dict):
+			raise ValidationError("custom must be an object")
+		if key != "custom" and value is not None and not isinstance(value, str):
+			raise ValidationError(f"{key} must be text")
 		if key == "customer_phone":
 			phone = normalise_bd_phone(value)
 			if value and phone is None:
@@ -173,6 +177,9 @@ def validate_for_submit(order, settings) -> list[dict]:
 			problems.append({"code": "unavailable", "message": "A product on this order was removed"})
 			continue
 		quote = quotes_for([item.product], fresh=True)[str(item.product.id)]
+		if item.variant is None and item.variant_label:  # the variant was deleted: its link is null, its label remains
+			problems.append({"code": "variant_removed", "product_id": str(item.product.id), "message": f"{item.product.name} ({item.variant_label}) is no longer sold"})
+			continue
 		code = _problem(item.product, item.variant, quote)
 		if code:
 			problems.append({"code": code, "product_id": str(item.product.id), "message": f"{item.product.name} {PROBLEM_TEXT[code]}"})

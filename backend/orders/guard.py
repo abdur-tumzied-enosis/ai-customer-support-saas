@@ -8,7 +8,7 @@ from usage.utils import llm_costs, track_token_usage
 
 MAX_INSTRUCTION_CHARS = 2000
 CHECK_MAX_TOKENS = 512
-ENGLISH_CLAIMS = ("order placed", "order confirmed", "order number")
+ENGLISH_CLAIMS = ("order placed", "order confirmed")  # "order number" alone also appears in questions
 BENGALI_ORDER = "অর্ডার"
 BENGALI_DONE = ("হয়েছে", "নিশ্চিত")
 
@@ -73,7 +73,10 @@ def check_instruction(text: str, project_id: str) -> Verdict:
 		return Verdict(blocked=True, reasons=["too_long"])
 	if _UNSAFE_EN.search(text) or _UNSAFE_BN.search(text):
 		return Verdict(blocked=True, reasons=["unsafe_data"])
-	result = _llm_check(text, project_id)
+	try:
+		result = _llm_check(text, project_id)
+	except ValueError:  # an answer we cannot read blocks the save; it must not crash it
+		return Verdict(blocked=True, reasons=["check_unavailable"])
 	return Verdict(
 		blocked=result.unsafe,
 		reasons=["unsafe_content"] if result.unsafe else [],

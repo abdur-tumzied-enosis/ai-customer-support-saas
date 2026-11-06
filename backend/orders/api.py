@@ -151,7 +151,7 @@ CLEANERS = {
 
 
 def _settings_dict(settings, project) -> dict:
-	instructions = [i.message for i in CustomInstruction.effective_order_instructions(str(project.id))]
+	instructions = [i.message for i in CustomInstruction.objects.filter(project=project, scope="order")]  # every KB's, as the bot sees them
 	return {
 		"channels": settings.channels,
 		"zones": settings.zones,

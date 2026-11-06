@@ -138,6 +138,18 @@ class GuardTest(TestCase):
 		self.assertEqual(r.status_code, 422, r.content)
 		self.assertEqual(r.json()["error"]["code"], "no_safe_suggestion")
 
+	def test_unparseable_check_is_blocked_not_a_server_error(self):
+		with fake_llm(Router(checks=[None])):
+			verdict = check_instruction("Confirm orders before submit.", str(self.project.id))
+		self.assertTrue(verdict.blocked)
+		self.assertIn("check_unavailable", verdict.reasons)
+
+	def test_improve_skips_unparseable_attempt(self):
+		router = Router(improvements=[None, Improvement(suggestion="Confirm before submit.", why="y")])
+		with fake_llm(router):
+			result = improve("Confirm orders.", "order", str(self.project.id))
+		self.assertEqual(result["suggestion"], "Confirm before submit.")
+
 	def test_check_runs_deterministic_floor_without_llm(self):
 		router = Router()
 		with fake_llm(router):

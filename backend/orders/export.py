@@ -4,7 +4,7 @@ HEADER = [
 	"number", "date", "status", "channel", "is_test", "customer name", "customer phone", "customer address",
 	"zone", "items", "subtotal", "zone charge", "total", "advance", "collect amount", "tracking number",
 ]
-FORMULA_START = ("=", "+", "-", "@")  # a spreadsheet would run these as formulas
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")  # a spreadsheet would run these as formulas
 
 
 def _cell(value) -> str:
@@ -26,6 +26,7 @@ def _row(order) -> list:
 
 
 def write_orders_csv(stream, orders) -> None:
+	stream.write("﻿")  # the byte-order mark makes Excel read the file as UTF-8, so Bengali text survives
 	writer = csv.writer(stream)
 	writer.writerow(HEADER)
 	for order in orders:

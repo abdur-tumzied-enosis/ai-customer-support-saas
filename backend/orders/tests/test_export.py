@@ -10,7 +10,7 @@ from accounts.models import Project, ProjectUser
 from channels_app.models import Conversation, CustomerContact
 from knowledge.models import KnowledgeBase, Product
 from orders.export import HEADER
-from orders.models import OrderSettings
+from orders.models import Order, OrderSettings
 from orders.service import apply_lines, get_or_create_draft, submit_order, update_customer
 
 User = get_user_model()
@@ -42,7 +42,15 @@ class ExportTest(TestCase):
 	def export(self, **params):
 		r = self.client.get("/api/orders/export.csv", {"project_id": str(self.project.id), **params})
 		self.assertEqual(r.status_code, 200, r.content)
-		return r, list(csv.reader(io.StringIO(r.content.decode())))
+		return r, list(csv.reader(io.StringIO(r.content.decode("utf-8-sig"))))
+
+	def test_csv_has_bom_and_guards_tab_and_return_cells(self):
+		order = self.submit()
+		Order.objects.filter(pk=order.pk).update(customer_name="\t=cmd")  # save strips edge whitespace, so set the raw value
+		r = self.client.get("/api/orders/export.csv", {"project_id": str(self.project.id)})
+		raw = r.content.decode("utf-8")
+		self.assertTrue(raw.startswith("﻿"))
+		self.assertIn("'\t=cmd", raw)
 
 	def test_csv_headers_and_row(self):
 		self.submit()

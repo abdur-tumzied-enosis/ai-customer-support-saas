@@ -8,7 +8,7 @@ from accounts.models import Project
 from agents.rag import Context, ToolDeps, _build_tools_from_context
 from channels_app.models import Conversation, CustomerContact
 from channels_app.tasks import build_reply_context
-from knowledge.models import KnowledgeBase, Product
+from knowledge.models import KnowledgeBase, Product, ProductVariant
 from orders.guard import trace_unconfirmed, unconfirmed_claim
 from orders.models import Order, OrderSettings
 from orders.tools import build_order_tools
@@ -54,6 +54,12 @@ class OrderToolsTest(TestCase):
 		self.tools["update_draft"]([{"product_id": str(self.product.id), "quantity": 1}], CUSTOMER)
 		self.tools["submit_order"]()
 		self.assertTrue(any(c.get("method") == "POST" for c in self.context.api_call_log))
+
+	def test_find_products_variant_without_price_uses_product_price(self):
+		product = Product.objects.create(kb=self.kb, name="Mug", external_id="M1", price=Decimal("100"), status="active")
+		ProductVariant.objects.create(product=product, label="Large", price=None, available=True)
+		out = json.loads(self.tools["find_products"]("Mug"))
+		self.assertEqual(out[0]["variants"][0]["price"], "100.00")
 
 	def test_change_only_while_new(self):
 		Order.objects.create(
@@ -101,6 +107,9 @@ class ConfirmationTraceTest(TestCase):
 		ctx = Context(order_submitted=True)
 		trace_unconfirmed(ctx, "Your order placed! Order number 1001.")
 		self.assertNotIn("hallucinated_confirmation", ctx.trace.get("flags", []))
+
+	def test_order_number_question_not_flagged(self):
+		self.assertFalse(unconfirmed_claim("What is your order number?", False))
 
 	def test_bengali_claim_detected(self):
 		self.assertTrue(unconfirmed_claim("আপনার অর্ডার হয়েছে", False))
