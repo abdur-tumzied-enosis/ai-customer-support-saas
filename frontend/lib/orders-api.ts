@@ -1,4 +1,4 @@
-import { apiFetch } from "@/lib/api";
+import { API_BASE_URL, apiFetch } from "@/lib/api";
 
 export type Requirement = {
 	key: string;
@@ -45,4 +45,77 @@ export const orderApi = {
 	runSetup: (projectId: string, kbId: string) =>
 		apiFetch<{ status: string }>("/api/orders/setup/run/", { method: "POST", json: { project_id: projectId, kb_id: kbId } }),
 	setupState: (projectId: string) => apiFetch<SetupState>(`/api/orders/setup/${withProject(projectId)}`),
+	list: (projectId: string, filters: OrderFilters, page = 1) => {
+		const params = new URLSearchParams({ project_id: projectId, page: String(page) });
+		Object.entries(filters).forEach(([key, value]) => {
+			if (value) params.append(key, value);
+		});
+		return apiFetch<{ orders: OrderRow[]; count: number }>(`/api/orders/?${params.toString()}`);
+	},
+	detail: (id: string) => apiFetch<OrderDetail>(`/api/orders/${id}/`),
+	patch: (id: string, data: Record<string, unknown>) =>
+		apiFetch<OrderDetail>(`/api/orders/${id}/`, { method: "PATCH", json: data }),
+	bulkStatus: (ids: string[], status: string) =>
+		apiFetch<{ results: { id: string; ok: boolean; error?: string }[] }>("/api/orders/bulk-status/", {
+			method: "POST",
+			json: { ids, status },
+		}),
+	exportUrl: (projectId: string, filters: OrderFilters) => {
+		const params = new URLSearchParams({ project_id: projectId });
+		Object.entries(filters).forEach(([key, value]) => {
+			if (value) params.append(key, value);
+		});
+		return `${API_BASE_URL}/api/orders/export.csv?${params.toString()}`;
+	},
+};
+
+export type OrderFilters = {
+	status?: string;
+	channel?: string;
+	date_from?: string;
+	date_to?: string;
+	is_test?: string;
+	q?: string;
+};
+
+export type OrderRow = {
+	id: string;
+	number: number | null;
+	status: string;
+	channel: string;
+	is_test: boolean;
+	customer_name: string;
+	customer_phone: string;
+	zone_name: string;
+	currency: string;
+	total: string;
+	collect_amount: string;
+	conversation_id: string | null;
+	created_at: string;
+};
+
+export type OrderItemRow = {
+	id: string;
+	product_id: string | null;
+	variant_id: string | null;
+	name: string;
+	sku: string;
+	variant_label: string;
+	unit_price: string;
+	quantity: number;
+	line_total: string;
+};
+
+export type OrderDetail = OrderRow & {
+	customer_address: string;
+	customer_note: string;
+	custom: Record<string, string>;
+	subtotal: string;
+	zone_charge: string;
+	advance_paid: string;
+	tracking_number: string;
+	internal_note: string;
+	submitted_at: string | null;
+	items: OrderItemRow[];
+	history: { from_status: string; to_status: string; actor_type: string; actor_id: string; created_at: string }[];
 };
