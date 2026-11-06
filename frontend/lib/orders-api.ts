@@ -89,6 +89,61 @@ export type OrderFilters = {
 	conversation_id?: string;
 };
 
+export type ActionHeader = { name: string; value?: string; has_value?: boolean };
+export type OrderAction = {
+	id: number;
+	name: string;
+	method: "GET" | "POST";
+	url: string;
+	headers: ActionHeader[];
+	body_template: string;
+	response_mapping: { tracking_number?: string };
+	success_status: string;
+	success_codes: number[];
+	auto_run: boolean;
+	is_active: boolean;
+};
+export type ActionRun = {
+	id: number;
+	action_id: number;
+	action_name: string;
+	order_id: string;
+	status: "queued" | "running" | "succeeded" | "failed";
+	attempt: number;
+	http_status: number | null;
+	error: string;
+	response_excerpt: string;
+	created_at: string;
+	finished_at: string | null;
+};
+export type ActionProgress = { counts: Record<ActionRun["status"], number>; total: number };
+
+export const actionApi = {
+	list: (projectId: string) => apiFetch<OrderAction[]>(`/api/orders/actions/${withProject(projectId)}`),
+	create: (projectId: string, data: Partial<OrderAction>) =>
+		apiFetch<OrderAction>(`/api/orders/actions/${withProject(projectId)}`, { method: "POST", json: data }),
+	update: (id: number, projectId: string, data: Partial<OrderAction>) =>
+		apiFetch<OrderAction>(`/api/orders/actions/${id}/${withProject(projectId)}`, { method: "PATCH", json: data }),
+	remove: (id: number, projectId: string) =>
+		apiFetch<{ deleted: boolean }>(`/api/orders/actions/${id}/${withProject(projectId)}`, { method: "DELETE" }),
+	run: (id: number, projectId: string, orderIds: string[], force = false) =>
+		apiFetch<{ queued: number[]; already_sent: number[] }>(`/api/orders/actions/${id}/run/${withProject(projectId)}`, {
+			method: "POST",
+			json: { order_ids: orderIds, force },
+		}),
+	progress: (id: number, projectId: string, orderIds: string[]) =>
+		apiFetch<ActionProgress>(
+			`/api/orders/actions/${id}/progress/${withProject(projectId)}&order_ids=${orderIds.join(",")}`,
+		),
+	test: (id: number, projectId: string, orderNumber: number, force = false) =>
+		apiFetch<{ ok: boolean; http_status: number | null; error: string; response_excerpt: string }>(
+			`/api/orders/actions/${id}/test/${withProject(projectId)}`,
+			{ method: "POST", json: { order_number: orderNumber, force } },
+		),
+	runs: (orderId: string) => apiFetch<ActionRun[]>(`/api/orders/actions/runs/?order_id=${orderId}`),
+	retry: (runId: number) => apiFetch<ActionRun>(`/api/orders/actions/runs/${runId}/retry/`, { method: "POST" }),
+};
+
 export type OrderRow = {
 	id: string;
 	number: number | null;

@@ -124,5 +124,5 @@ class ActionRunTest(TestCase):
 			{"order_ids": [str(o.id) for o in self.orders]}, format="json",
 		)
 		self.assertEqual(r.status_code, 409, r.content)
-		self.assertEqual(r.json()["error"]["order_numbers"], [1001])
+		self.assertEqual(r.json()["error"]["details"], ["1001"])  # the frontend reads details as a list
 		self.assertEqual(OrderActionRun.objects.count(), 1)  # nothing queued, not even the other two orders

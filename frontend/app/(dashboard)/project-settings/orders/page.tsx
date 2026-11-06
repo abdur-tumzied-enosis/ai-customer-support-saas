@@ -8,6 +8,7 @@ import FormFieldsEditor from "@/components/orders/settings/FormFieldsEditor";
 import OrderInstructions from "@/components/orders/settings/OrderInstructions";
 import NotificationsSection from "@/components/orders/settings/NotificationsSection";
 import LiveLookupSection from "@/components/orders/settings/LiveLookupSection";
+import ActionsSection from "@/components/orders/actions/ActionsSection";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function OrderSettingsPage() {
@@ -70,6 +71,15 @@ export default function OrderSettingsPage() {
 				</CardHeader>
 				<CardContent>
 					<LiveLookupSection projectId={projectId} />
+				</CardContent>
+			</Card>
+			<Card>
+				<CardHeader>
+					<CardTitle>Custom actions</CardTitle>
+					<CardDescription>Send selected orders to a courier or your own API. Admins create and edit actions; everyone can run them.</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<ActionsSection projectId={projectId} />
 				</CardContent>
 			</Card>
 		</div>

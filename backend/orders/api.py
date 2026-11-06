@@ -711,7 +711,7 @@ def _uuids(values) -> list | None:
 def _sent_conflict(numbers: list):
 	return Response({"success": False, "error": {
 		"code": "already_sent", "message": "Some orders were already sent by this action",
-		"order_numbers": numbers,
+		"details": [str(n) for n in numbers],
 	}}, status=409)
 
 

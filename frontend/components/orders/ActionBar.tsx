@@ -2,12 +2,20 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import RunActionMenu from "@/components/orders/actions/RunActionMenu";
 
 const STATUSES = ["new", "confirmed", "shipped", "delivered", "cancelled"];
 
-type Props = { count: number; busy: boolean; onApply: (status: string) => void };
+type Props = {
+	count: number;
+	busy: boolean;
+	onApply: (status: string) => void;
+	projectId: string;
+	ids: string[];
+	onRan: () => void;
+};
 
-export default function ActionBar({ count, busy, onApply }: Props) {
+export default function ActionBar({ count, busy, onApply, projectId, ids, onRan }: Props) {
 	const [status, setStatus] = useState("confirmed");
 	if (count === 0) return null;
 	return (
@@ -28,6 +36,7 @@ export default function ActionBar({ count, busy, onApply }: Props) {
 			<Button size="sm" onClick={() => onApply(status)} disabled={busy}>
 				Set status
 			</Button>
+			<RunActionMenu projectId={projectId} orderIds={ids} disabled={busy} onRan={onRan} />
 		</div>
 	);
 }
