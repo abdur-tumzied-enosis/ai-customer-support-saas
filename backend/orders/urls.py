@@ -1,11 +1,14 @@
 from django.urls import path
 
 from .api import (
-	DisableView, EnableView, InstructionResolveView, InstructionReviewView, RequirementsView,
-	SetupRunView, SetupStatusView, SettingsView, TestModeView,
+	BulkStatusView, DisableView, EnableView, InstructionResolveView, InstructionReviewView, OrderDetailView,
+	OrdersListView, RequirementsView, SetupRunView, SetupStatusView, SettingsView, TestModeView,
 )
 
 urlpatterns = [
+	path("", OrdersListView.as_view(), name="order-list"),
+	path("<uuid:order_id>/", OrderDetailView.as_view(), name="order-detail"),
+	path("bulk-status/", BulkStatusView.as_view(), name="order-bulk-status"),
 	path("settings/", SettingsView.as_view(), name="order-settings"),
 	path("requirements/", RequirementsView.as_view(), name="order-requirements"),
 	path("enable/", EnableView.as_view(), name="order-enable"),

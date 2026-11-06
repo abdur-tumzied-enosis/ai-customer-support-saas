@@ -2,7 +2,10 @@ from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import validate_email
+from django.db import transaction
+from django.db.models import Q
 from django.http import Http404
+from django.utils.dateparse import parse_date
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -11,7 +14,9 @@ from rest_framework.views import APIView
 from knowledge.models import CustomInstruction, KnowledgeBase, Product
 
 from .access import project_for
-from .models import OrderSettings
+from .models import Order, OrderSettings
+from .service import OrderValidationError, apply_lines, set_status, update_customer
+from .totals import collect_amount
 from .prompt import build_order_prompt
 from .requirements import check
 from .guard import check_instruction
@@ -327,3 +332,178 @@ class InstructionImproveView(APIView):
 			return _ok(improve(text, scope, str(project.id)))
 		except NoSafeSuggestion:
 			return _err("no_safe_suggestion", "No safe rewrite was found; edit the text yourself", 422)
+
+
+ORDER_STATUSES = [status_value for status_value, _ in Order.STATUS_CHOICES]
+HIDDEN_STATUSES = ("draft", "abandoned")  # shown only when a status filter names them
+ORDER_CUSTOMER_FIELDS = ("customer_name", "customer_phone", "customer_address", "zone_name", "customer_note", "custom")
+
+
+def _order_row(order) -> dict:
+	return {
+		"id": str(order.id), "number": order.number, "status": order.status, "channel": order.channel,
+		"is_test": order.is_test, "customer_name": order.customer_name, "customer_phone": order.customer_phone,
+		"zone_name": order.zone_name, "currency": order.currency, "total": str(order.total),
+		"collect_amount": str(order.collect_amount),
+		"conversation_id": str(order.conversation_id) if order.conversation_id else None,
+		"created_at": order.created_at.isoformat(),
+	}
+
+
+def _order_detail(order) -> dict:
+	row = _order_row(order)
+	row.update({
+		"customer_address": order.customer_address, "customer_note": order.customer_note, "custom": order.custom,
+		"subtotal": str(order.subtotal), "zone_charge": str(order.zone_charge), "advance_paid": str(order.advance_paid),
+		"tracking_number": order.tracking_number, "internal_note": order.internal_note,
+		"submitted_at": order.submitted_at.isoformat() if order.submitted_at else None,
+		"items": [{
+			"id": str(i.id), "product_id": str(i.product_id) if i.product_id else None,
+			"variant_id": str(i.variant_id) if i.variant_id else None, "name": i.name, "sku": i.sku,
+			"variant_label": i.variant_label, "unit_price": str(i.unit_price), "quantity": i.quantity,
+			"line_total": str(i.line_total),
+		} for i in order.items.all()],
+		"history": [{
+			"from_status": h.from_status, "to_status": h.to_status, "actor_type": h.actor_type,
+			"actor_id": h.actor_id, "created_at": h.created_at.isoformat(),
+		} for h in order.history.all()],
+	})
+	return row
+
+
+def _order_or_error(request, order_id, admin: bool = False):
+	"""(order, None) when the caller is a member of the order's project, else (None, error response)."""
+	try:
+		order = Order.objects.get(pk=order_id)
+	except (Order.DoesNotExist, ValueError, ValidationError):
+		return None, _err("not_found", "Order not found", 404)
+	try:
+		project_for(request, str(order.project_id), admin=admin)
+	except Http404:
+		return None, _err("not_found", "Order not found", 404)
+	except PermissionDenied:
+		return None, _err("access_denied", "Admin access required", 403)
+	return order, None
+
+
+def _money(value) -> Decimal:
+	try:
+		return Decimal(str(value))
+	except InvalidOperation:
+		raise _Bad("invalid_advance", "advance must be a number")
+
+
+def _apply_edit(order, request) -> None:
+	data = request.data
+	settings, _ = OrderSettings.objects.get_or_create(project_id=order.project_id)
+	if "items" in data:
+		apply_lines(order, data["items"] or [], settings)
+	customer = {key: data[key] for key in ORDER_CUSTOMER_FIELDS if key in data}
+	if customer:
+		update_customer(order, customer, settings)
+	if "advance_paid" in data:
+		advance = _money(data["advance_paid"])
+		if advance < 0 or advance > order.total:
+			raise _Bad("invalid_advance", "advance must be between 0 and the total")
+		order.advance_paid = advance
+		order.collect_amount = collect_amount(order.total, advance)
+	if "internal_note" in data:
+		order.internal_note = str(data["internal_note"] or "")
+	if "tracking_number" in data:
+		order.tracking_number = str(data["tracking_number"] or "").strip()
+	order.save()
+	if "status" in data and data["status"] != order.status:
+		if data["status"] not in ORDER_STATUSES:
+			raise _Bad("invalid_status", "unknown status")
+		set_status(order, data["status"], ("user", str(request.user.id)))
+
+
+class OrdersListView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project, error = _scoped(request, admin=False)
+		if error:
+			return error
+		params = request.query_params
+		qs = Order.objects.filter(project=project)
+		if params.get("status"):
+			if params["status"] not in ORDER_STATUSES:
+				return _err("invalid_status", "unknown status", 400)
+			qs = qs.filter(status=params["status"])
+		else:
+			qs = qs.exclude(status__in=HIDDEN_STATUSES)
+		if params.get("channel"):
+			qs = qs.filter(channel=params["channel"])
+		for key, lookup in (("date_from", "created_at__date__gte"), ("date_to", "created_at__date__lte")):
+			if params.get(key):
+				day = parse_date(params[key])
+				if day is None:
+					return _err("invalid_date", f"{key} must be YYYY-MM-DD", 400)
+				qs = qs.filter(**{lookup: day})
+		if params.get("is_test") in ("true", "false"):
+			qs = qs.filter(is_test=params["is_test"] == "true")
+		if params.get("q"):
+			text = params["q"].strip()
+			match = Q(customer_name__icontains=text) | Q(customer_phone__icontains=text)
+			if text.isdigit():
+				match |= Q(number=int(text))
+			qs = qs.filter(match)
+		try:
+			page = max(int(params.get("page", 1)), 1)
+			size = min(max(int(params.get("page_size", 25)), 1), 100)
+		except ValueError:
+			return _err("invalid_page", "page and page_size must be numbers", 400)
+		orders = qs.order_by("-created_at")[(page - 1) * size: page * size]
+		return _ok({"orders": [_order_row(o) for o in orders], "count": qs.count()})
+
+
+class OrderDetailView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request, order_id):
+		order, error = _order_or_error(request, order_id)
+		if error:
+			return error
+		return _ok(_order_detail(order))
+
+	def patch(self, request, order_id):
+		order, error = _order_or_error(request, order_id)
+		if error:
+			return error
+		try:
+			with transaction.atomic():
+				_apply_edit(order, request)
+		except _Bad as e:
+			return _err(e.code, e.message, 422)
+		except OrderValidationError as e:
+			return Response(
+				{"success": False, "error": {"code": "order_invalid", "message": "The order cannot be saved as sent", "problems": e.problems}},
+				status=422,
+			)
+		except ValidationError as e:
+			return _err("invalid", " ".join(e.messages), 422)
+		order.refresh_from_db()
+		return _ok(_order_detail(order))
+
+
+class BulkStatusView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		new_status = request.data.get("status")
+		ids = request.data.get("ids")
+		if new_status not in ORDER_STATUSES:
+			return _err("invalid_status", "unknown status", 400)
+		if not isinstance(ids, list) or not ids:
+			return _err("invalid_ids", "ids must be a non-empty list", 400)
+		results = []
+		for order_id in ids:
+			order, error = _order_or_error(request, order_id)
+			if error:
+				results.append({"id": str(order_id), "ok": False, "error": "not_found"})
+				continue
+			if order.status != new_status:
+				set_status(order, new_status, ("user", str(request.user.id)))
+			results.append({"id": str(order.id), "ok": True})
+		return _ok({"results": results})
