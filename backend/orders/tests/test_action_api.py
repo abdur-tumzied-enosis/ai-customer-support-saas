@@ -72,3 +72,12 @@ class ActionApiTest(TestCase):
 		self.client.force_authenticate(user=self.member)
 		r = self.client.post(self.list_url, self.payload(), format="json")
 		self.assertEqual(r.status_code, 403, r.content)
+
+	def test_url_placeholder_checked_on_save(self):
+		r = self.client.post(self.list_url, self.payload(url="https://courier.example.com/{{ order.nope }}"), format="json")
+		self.assertEqual(r.status_code, 400, r.content)
+		self.assertEqual(r.json()["error"]["code"], "unknown_placeholder")
+		r = self.client.post(self.list_url, self.payload(url="https://courier.example.com/?i={{ order.items }}"), format="json")
+		self.assertEqual(r.json()["error"]["code"], "items_in_url")
+		r = self.client.post(self.list_url, self.payload(url="https://courier.example.com/{{ order.number }}"), format="json")
+		self.assertEqual(r.status_code, 201, r.content)

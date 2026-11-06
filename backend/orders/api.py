@@ -726,7 +726,7 @@ class ActionRunView(APIView):
 		ids = _uuids(raw) if isinstance(raw, list) and raw else None
 		if not ids:
 			return _err("invalid_ids", "order_ids must be a non-empty list", 400)
-		force = bool(request.data.get("force"))
+		force = request.data.get("force") is True
 		orders = list(Order.objects.filter(project=action.project, id__in=ids, status__in=SENDABLE))
 		with transaction.atomic():
 			OrderAction.objects.select_for_update().get(pk=action.pk)  # one bulk run at a time per action
@@ -809,7 +809,7 @@ class ActionTestView(APIView):
 		order = Order.objects.filter(project=action.project, number=number, status__in=SENDABLE).first()
 		if order is None:
 			return _err("not_found", "No sendable order with that number", 404)
-		if already_sent_orders(action, [order]) and not request.data.get("force"):
+		if already_sent_orders(action, [order]) and request.data.get("force") is not True:
 			return _sent_conflict([number])
 		run = OrderActionRun.objects.create(
 			action=action, order=order, status="queued", actor_type="user", actor_id=str(request.user.id),

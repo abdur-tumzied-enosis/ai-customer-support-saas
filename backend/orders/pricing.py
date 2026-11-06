@@ -1,7 +1,10 @@
 from dataclasses import dataclass
 from decimal import Decimal
+from time import monotonic
 
 from knowledge.catalog import effective_price
+
+LIVE_BUDGET_SECONDS = 8  # all live calls in one quote; products past this use the catalog
 
 
 @dataclass
@@ -20,8 +23,10 @@ def quotes_for(products, fresh: bool = False) -> dict[str, Quote]:
 	config = live_config(products)
 	if config is None:
 		return catalog
+	deadline = monotonic() + LIVE_BUDGET_SECONDS
 	quotes = {}
 	for product in products:
 		key = str(product.id)
-		quotes[key] = lookup_quote(product, config, fresh, catalog[key])
+		left = deadline - monotonic()
+		quotes[key] = lookup_quote(product, config, fresh, catalog[key], min(10, left)) if left > 0 else catalog[key]
 	return quotes

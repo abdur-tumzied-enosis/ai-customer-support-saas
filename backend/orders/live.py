@@ -9,7 +9,8 @@ from .models import OrderSettings
 from .templates import LIVE_PLACEHOLDERS, TemplateError, dig, render
 
 logger = logging.getLogger(__name__)
-CACHE_SECONDS = 300  # submit bypasses this cache (fresh=True)
+CACHE_SECONDS = 300  # a good answer is reused for 5 minutes
+FAILED_SECONDS = 60  # a failed call is not retried for a minute; submit still asks fresh
 
 
 def live_config(products) -> dict | None:
@@ -44,7 +45,7 @@ def _quote(data: dict):
 	return Quote(price=None if data["price"] is None else Decimal(data["price"]), available=data["available"])
 
 
-def lookup_quote(product, config: dict, fresh: bool, catalog):
+def lookup_quote(product, config: dict, fresh: bool, catalog, timeout: float = 10):
 	"""Price and availability from the client's API. Falls back to the catalog quote when the call fails."""
 	if not (product.external_id or product.sku):
 		return catalog
@@ -52,19 +53,20 @@ def lookup_quote(product, config: dict, fresh: bool, catalog):
 	if not fresh:
 		hit = cache.get(cache_key)
 		if hit is not None:
-			return _quote(hit)
+			return catalog if hit.get("failed") else _quote(hit)
 	try:
 		url = render(
 			config["url_template"],
 			{"product.external_id": product.external_id or "", "product.sku": product.sku},
 			"url", LIVE_PLACEHOLDERS,
 		)
-		result = safe_request("GET", url, {h["name"]: h["value"] for h in config.get("headers") or []})
+		result = safe_request("GET", url, {h["name"]: h["value"] for h in config.get("headers") or []}, timeout=timeout)
 		if not result.ok:
 			raise OutboundError(f"HTTP {result.status}")
 		data = json.loads(result.text)
 	except (TemplateError, OutboundError, ValueError) as e:
 		logger.warning("Live lookup for product %s used the catalog instead: %s", product.id, type(e).__name__)
+		cache.set(cache_key, {"failed": True}, FAILED_SECONDS)
 		return catalog
 	price = _price(_at(data, config["price_path"]))  # no price in the answer: the product is not sellable
 	path = config.get("available_path")

@@ -150,3 +150,15 @@ class ActionRunTest(TestCase):
 		self.assertEqual(self.orders[0].tracking_number, "T123")
 		run = OrderActionRun.objects.get(order=self.orders[0])
 		self.assertIn("cancelled", run.error)
+
+	def test_string_false_does_not_force(self):
+		done = OrderActionRun.objects.create(action=self.action, order=self.orders[0], status="succeeded")
+		admin = User.objects.create_user(username="f@x.test", email="f@x.test", password="x")
+		ProjectUser.objects.create(project=self.project, user=admin, role="admin")
+		client = APIClient()
+		client.force_authenticate(user=admin)
+		with patch("orders.actions.safe_request", return_value=OK) as request:
+			r = client.post(f"/api/orders/actions/{self.action.id}/test/", {"order_number": 1001, "force": "false"}, format="multipart")
+		self.assertEqual(r.status_code, 409, r.content)
+		request.assert_not_called()
+		self.assertEqual(done.status, "succeeded")

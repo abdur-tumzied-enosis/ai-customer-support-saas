@@ -68,3 +68,12 @@ class SafeRequestTest(SimpleTestCase):
 		self.request.return_value = _response(status=201, body=b'{"id":1}')
 		result = safe_request("POST", "https://courier.example.com/x", {"X-Key": "k"}, body="{}")
 		self.assertEqual(result, HttpResult(status=201, text='{"id":1}', ok=True))
+
+	def test_slow_drip_response_times_out(self):
+		def drip(chunk_size):
+			yield b"a" * 100
+			yield b"a" * 100  # the second chunk arrives after the 10 s budget
+		self.request.return_value = _response()
+		self.request.return_value.iter_content.side_effect = drip
+		with patch("orders.http.monotonic", side_effect=[0, 0, 11]), self.assertRaises(OutboundError):
+			safe_request("GET", "https://courier.example.com/x", {})

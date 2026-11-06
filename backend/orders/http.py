@@ -1,3 +1,4 @@
+from time import monotonic
 from dataclasses import dataclass
 
 import requests
@@ -26,6 +27,7 @@ def safe_request(method: str, url: str, headers: dict[str, str], body: str | Non
 	if not _is_public_host(host):
 		raise OutboundError(f"{host} is not a public address")
 	try:
+		deadline = monotonic() + timeout  # requests' timeout applies per read; this caps the whole response
 		resp = requests.request(
 			method, url, headers=headers, data=body, timeout=timeout, allow_redirects=False, stream=True,
 		)
@@ -33,6 +35,8 @@ def safe_request(method: str, url: str, headers: dict[str, str], body: str | Non
 			buf = b""
 			for chunk in resp.iter_content(chunk_size=8192):
 				buf += chunk
+				if monotonic() > deadline:
+					raise OutboundError("response took too long")
 				if len(buf) > MAX_BYTES:
 					break
 		finally:
