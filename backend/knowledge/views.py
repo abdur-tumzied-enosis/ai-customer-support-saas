@@ -21,6 +21,7 @@ from .models import KnowledgeBase, Document, IngestionJob, IngestionJobStatus, D
 from core.storage import delete_keys, object_size, presign_put
 from .tasks import run_ingestion_job, crawl_website
 from .api_tool_config import ApiConfigError, apply_api_config, public_api_domains
+from orders.guard import check_instruction
 
 
 class CustomInstructionSerializer(serializers.ModelSerializer):
@@ -531,6 +532,13 @@ class InstructionTemplateUseView(APIView):
 			)
 
 
+def _instruction_blocked(verdict):
+    return Response(
+        {"success": False, "error": {"code": "instruction_blocked", "message": "This instruction cannot be saved", "reasons": verdict.reasons}},
+        status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
+
+
 def _instruction_to_dict(inst: CustomInstruction) -> dict:
     return {
         "id": str(inst.id),
@@ -668,6 +676,10 @@ class CustomInstructionListCreateView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            verdict = check_instruction(message, str(project.id)) if scope == 'order' else None
+            if verdict and verdict.blocked:
+                return _instruction_blocked(verdict)
+
             # Create instruction
             instruction = CustomInstruction.objects.create(
                 project=project,
@@ -683,7 +695,8 @@ class CustomInstructionListCreateView(APIView):
                 "success": True,
                 "message": "Instruction created successfully",
                 "data": {
-                    "instruction": _instruction_to_dict(instruction)
+                    "instruction": _instruction_to_dict(instruction),
+                    "warnings": verdict.warnings if verdict else [],
                 }
             }, status=status.HTTP_201_CREATED)
             
@@ -767,13 +780,17 @@ class CustomInstructionDetailView(APIView):
             except ApiConfigError as e:
                 return _api_config_error(e)
 
+            verdict = check_instruction(instruction.message, str(instruction.project_id)) if instruction.scope == 'order' else None
+            if verdict and verdict.blocked:
+                return _instruction_blocked(verdict)
             instruction.save()
             
             return Response({
                 "success": True,
                 "message": "Instruction updated successfully",
                 "data": {
-                    "instruction": _instruction_to_dict(instruction)
+                    "instruction": _instruction_to_dict(instruction),
+                    "warnings": verdict.warnings if verdict else [],
                 }
             }, status=status.HTTP_200_OK)
             

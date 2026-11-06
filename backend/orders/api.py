@@ -14,6 +14,8 @@ from .access import project_for
 from .models import OrderSettings
 from .prompt import build_order_prompt
 from .requirements import check
+from .guard import check_instruction
+from .improve import NoSafeSuggestion, improve
 from .instructions import RESOLVE_SCOPES, find_order_instructions
 from .setup import run_setup
 
@@ -291,9 +293,37 @@ class InstructionResolveView(APIView):
 		if not isinstance(ids, list) or not ids:
 			return _err("invalid_ids", "ids must be a non-empty list", 400)
 		try:
-			updated = CustomInstruction.objects.filter(project=project, id__in=ids).update(
-				scope=RESOLVE_SCOPES[action], updated_at=timezone.now(),
-			)
+			rows = list(CustomInstruction.objects.filter(project=project, id__in=ids))
 		except (ValueError, ValidationError):
 			return _err("invalid_ids", "ids must be instruction ids", 400)
-		return _ok({"updated": updated, "scope": RESOLVE_SCOPES[action]})
+		warnings = []
+		if action == "convert":  # the same guard as a save: a converted instruction reaches the order prompt
+			for row in rows:
+				verdict = check_instruction(row.message, str(project.id))
+				if verdict.blocked:
+					return _err("instruction_blocked", f"'{row.label}' cannot become an order instruction", 422)
+				warnings += verdict.warnings
+		updated = CustomInstruction.objects.filter(pk__in=[row.pk for row in rows]).update(
+			scope=RESOLVE_SCOPES[action], updated_at=timezone.now(),
+		)
+		return _ok({"updated": updated, "scope": RESOLVE_SCOPES[action], "warnings": warnings})
+
+
+class InstructionImproveView(APIView):
+	"""A safer rewrite of an instruction. Nothing is applied; the client decides."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		project, error = _scoped(request, admin=True, project_id=request.data.get("project_id"))
+		if error:
+			return error
+		text = str(request.data.get("text", "")).strip()
+		scope = request.data.get("scope", "general")
+		if not text:
+			return _err("invalid_text", "text is required", 400)
+		if scope not in ("general", "order"):
+			return _err("invalid_scope", "scope must be general or order", 400)
+		try:
+			return _ok(improve(text, scope, str(project.id)))
+		except NoSafeSuggestion:
+			return _err("no_safe_suggestion", "No safe rewrite was found; edit the text yourself", 422)

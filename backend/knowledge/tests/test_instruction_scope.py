@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -5,6 +7,7 @@ from rest_framework.test import APIClient
 from accounts.models import Project, ProjectUser
 from channels_app.tasks import get_effective_instructions
 from knowledge.models import CustomInstruction, KnowledgeBase
+from orders.guard import Verdict
 
 User = get_user_model()
 
@@ -58,7 +61,8 @@ class InstructionScopeTest(TestCase):
 
 	def test_patch_sets_scope_and_rejects_unknown(self):
 		row = CustomInstruction.objects.get(label="general")
-		r = self.client.patch(f"/api/kb/instructions/{row.id}/", {"scope": "order"}, format="json")
+		with patch("knowledge.views.check_instruction", return_value=Verdict(blocked=False)):  # no model call in this test
+			r = self.client.patch(f"/api/kb/instructions/{row.id}/", {"scope": "order"}, format="json")
 		self.assertEqual(r.status_code, 200, r.content)
 		row.refresh_from_db()
 		self.assertEqual(row.scope, "order")

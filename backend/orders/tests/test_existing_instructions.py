@@ -1,9 +1,12 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
 from knowledge.models import CustomInstruction
+from orders.guard import Verdict
 from orders.instructions import find_order_instructions
 
 User = get_user_model()
@@ -26,9 +29,10 @@ class ExistingInstructionsTest(TestCase):
 		self.assertEqual(found, ["Take orders"])
 
 	def test_convert_sets_order_scope(self):
-		r = self.client.post("/api/orders/instructions/resolve/", {
-			"project_id": str(self.project.id), "ids": [str(self.order_text.id)], "action": "convert",
-		}, format="json")
+		with patch("orders.api.check_instruction", return_value=Verdict(blocked=False)):  # no model call in this test
+			r = self.client.post("/api/orders/instructions/resolve/", {
+				"project_id": str(self.project.id), "ids": [str(self.order_text.id)], "action": "convert",
+			}, format="json")
 		self.assertEqual(r.status_code, 200, r.content)
 		self.order_text.refresh_from_db()
 		self.assertEqual(self.order_text.scope, "order")
