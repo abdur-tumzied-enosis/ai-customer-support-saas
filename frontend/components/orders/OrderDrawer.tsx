@@ -67,7 +67,7 @@ export default function OrderDrawer({ orderId, onOpenChange, onChanged }: Props)
 			tracking_number: draft.tracking_number,
 			internal_note: draft.internal_note,
 		};
-		if (order.items.some((i) => draft.quantities[i.id] !== i.quantity)) {
+		if (order.items.every((i) => i.product_id) && order.items.some((i) => draft.quantities[i.id] !== i.quantity)) {
 			payload.items = order.items.map((i) => ({
 				product_id: i.product_id,
 				variant_id: i.variant_id,
@@ -113,6 +113,9 @@ export default function OrderDrawer({ orderId, onOpenChange, onChanged }: Props)
 					<div className="space-y-5 text-sm">
 						<section className="space-y-2">
 							<h3 className="font-medium">Items</h3>
+							{order.items.some((i) => !i.product_id) && (
+								<p className="text-amber-700">A product was removed from the catalog, so quantities cannot be changed here.</p>
+							)}
 							{order.items.map((item) => (
 								<div key={item.id} className="flex items-center gap-2">
 									<span className="flex-1">
@@ -125,6 +128,7 @@ export default function OrderDrawer({ orderId, onOpenChange, onChanged }: Props)
 										max={100}
 										className="w-20"
 										aria-label={`Quantity of ${item.name}`}
+										disabled={order.items.some((i) => !i.product_id)}
 										value={draft.quantities[item.id]}
 										onChange={(e) =>
 											setDraft({ ...draft, quantities: { ...draft.quantities, [item.id]: Number(e.target.value) } })
