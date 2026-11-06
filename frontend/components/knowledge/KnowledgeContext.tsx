@@ -35,7 +35,7 @@ export const isProcessing = (doc: KbDocument) => doc.status !== "completed" && d
 
 export type KnowledgeAlert = { type: "success" | "error"; message: string } | null;
 /** null while loading, "unavailable" if the count couldn't be fetched */
-export type ProductStats = { products: number; photos: number } | "unavailable" | null;
+export type ProductStats = { products: number; photos: number; needsInfo: number } | "unavailable" | null;
 
 const DOCUMENT_POLL_MS = 5000;
 
@@ -155,10 +155,11 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 	const reportProducts = useCallback((products: Product[]) => {
 		const photos = products.reduce((n, p) => n + p.images.length, 0);
 		// The catalog polls every few seconds; an unchanged count must not re-render the tree
+		const needsInfo = products.filter((p) => p.status === "needs_info").length;
 		setProductStats((prev) =>
-			prev && prev !== "unavailable" && prev.products === products.length && prev.photos === photos
+			prev && prev !== "unavailable" && prev.products === products.length && prev.photos === photos && prev.needsInfo === needsInfo
 				? prev
-				: { products: products.length, photos }
+				: { products: products.length, photos, needsInfo }
 		);
 	}, []);
 
@@ -187,7 +188,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 	// Product counts for the summary; the catalog reports fresh lists itself while it is open
 	useEffect(() => {
 		setProductStats(null);
-		if (!imageSearchOn || !projectId || !selectedKbId) return;
+		if (!projectId || !selectedKbId) return;
 		let cancelled = false;
 		productApi
 			.list(projectId, selectedKbId)
@@ -196,7 +197,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 		return () => {
 			cancelled = true;
 		};
-	}, [imageSearchOn, projectId, selectedKbId, reportProducts]);
+	}, [projectId, selectedKbId, reportProducts]);
 
 	// Pending suggestions are per project; the queue reports changes itself while it is open
 	useEffect(() => {

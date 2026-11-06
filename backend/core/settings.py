@@ -143,6 +143,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'channels_app.reply.recover_stuck_replies',
         'schedule': 300,
     },
+    'sync-product-sources': {
+        'task': 'knowledge.tasks.sync_product_sources',
+        'schedule': 3600,
+    },
     'propose-instructions': {
         'task': 'channels_app.memory.propose_instructions',
         'schedule': 86400,  # daily

@@ -213,14 +213,64 @@ def product_image_path(kb, image_id: str, ext: str) -> str:
 	return f"products/{kb.project.slug}/{kb.id.hex}/{image_id}.{ext}"
 
 
+class ProductSource(models.Model):
+	KIND_CHOICES = [("csv", "CSV"), ("sheet", "Sheet")]
+
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="product_sources")
+	kind = models.CharField(max_length=16, choices=KIND_CHOICES)
+	mapping = models.JSONField(default=dict)
+	sheet_url = models.URLField(blank=True, default="")
+	last_synced_at = models.DateTimeField(null=True, blank=True)
+	last_error = models.TextField(blank=True, default="")
+	created_at = models.DateTimeField(auto_now_add=True)
+
+
+class ProductField(models.Model):
+	KIND_CHOICES = [("text", "Text"), ("number", "Number"), ("choice", "Choice")]
+
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="product_fields")
+	key = models.SlugField(max_length=64)
+	label = models.CharField(max_length=255)
+	kind = models.CharField(max_length=16, choices=KIND_CHOICES, default="text")
+	choices = models.JSONField(default=list, blank=True)
+	required = models.BooleanField(default=False)
+	show_to_agent = models.BooleanField(default=True)
+	position = models.IntegerField(default=0)
+
+	class Meta:
+		constraints = [models.UniqueConstraint(fields=["kb", "key"], name="product_field_key_unique_per_kb")]
+
+
 # ponytail: no reindex_vectors support for image collections; re-queue embed_product_image for all images if the CLIP model changes.
 class Product(models.Model):
+	STATUS_CHOICES = [("needs_info", "Needs info"), ("active", "Active"), ("hidden", "Hidden")]
+	SOURCE_CHOICES = [("manual", "Manual"), ("kb", "Knowledge base"), ("csv", "CSV"), ("sheet", "Sheet")]
+
 	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="products")
 	name = models.CharField(max_length=255)
 	description = models.TextField(blank=True, default="")
+	external_id = models.CharField(max_length=255, null=True, blank=True)
+	sku = models.CharField(max_length=128, blank=True, default="")
+	price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+	available = models.BooleanField(default=True)
+	status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="needs_info")
+	product_url = models.TextField(blank=True, default="")
+	source = models.CharField(max_length=16, choices=SOURCE_CHOICES, default="manual")
+	source_ref = models.ForeignKey(ProductSource, on_delete=models.SET_NULL, null=True, blank=True, related_name="products")
+	custom = models.JSONField(default=dict, blank=True)
+	locked_fields = models.JSONField(default=list, blank=True)
+	last_seen_at = models.DateTimeField(null=True, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		constraints = [
+			models.CheckConstraint(check=~models.Q(status="active") | models.Q(price__isnull=False), name="product_active_requires_price"),
+			models.UniqueConstraint(fields=["kb", "external_id"], condition=models.Q(external_id__isnull=False), name="product_external_id_unique_per_kb"),
+		]
 
 	def __str__(self) -> str:
 		return self.name
@@ -233,6 +283,17 @@ class Product(models.Model):
 		for image in images:
 			image._delete_file()
 		return super().delete(*args, **kwargs)
+
+
+class ProductVariant(models.Model):
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="variants")
+	external_id = models.CharField(max_length=255, null=True, blank=True)
+	sku = models.CharField(max_length=128, blank=True, default="")
+	label = models.CharField(max_length=255)
+	attributes = models.JSONField(default=dict, blank=True)
+	price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+	available = models.BooleanField(default=True)
 
 
 class ProductImage(models.Model):
@@ -254,6 +315,30 @@ class ProductImage(models.Model):
 		delete_images(self.product.kb.image_collection, [str(self.id)])
 		self._delete_file()
 		return super().delete(*args, **kwargs)
+
+
+class ProductCandidate(models.Model):
+	STATUS_CHOICES = [("pending", "Pending"), ("imported", "Imported"), ("ignored", "Ignored")]
+
+	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="product_candidates")
+	document = models.ForeignKey(Document, on_delete=models.SET_NULL, null=True, blank=True, related_name="product_candidates")
+	page_url = models.TextField(blank=True, default="")
+	name = models.CharField(max_length=255)
+	payload = models.JSONField(default=dict)
+	confidence = models.FloatField(default=0)
+	status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending")
+	matched_product = models.ForeignKey(Product, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+	changes = models.JSONField(default=dict, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+
+class IgnoredProductPage(models.Model):
+	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="ignored_product_pages")
+	url = models.CharField(max_length=1000)
+
+	class Meta:
+		constraints = [models.UniqueConstraint(fields=["kb", "url"], name="ignored_product_page_unique_per_kb")]
 
 
 class IngestionJob(models.Model):

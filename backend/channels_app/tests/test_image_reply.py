@@ -58,7 +58,7 @@ class ImageReplyTest(PipelineBase):
 			project=self.project, channel="facebook", knowledge_base=self.kb, is_active=True, image_search_enabled=True,
 			credentials={"page_id": "page-1", "page_access_token": "tok"},
 		)
-		self.product = Product.objects.create(kb=self.kb, name="Red Kurta", description="Cotton kurta in red, sizes S to XL")
+		self.product = Product.objects.create(kb=self.kb, name="Red Kurta", price=100, status="active", description="Cotton kurta in red, sizes S to XL")
 		self.scheduled = []
 		mock.patch("channels_app.service.facebook_messing.schedule_reply", side_effect=self.scheduled.append).start()
 		mock.patch("channels_app.service.whatsapp_messaging.schedule_reply", side_effect=self.scheduled.append).start()
@@ -125,7 +125,7 @@ class ImageReplyTest(PipelineBase):
 		assert '[Customer sent a photo. Closest catalog products: "Red Kurta" (similarity 0.90): ' in self.questions[0]
 
 	def test_matches_keep_score_order(self):
-		second = Product.objects.create(kb=self.kb, name="Green Kurta", description="x" * 400)
+		second = Product.objects.create(kb=self.kb, name="Green Kurta", price=100, status="active", description="x" * 400)
 		self.search.side_effect = lambda collection, vector: [(str(second.id), 0.91), (str(self.product.id), 0.88)]
 		handle_facebook_message(fb_payload("m1"))
 		self.answer_all()

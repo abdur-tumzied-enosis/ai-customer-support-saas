@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
-import { conversationApi } from "@/lib/api";
+import { conversationApi, productApi } from "@/lib/api";
 import Logo from "@/components/layout/Logo";
 import {
 	LayoutDashboard,
@@ -36,6 +36,7 @@ export default function Sidebar() {
 	const [isMounted, setIsMounted] = useState(false);
 	const { projects } = useAuth();
 	const [needsHuman, setNeedsHuman] = useState(0);
+	const [needsInfo, setNeedsInfo] = useState(0);
 	const projectSlug = projects && projects.length > 0 ? projects[0].slug : "";
 
 	// ponytail: refreshed on navigation only; add polling/websocket if staff need live counts
@@ -46,6 +47,15 @@ export default function Sidebar() {
 			.then((r) => setNeedsHuman(r.data.needs_human_count))
 			.catch(() => {});
 	}, [projectSlug, pathname]);
+
+	const projectId = projects && projects.length > 0 ? String(projects[0].id) : "";
+	useEffect(() => {
+		if (!projectId) return;
+		productApi
+			.summary(projectId)
+			.then((r) => setNeedsInfo(r.counts.needs_info))
+			.catch(() => {});
+	}, [projectId, pathname]);
 
 	// Load collapsed state from localStorage on mount
 	useEffect(() => {
@@ -135,6 +145,17 @@ export default function Sidebar() {
 											aria-label={`${needsHuman} conversations need a human`}
 										>
 											{needsHuman}
+										</span>
+									)}
+									{l.href === "/knowledge" && needsInfo > 0 && (
+										<span
+											className={cn(
+												"rounded-full bg-destructive px-1.5 text-xs font-semibold text-destructive-foreground",
+												!isCollapsed && "ml-auto"
+											)}
+											aria-label={`${needsInfo} products need info`}
+										>
+											{needsInfo}
 										</span>
 									)}
 								</Link>

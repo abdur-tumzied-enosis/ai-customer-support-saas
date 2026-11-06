@@ -28,6 +28,8 @@ class Project(models.Model):
 	# per-tenant grant (admin only); `enabled` is the tenant's own switch.
 	image_search_allowed = models.BooleanField(default=False)
 	image_search_enabled = models.BooleanField(default=True)
+	# ISO 4217 code shown with prices (symbols live in the frontend)
+	currency = models.CharField(max_length=3, default="BDT")
 
 	@property
 	def image_search_available(self) -> bool:

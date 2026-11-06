@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
 import { Download, Loader2, Trash2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { authApi, featuresApi, type Features } from "@/lib/api";
+import { authApi } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -26,11 +25,7 @@ function StatusLine({ status }: { status: Status }) {
 }
 
 export default function SettingsPage() {
-	const { user, projects, checkAuth } = useAuth();
-	const project = projects.length > 0 ? projects[0] : null;
-	const [features, setFeatures] = useState<Features | null>(null);
-	const [featuresStatus, setFeaturesStatus] = useState<Status>(null);
-	const [savingFeatures, setSavingFeatures] = useState(false);
+	const { user, checkAuth } = useAuth();
 	const router = useRouter();
 
 	const [firstName, setFirstName] = useState(user?.first_name ?? "");
@@ -48,27 +43,6 @@ export default function SettingsPage() {
 	const [deletePassword, setDeletePassword] = useState("");
 	const [deleteError, setDeleteError] = useState("");
 	const [deleting, setDeleting] = useState(false);
-
-	useEffect(() => {
-		if (!project) return;
-		featuresApi
-			.get(String(project.id))
-			.then(setFeatures)
-			.catch(() => setFeatures(null));
-	}, [project]);
-
-	async function toggleImageSearch() {
-		if (!project || !features) return;
-		setSavingFeatures(true);
-		setFeaturesStatus(null);
-		try {
-			setFeatures(await featuresApi.update(String(project.id), !features.image_search));
-		} catch (err) {
-			setFeaturesStatus({ kind: "error", text: formatError(err) });
-		} finally {
-			setSavingFeatures(false);
-		}
-	}
 
 	async function saveProfile(e: React.FormEvent) {
 		e.preventDefault();
@@ -207,33 +181,6 @@ export default function SettingsPage() {
 					</form>
 				</CardContent>
 			</Card>
-
-			{features?.image_search_available && (
-				<Card>
-					<CardHeader>
-						<CardTitle>Image search</CardTitle>
-						<CardDescription>
-							Lets the assistant recognise products from photos customers send. Turn it on per channel too.
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="space-y-4">
-						<StatusLine status={featuresStatus} />
-						{project?.role === "admin" ? (
-							<Button
-								type="button"
-								variant={features.image_search ? "default" : "outline"}
-								disabled={savingFeatures}
-								onClick={toggleImageSearch}
-							>
-								{savingFeatures && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-								Image search: {features.image_search ? "On" : "Off"}
-							</Button>
-						) : (
-							<p className="text-sm">Image search: {features.image_search ? "On" : "Off"}</p>
-						)}
-					</CardContent>
-				</Card>
-			)}
 
 			<Card>
 				<CardHeader>

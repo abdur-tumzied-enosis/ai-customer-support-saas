@@ -971,12 +971,52 @@ export type ProductImage = {
 	thumb_url: string;
 };
 
+export type ProductStatus = "needs_info" | "active" | "hidden";
+
+export type ProductVariant = {
+	id?: string;
+	external_id: string | null;
+	sku: string;
+	label: string;
+	attributes: Record<string, string>;
+	price: string | null;
+	available: boolean;
+};
+
 export type Product = {
 	id: string;
+	kb_id: string;
+	external_id: string | null;
+	sku: string;
 	name: string;
 	description: string;
+	price: string | null;
+	currency: string;
+	available: boolean;
+	status: ProductStatus;
+	product_url: string;
+	source: string;
+	custom: Record<string, unknown>;
+	variants: ProductVariant[];
 	created_at: string;
 	images: ProductImage[];
+};
+
+export type ProductField = {
+	id: string;
+	kb_id: string;
+	key: string;
+	label: string;
+	kind: string;
+	choices: string[];
+	required: boolean;
+	show_to_agent: boolean;
+	position: number;
+};
+
+export type ProductPatch = Partial<Pick<Product, "name" | "description" | "sku" | "external_id" | "price" | "available" | "custom" | "product_url">> & {
+	status?: ProductStatus;
+	variants?: Omit<ProductVariant, "id">[];
 };
 
 export type Features = { image_search_available: boolean; image_search: boolean };
@@ -1007,6 +1047,19 @@ export const featuresApi = {
 		})).data,
 };
 
+export type ProjectSettings = { project_id: string; name: string; currency: string };
+
+export const projectSettingsApi = {
+	get: async (projectId: string) =>
+		(await apiFetch<ProjectSettings>(`/api/projects/settings/?project_id=${encodeURIComponent(projectId)}`)).data,
+
+	update: async (projectId: string, data: { name?: string; currency?: string }) =>
+		(await apiFetch<ProjectSettings>("/api/projects/settings/", {
+			method: "PATCH",
+			json: { project_id: projectId, ...data },
+		})).data,
+};
+
 export const productApi = {
 	list: async (projectId: string, kbId: string) =>
 		(await apiFetch<Product[]>(
@@ -1019,9 +1072,148 @@ export const productApi = {
 	update: (id: string, data: { name?: string; description?: string }) =>
 		apiFetch<Product>(`/api/kb/products/${id}/`, { method: "PATCH", json: data }),
 
+	patch: async (id: string, data: ProductPatch) =>
+		(await apiFetch<Product>(`/api/kb/products/${id}/`, { method: "PATCH", json: data })).data,
+
+	// kb_id omitted: the backend uses the project's default KB
+	summary: async (projectId: string, kbId?: string) =>
+		(await apiFetch<{ counts: Record<ProductStatus, number>; currency: string }>(
+			`/api/kb/products/summary/?project_id=${encodeURIComponent(projectId)}${kbId ? `&kb_id=${encodeURIComponent(kbId)}` : ""}`
+		)).data,
+
 	remove: (id: string) => apiFetch<null>(`/api/kb/products/${id}/`, { method: "DELETE" }),
 
 	addImages: (id: string, files: File[]) => uploadProductPhotos(`/api/kb/products/${id}/images/`, {}, files),
 
 	removeImage: (imageId: string) => apiFetch<null>(`/api/kb/products/images/${imageId}/`, { method: "DELETE" }),
+};
+
+// Admin-only to change; any member can list
+export const productFieldApi = {
+	list: async (projectId: string, kbId: string) =>
+		(await apiFetch<ProductField[]>(
+			`/api/kb/product-fields/?project_id=${encodeURIComponent(projectId)}&kb_id=${encodeURIComponent(kbId)}`
+		)).data,
+
+	create: async (projectId: string, kbId: string, data: Partial<Omit<ProductField, "id" | "kb_id">>) =>
+		(await apiFetch<ProductField>("/api/kb/product-fields/", { method: "POST", json: { project_id: projectId, kb_id: kbId, ...data } })).data,
+
+	patch: async (id: string, data: Partial<Omit<ProductField, "id" | "kb_id">>) =>
+		(await apiFetch<ProductField>(`/api/kb/product-fields/${id}/`, { method: "PATCH", json: data })).data,
+
+	remove: (id: string) => apiFetch<null>(`/api/kb/product-fields/${id}/`, { method: "DELETE" }),
+};
+
+export type SourceResult = { created: number; updated: number; unchanged: number; hidden: number; rejected: { row: number; message: string }[] };
+
+export type ProductSource = {
+	id: string;
+	kind: "csv" | "sheet";
+	mapping: Record<string, string | null>;
+	sheet_url: string;
+	last_synced_at: string | null;
+	last_error: string;
+	key_warning: boolean;
+	created_at: string;
+};
+
+export type CsvPreview = { headers: string[]; mapping: Record<string, string | null>; sample: Record<string, string>[]; key_warning: boolean };
+
+export type ProductCandidate = {
+	id: string;
+	name: string;
+	confidence: number;
+	low_confidence: boolean;
+	payload: { description?: string; sku?: string; external_id?: string | null; price?: string | null; image_srcs?: string[] };
+	matched_product_id: string | null;
+	changes: Record<string, { old: string | null; new: string | null }>;
+	status: string;
+	matched_by: "" | "external_id" | "sku" | "name";
+};
+
+export type CandidatePage = { page_url: string; page_title: string; candidates: ProductCandidate[] };
+
+// multipart: apiFetch forces a JSON content type, so the file upload sends its own request
+async function uploadForm<T>(path: string, form: FormData): Promise<T> {
+	const csrf = getCsrfToken();
+	const res = await fetch(`${API_BASE_URL}${path}`, {
+		method: "POST",
+		body: form,
+		credentials: "include",
+		headers: csrf ? { "X-CSRFToken": csrf } : {},
+	});
+	const data = (await res.json()) as ApiResponse<T>;
+	if (!res.ok || !data.success) {
+		throw new ApiError(data.success ? { code: "request_failed", message: `Request failed with status ${res.status}` } : data.error);
+	}
+	return data.data;
+}
+
+const csvForm = (projectId: string, kbId: string, file: File, mapping?: Record<string, string | null>) => {
+	const form = new FormData();
+	form.append("project_id", projectId);
+	form.append("kb_id", kbId);
+	form.append("file", file);
+	if (mapping) form.append("mapping", JSON.stringify(mapping));
+	return form;
+};
+
+const q = (projectId: string, kbId: string) => `project_id=${encodeURIComponent(projectId)}&kb_id=${encodeURIComponent(kbId)}`;
+
+// Admin-only
+export const productSourceApi = {
+	list: async (projectId: string, kbId: string) =>
+		(await apiFetch<ProductSource[]>(`/api/kb/products/sources/?${q(projectId, kbId)}`)).data,
+
+	previewCsv: (projectId: string, kbId: string, file: File, mapping?: Record<string, string | null>) =>
+		uploadForm<CsvPreview>("/api/kb/products/sources/csv/preview/", csvForm(projectId, kbId, file, mapping)),
+
+	createCsv: (projectId: string, kbId: string, file: File, mapping: Record<string, string | null>) =>
+		uploadForm<{ source: ProductSource; result: SourceResult }>("/api/kb/products/sources/csv/", csvForm(projectId, kbId, file, mapping)),
+
+	previewSheet: async (projectId: string, kbId: string, sheetUrl: string, mapping?: Record<string, string | null>) =>
+		(await apiFetch<CsvPreview>("/api/kb/products/sources/sheet/preview/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, sheet_url: sheetUrl, ...(mapping ? { mapping } : {}) },
+		})).data,
+
+	createSheet: async (projectId: string, kbId: string, sheetUrl: string, mapping: Record<string, string | null>) =>
+		(await apiFetch<{ source: ProductSource; result: SourceResult }>("/api/kb/products/sources/sheet/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, sheet_url: sheetUrl, mapping },
+		})).data,
+
+	sync: async (projectId: string, kbId: string, id: string) =>
+		(await apiFetch<{ source: ProductSource; result: SourceResult }>(`/api/kb/products/sources/${id}/sync/`, {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId },
+		})).data,
+
+	// A new version of a CSV source's file; the source's saved mapping applies
+	reupload: (projectId: string, kbId: string, id: string, file: File) =>
+		uploadForm<{ source: ProductSource; result: SourceResult }>(`/api/kb/products/sources/${id}/upload/`, csvForm(projectId, kbId, file)),
+
+	remove: (projectId: string, kbId: string, id: string) =>
+		apiFetch<null>(`/api/kb/products/sources/${id}/?${q(projectId, kbId)}`, { method: "DELETE" }),
+};
+
+export const candidateApi = {
+	list: async (projectId: string, kbId: string) =>
+		(await apiFetch<{ pages: CandidatePage[]; ignored_pages: string[] }>(`/api/kb/products/candidates/?${q(projectId, kbId)}`)).data,
+
+	// Admin-only from here
+	import: async (projectId: string, kbId: string, ids: string[]) =>
+		(await apiFetch<{ imported: number; updated: number; rejected: { id: string; message: string }[] }>("/api/kb/products/candidates/import/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, ids },
+		})).data,
+
+	ignorePage: (projectId: string, kbId: string, pageUrl: string) =>
+		apiFetch<{ ignored: number }>("/api/kb/products/candidates/ignore-page/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, page_url: pageUrl },
+		}),
+
+	extract: (projectId: string, kbId: string) =>
+		apiFetch<{ queued: boolean }>("/api/kb/products/extract/", { method: "POST", json: { project_id: projectId, kb_id: kbId } }),
 };

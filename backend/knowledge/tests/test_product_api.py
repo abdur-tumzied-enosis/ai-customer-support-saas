@@ -259,7 +259,9 @@ class ProductApiTests(TestCase):
 		img = ProductImage.objects.first()
 		self.pu.role = "member"
 		self.pu.save()
-		self.assertEqual(self.create().status_code, 403)
+		r = self.create()  # photos need confirm, which is admin-only, so a member cannot start an upload
+		self.assertEqual(r.status_code, 403)
+		self.assertEqual(r.json()["error"]["code"], "access_denied")
 		self.assertEqual(self.client.delete(f"/api/kb/products/{pid}/").status_code, 403)
 		self.assertEqual(self.confirm([img.id]).status_code, 403)
 		self.assertEqual(self.list_products().status_code, 200)
@@ -303,8 +305,6 @@ class ProductApiTests(TestCase):
 		self.project.save()
 		calls = {
 			"create": lambda: self.create(),
-			"patch": lambda: self.client.patch(f"/api/kb/products/{pid}/", {"name": "x"}, format="json"),
-			"delete": lambda: self.client.delete(f"/api/kb/products/{pid}/"),
 			"add_images": lambda: self.add(pid, [spec()]),
 			"confirm": lambda: self.confirm([img.id]),
 			"delete_image": lambda: self.client.delete(f"/api/kb/products/images/{img.id}/"),
@@ -329,9 +329,7 @@ class ProductApiTests(TestCase):
 	def test_tenant_off_hides_endpoints(self):
 		self.project.image_search_enabled = False
 		self.project.save()
-		r = self.list_products()
-		self.assertEqual(r.status_code, 404)
-		self.assertEqual(r.json()["error"]["code"], "feature_disabled")
+		self.assertEqual(self.list_products().status_code, 200)  # the catalog no longer needs image search
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
 		self.assertEqual(r.json()["data"], {"image_search_available": True, "image_search": False})
 
@@ -368,7 +366,8 @@ class ProductApiTests(TestCase):
 	def test_operator_revoke_overrides_tenant(self):
 		self.project.image_search_allowed = False
 		self.project.save()
-		r = self.list_products()
+		self.assertEqual(self.list_products().status_code, 200)
+		r = self.create()  # photos are gated, the catalog is not
 		self.assertEqual(r.status_code, 404)
 		self.assertEqual(r.json()["error"]["code"], "feature_disabled")
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
@@ -376,7 +375,8 @@ class ProductApiTests(TestCase):
 
 	@override_settings(IMAGE_SEARCH_ENABLED=False)
 	def test_master_off_hides_endpoints(self):
-		r = self.list_products()
+		self.assertEqual(self.list_products().status_code, 200)
+		r = self.create()  # photos are gated, the catalog is not
 		self.assertEqual(r.status_code, 404)
 		self.assertEqual(r.json()["error"]["code"], "feature_disabled")
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})

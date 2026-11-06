@@ -27,8 +27,8 @@ def _photo_note(conversation, msg, att) -> str:
 	try:
 		kb = conversation.knowledge_base
 		hits = search_products(kb.image_collection, embed_image(load_image(fetch_photo(msg, att))))
-		products = {str(p.id): p for p in Product.objects.filter(id__in=[pid for pid, _ in hits], kb=kb)}
-		matches = [(products[pid], score) for pid, score in hits if pid in products]  # drops stale points
+		products = {str(p.id): p for p in Product.objects.filter(id__in=[pid for pid, _ in hits], kb=kb, status="active")}
+		matches = [(products[pid], score) for pid, score in hits if pid in products]  # drops stale and non-active points
 	except SoftTimeLimitExceeded:
 		raise  # out of time: the reply task sends the fallback (reply._reply)
 	except Exception as e:  # MediaError, NotAnImage, Qdrant or DB errors: still answer the customer
