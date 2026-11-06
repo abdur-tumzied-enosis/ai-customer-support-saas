@@ -36,6 +36,7 @@ INSTALLED_APPS = [
 	"channels_app",
 	"agents",
 	"knowledge",
+	"orders",
 	"subscriptions",
 	"usage",
 	"analytics",
@@ -138,6 +139,10 @@ CELERY_BEAT_SCHEDULE = {
     'cleanup-abandoned-uploads': {
         'task': 'knowledge.tasks.cleanup_abandoned_uploads',
         'schedule': 900,
+    },
+    'expire-stale-drafts': {
+        'task': 'orders.tasks.expire_stale_drafts',
+        'schedule': 3600,  # hourly; each project sets how long a draft lives
     },
     'recover-stuck-replies': {
         'task': 'channels_app.reply.recover_stuck_replies',

@@ -19,6 +19,8 @@ class Context:
 	api_call_log: List[dict] = field(default_factory=list)  # filled by call_api during the reply
 	handoff_reason: Optional[str] = None  # set by escalate_to_human during the reply
 	trace: Dict[str, Any] = field(default_factory=dict)  # model/ms/tokens/tool_calls/sources, stored on the reply message
+	order_tools: List[Callable[..., str]] = field(default_factory=list)  # set when ordering is on (orders.tools)
+	order_submitted: bool = False  # set by submit_order during this reply
 
 
 @dataclass
@@ -128,6 +130,7 @@ def _build_tools_from_context(context: Context, deps: ToolDeps, retrievers: Opti
 	if context.api_domains:
 		tools.append(build_call_api_tool(context.api_domains, context.api_call_log))
 
+	tools.extend(context.order_tools)
 	return tools
 
 class ChatMessage(TypedDict):

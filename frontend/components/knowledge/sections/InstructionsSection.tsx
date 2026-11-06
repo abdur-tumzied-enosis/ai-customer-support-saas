@@ -80,7 +80,7 @@ export default function InstructionsSection() {
 								<div className="flex items-start justify-between">
 									<div className="flex items-center gap-2">
 										<Badge variant="outline">{inst.label}</Badge>
-										{inst.api_tool_enabled && <Badge variant="secondary">API</Badge>}
+										{inst.api_tool_enabled && <Badge variant="secondary">API</Badge>} {inst.scope === "order" && <Badge>Orders</Badge>} {inst.scope === "off" && <Badge variant="outline">Off</Badge>}
 										<span className="text-xs text-muted-foreground">
 											Added {new Date(inst.created_at).toLocaleDateString()}
 										</span>

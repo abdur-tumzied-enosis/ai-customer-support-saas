@@ -10,6 +10,7 @@ from .catalog_views import (
 )
 from .candidate_views import candidate_ignore_page, candidate_import, candidate_list, product_extract
 from .suggestions import SuggestionDecisionView, SuggestionListView
+from orders.api import InstructionImproveView
 from .views import (
 	KnowledgeBaseListView, KnowledgeBaseDetailView,
 	DocumentUploadView, DocumentConfirmView, DocumentListView, DocumentDeleteView,
@@ -41,6 +42,7 @@ urlpatterns = [
 	# Custom instruction endpoints
 	path("instructions/", CustomInstructionListCreateView.as_view(), name="instruction-list-create"),
 	path("instructions/resolve/", CustomInstructionResolveView.as_view(), name="instruction-resolve"),
+	path("instructions/improve/", InstructionImproveView.as_view(), name="instruction-improve"),
 	path("instructions/<uuid:instruction_id>/", CustomInstructionDetailView.as_view(), name="instruction-detail"),
 
 	# Product catalog (image search)

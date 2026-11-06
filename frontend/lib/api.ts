@@ -334,6 +334,7 @@ export type ApiDomain = {
 
 // Custom Instruction type
 export type CustomInstruction = {
+	scope?: "general" | "order" | "off";
 	id: string;
 	label: string;
 	message: string;

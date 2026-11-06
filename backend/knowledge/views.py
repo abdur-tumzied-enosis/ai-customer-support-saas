@@ -21,6 +21,7 @@ from .models import KnowledgeBase, Document, IngestionJob, IngestionJobStatus, D
 from core.storage import delete_keys, object_size, presign_put
 from .tasks import run_ingestion_job, crawl_website
 from .api_tool_config import ApiConfigError, apply_api_config, public_api_domains
+from orders.guard import check_instruction
 
 
 class CustomInstructionSerializer(serializers.ModelSerializer):
@@ -531,6 +532,13 @@ class InstructionTemplateUseView(APIView):
 			)
 
 
+def _instruction_blocked(verdict):
+    return Response(
+        {"success": False, "error": {"code": "instruction_blocked", "message": "This instruction cannot be saved", "reasons": verdict.reasons}},
+        status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
+
+
 def _instruction_to_dict(inst: CustomInstruction) -> dict:
     return {
         "id": str(inst.id),
@@ -540,6 +548,7 @@ def _instruction_to_dict(inst: CustomInstruction) -> dict:
         "knowledge_base_name": inst.knowledge_base.name if inst.knowledge_base else None,
         "api_tool_enabled": inst.api_tool_enabled,
         "api_domains": public_api_domains(inst.api_domains),
+        "scope": inst.scope,
         "created_at": inst.created_at.isoformat(),
         "updated_at": inst.updated_at.isoformat(),
     }
@@ -660,6 +669,17 @@ class CustomInstructionListCreateView(APIView):
             except ApiConfigError as e:
                 return _api_config_error(e)
 
+            scope = request.data.get('scope', 'general')
+            if scope not in dict(CustomInstruction.SCOPE_CHOICES):
+                return Response(
+                    {"success": False, "error": {"code": "invalid_scope", "message": "scope must be general, order or off"}},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            verdict = check_instruction(message, str(project.id)) if scope == 'order' else None
+            if verdict and verdict.blocked:
+                return _instruction_blocked(verdict)
+
             # Create instruction
             instruction = CustomInstruction.objects.create(
                 project=project,
@@ -668,13 +688,15 @@ class CustomInstructionListCreateView(APIView):
                 message=message,
                 api_tool_enabled=api_tool_enabled,
                 api_domains=api_domains,
+                scope=scope,
             )
 
             return Response({
                 "success": True,
                 "message": "Instruction created successfully",
                 "data": {
-                    "instruction": _instruction_to_dict(instruction)
+                    "instruction": _instruction_to_dict(instruction),
+                    "warnings": verdict.warnings if verdict else [],
                 }
             }, status=status.HTTP_201_CREATED)
             
@@ -744,6 +766,13 @@ class CustomInstructionDetailView(APIView):
                 instruction.label = request.data['label'].strip()
             if 'message' in request.data:
                 instruction.message = request.data['message'].strip()
+            if 'scope' in request.data:
+                if request.data['scope'] not in dict(CustomInstruction.SCOPE_CHOICES):
+                    return Response(
+                        {"success": False, "error": {"code": "invalid_scope", "message": "scope must be general, order or off"}},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                instruction.scope = request.data['scope']
             try:
                 instruction.api_tool_enabled, instruction.api_domains = apply_api_config(
                     request.data, instruction.api_tool_enabled, instruction.api_domains
@@ -751,13 +780,17 @@ class CustomInstructionDetailView(APIView):
             except ApiConfigError as e:
                 return _api_config_error(e)
 
+            verdict = check_instruction(instruction.message, str(instruction.project_id)) if instruction.scope == 'order' else None
+            if verdict and verdict.blocked:
+                return _instruction_blocked(verdict)
             instruction.save()
             
             return Response({
                 "success": True,
                 "message": "Instruction updated successfully",
                 "data": {
-                    "instruction": _instruction_to_dict(instruction)
+                    "instruction": _instruction_to_dict(instruction),
+                    "warnings": verdict.warnings if verdict else [],
                 }
             }, status=status.HTTP_200_OK)
             
@@ -836,7 +869,7 @@ class CustomInstructionResolveView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            instructions = list(CustomInstruction.effective(project_id, kb_id).select_related('knowledge_base'))
+            instructions = list(CustomInstruction.visible(project_id, kb_id).select_related('knowledge_base'))
             # "knowledge_base" when the KB adds its own on top of the shared ones
             source = "knowledge_base" if any(inst.knowledge_base_id for inst in instructions) else "project"
             result = [_instruction_to_dict(inst) for inst in instructions]

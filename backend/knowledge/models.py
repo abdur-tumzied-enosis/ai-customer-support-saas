@@ -385,6 +385,9 @@ class CustomInstruction(models.Model):
 	# Generic API tool (agents/api_tool.py). api_domains: [{"domain", "auth_header"?, "secret"?}]
 	api_tool_enabled = models.BooleanField(default=False)
 	api_domains = models.JSONField(default=list, blank=True)
+	# general: in the general prompt. order: only in the order prompt. off: kept, used nowhere.
+	SCOPE_CHOICES = [("general", "General"), ("order", "Orders"), ("off", "Off")]
+	scope = models.CharField(max_length=16, choices=SCOPE_CHOICES, default="general")
 	created_at = models.DateTimeField(auto_now_add=True)
 	updated_at = models.DateTimeField(auto_now=True)
 
@@ -399,14 +402,29 @@ class CustomInstruction(models.Model):
 		return f"{self.label} ({scope})"
 
 	@classmethod
-	def effective(cls, project_id, knowledge_base_id=None):
-		"""What the bot follows for a KB: shared instructions, then the KB's own (last, so they win on conflicts)."""
-		scope = models.Q(knowledge_base__isnull=True)
+	def _for_kb(cls, project_id, knowledge_base_id=None):
+		"""Every row that applies to a KB: shared, then the KB's own (last, so they win on conflicts)."""
+		rule = models.Q(knowledge_base__isnull=True)
 		if knowledge_base_id:
-			scope |= models.Q(knowledge_base_id=knowledge_base_id)
-		return cls.objects.filter(scope, project_id=project_id).order_by(
+			rule |= models.Q(knowledge_base_id=knowledge_base_id)
+		return cls.objects.filter(rule, project_id=project_id).order_by(
 			models.F("knowledge_base_id").asc(nulls_first=True), "-created_at"
 		)
+
+	@classmethod
+	def effective(cls, project_id, knowledge_base_id=None):
+		"""General-prompt instructions for a KB."""
+		return cls._for_kb(project_id, knowledge_base_id).filter(scope="general")
+
+	@classmethod
+	def effective_order_instructions(cls, project_id, knowledge_base_id=None):
+		"""Order-prompt instructions for a KB."""
+		return cls._for_kb(project_id, knowledge_base_id).filter(scope="order")
+
+	@classmethod
+	def visible(cls, project_id, knowledge_base_id=None):
+		"""Every scope for a KB, for the settings UI (badges show Orders and Off)."""
+		return cls._for_kb(project_id, knowledge_base_id)
 
 
 class InstructionTemplate(models.Model):
