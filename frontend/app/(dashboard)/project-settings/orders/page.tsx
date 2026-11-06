@@ -6,6 +6,9 @@ import SetupStepSettings from "@/components/orders/setup/SetupStepSettings";
 import PromptPreview from "@/components/orders/settings/PromptPreview";
 import FormFieldsEditor from "@/components/orders/settings/FormFieldsEditor";
 import OrderInstructions from "@/components/orders/settings/OrderInstructions";
+import NotificationsSection from "@/components/orders/settings/NotificationsSection";
+import LiveLookupSection from "@/components/orders/settings/LiveLookupSection";
+import ActionsSection from "@/components/orders/actions/ActionsSection";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function OrderSettingsPage() {
@@ -50,6 +53,33 @@ export default function OrderSettingsPage() {
 				</CardHeader>
 				<CardContent>
 					<OrderInstructions projectId={projectId} />
+				</CardContent>
+			</Card>
+			<Card>
+				<CardHeader>
+					<CardTitle>Notifications</CardTitle>
+					<CardDescription>Order emails go to the addresses above.</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<NotificationsSection projectSlug={project.slug} />
+				</CardContent>
+			</Card>
+			<Card>
+				<CardHeader>
+					<CardTitle>Live price lookup (advanced)</CardTitle>
+					<CardDescription>Ask your own API for prices and availability by product key, instead of the catalog.</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<LiveLookupSection projectId={projectId} />
+				</CardContent>
+			</Card>
+			<Card>
+				<CardHeader>
+					<CardTitle>Custom actions</CardTitle>
+					<CardDescription>Send selected orders to a courier or your own API. Admins create and edit actions; everyone can run them.</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<ActionsSection projectId={projectId} />
 				</CardContent>
 			</Card>
 		</div>

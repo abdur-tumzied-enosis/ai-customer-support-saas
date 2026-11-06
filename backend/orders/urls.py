@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .api import (
+	NotificationsView, ActionDetailView, ActionListView, ActionProgressView, ActionRunListView, ActionRunRetryView, ActionRunView, ActionTestView,
 	BulkStatusView, DisableView, EnableView, FromChatView, InstructionResolveView, InstructionReviewView, OrderDetailView,
 	OrdersExportView, OrdersListView, RequirementsView, SetupRunView, SetupStatusView, SettingsView, TestModeView,
 )
@@ -20,4 +21,12 @@ urlpatterns = [
 	path("setup/", SetupStatusView.as_view(), name="order-setup-status"),
 	path("instructions/review/", InstructionReviewView.as_view(), name="order-instructions-review"),
 	path("instructions/resolve/", InstructionResolveView.as_view(), name="order-instructions-resolve"),
+	path("notifications/", NotificationsView.as_view(), name="order-notifications"),
+	path("actions/", ActionListView.as_view(), name="order-actions"),
+	path("actions/<int:action_id>/", ActionDetailView.as_view(), name="order-action-detail"),
+	path("actions/<int:action_id>/run/", ActionRunView.as_view(), name="order-action-run"),
+	path("actions/<int:action_id>/progress/", ActionProgressView.as_view(), name="order-action-progress"),
+	path("actions/<int:action_id>/test/", ActionTestView.as_view(), name="order-action-test"),
+	path("actions/runs/", ActionRunListView.as_view(), name="order-action-runs"),
+	path("actions/runs/<int:run_id>/retry/", ActionRunRetryView.as_view(), name="order-action-run-retry"),
 ]

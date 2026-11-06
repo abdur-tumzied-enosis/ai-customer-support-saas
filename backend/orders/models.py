@@ -14,6 +14,7 @@ class OrderSettings(models.Model):
 	payment_methods = models.JSONField(default=list, blank=True)  # [{"label", "default"}]
 	form_fields = models.JSONField(default=dict, blank=True)  # {"optional": [...], "custom": [{"key", "label", "required"}]}
 	notification_emails = models.JSONField(default=list, blank=True)
+	live_lookup = models.JSONField(default=dict, blank=True)  # {"enabled", "url_template", "headers", "price_path", "available_path"}
 	draft_expiry_hours = models.PositiveIntegerField(default=48)
 	setup_status = models.CharField(max_length=16, default="not_started")  # not_started / running / ready
 	setup_report = models.JSONField(default=dict, blank=True)
@@ -94,3 +95,40 @@ class OrderStatusHistory(models.Model):
 	from_status = models.CharField(max_length=16)
 	to_status = models.CharField(max_length=16)
 	created_at = models.DateTimeField(auto_now_add=True)
+
+
+def default_success_codes() -> list[int]:
+	return [200, 201, 202, 204]
+
+
+class OrderAction(models.Model):
+	project = models.ForeignKey("accounts.Project", on_delete=models.CASCADE, related_name="order_actions")
+	name = models.CharField(max_length=255)
+	method = models.CharField(max_length=4, choices=[("GET", "GET"), ("POST", "POST")])
+	url = models.TextField()
+	headers = models.JSONField(default=list, blank=True)  # [{"name", "value"}], values write-only
+	body_template = models.TextField(blank=True, default="")
+	response_mapping = models.JSONField(default=dict, blank=True)  # {"tracking_number": "data.tracking"}
+	success_status = models.CharField(max_length=16, blank=True, default="")
+	success_codes = models.JSONField(default=default_success_codes, blank=True)
+	auto_run = models.BooleanField(default=False)
+	is_active = models.BooleanField(default=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		constraints = [models.UniqueConstraint(fields=["project", "name"], name="order_action_name_per_project")]
+
+
+class OrderActionRun(models.Model):
+	action = models.ForeignKey(OrderAction, on_delete=models.CASCADE, related_name="runs")
+	order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="action_runs")
+	status = models.CharField(max_length=16, default="queued")  # queued / running / succeeded / failed
+	attempt = models.PositiveSmallIntegerField(default=1)
+	http_status = models.PositiveSmallIntegerField(null=True, blank=True)
+	error = models.TextField(blank=True, default="")
+	response_excerpt = models.TextField(blank=True, default="")  # max 500 characters, secrets redacted
+	actor_type = models.CharField(max_length=16)
+	actor_id = models.CharField(max_length=64, blank=True, default="")
+	created_at = models.DateTimeField(auto_now_add=True)
+	finished_at = models.DateTimeField(null=True, blank=True)

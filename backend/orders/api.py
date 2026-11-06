@@ -1,8 +1,9 @@
+import uuid
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import validate_email
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.utils.dateparse import parse_date
@@ -14,7 +15,10 @@ from rest_framework.views import APIView
 from knowledge.models import CustomInstruction, KnowledgeBase, Product
 
 from .access import project_for
-from .models import Order, OrderSettings
+from .action_config import ActionError, clean_live_lookup, header_summary, validate_action
+from .actions import already_sent_orders, execute_run, run_action_for_orders, SENDABLE
+from .tasks import run_action_run
+from .models import Order, OrderAction, OrderActionRun, OrderSettings
 from .service import (
 	OrderStatusError, OrderValidationError, apply_lines, get_or_create_draft, set_status, submit_order, update_customer,
 	validate_for_submit,
@@ -22,7 +26,7 @@ from .service import (
 from .totals import collect_amount
 from .prompt import build_order_prompt
 from .requirements import check
-from channels_app.models import Conversation
+from channels_app.models import Conversation, ProjectWebhook
 
 from .export import write_orders_csv
 from .from_chat import prefill_from_conversation
@@ -159,6 +163,7 @@ def _settings_dict(settings, project) -> dict:
 		"form_fields": settings.form_fields,
 		"notification_emails": settings.notification_emails,
 		"draft_expiry_hours": settings.draft_expiry_hours,
+		"live_lookup": {**settings.live_lookup, "headers": header_summary(settings.live_lookup.get("headers", []))},
 		"enabled": settings.enabled,
 		"test_mode": settings.test_mode,
 		"currency": project.currency,
@@ -186,6 +191,11 @@ class SettingsView(APIView):
 			updates = {key: clean(request.data[key]) for key, clean in CLEANERS.items() if key in request.data}
 		except _Bad as e:
 			return _err(e.code, e.message, 400)
+		if "live_lookup" in request.data:
+			try:
+				updates["live_lookup"] = clean_live_lookup(request.data["live_lookup"], settings.live_lookup)
+			except ActionError as e:
+				return _err(e.code, e.message, 400)
 		for key, value in updates.items():
 			setattr(settings, key, value)
 		settings.save()
@@ -598,3 +608,242 @@ class FromChatView(APIView):
 		if error:
 			return error
 		return _ok(prefill_from_conversation(conv))
+
+
+def _action_dict(action) -> dict:
+	return {
+		"id": action.id, "name": action.name, "method": action.method, "url": action.url,
+		"headers": header_summary(action.headers), "body_template": action.body_template,
+		"response_mapping": action.response_mapping, "success_status": action.success_status,
+		"success_codes": action.success_codes, "auto_run": action.auto_run, "is_active": action.is_active,
+	}
+
+
+def _action_input(action) -> dict:
+	"""The stored action as request data. Headers carry no values, so a blank value keeps each secret."""
+	return {
+		"name": action.name, "method": action.method, "url": action.url, "body_template": action.body_template,
+		"response_mapping": action.response_mapping, "success_status": action.success_status,
+		"success_codes": action.success_codes, "auto_run": action.auto_run, "is_active": action.is_active,
+		"headers": [{"name": h["name"], "value": ""} for h in action.headers],
+	}
+
+
+def _action_or_error(request, action_id: int, admin: bool = False):
+	action = OrderAction.objects.filter(pk=action_id).first()
+	if action is None:
+		return None, _err("not_found", "Action not found", 404)
+	_, err = _scoped(request, admin, action.project_id)
+	return (action, None) if err is None else (None, err)
+
+
+class ActionListView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project, err = _scoped(request, admin=False)
+		if err:
+			return err
+		return _ok([_action_dict(a) for a in OrderAction.objects.filter(project=project).order_by("name")])
+
+	def post(self, request):
+		project, err = _scoped(request, admin=True)
+		if err:
+			return err
+		try:
+			fields = validate_action(request.data, [])
+			with transaction.atomic():
+				action = OrderAction.objects.create(project=project, **fields)
+		except ActionError as e:
+			return _err(e.code, e.message, 400)
+		except IntegrityError:
+			return _err("name_taken", "An action with this name already exists", 409)
+		return _ok(_action_dict(action), 201)
+
+
+class ActionDetailView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request, action_id):
+		action, err = _action_or_error(request, action_id)
+		return err or _ok(_action_dict(action))
+
+	def patch(self, request, action_id):
+		action, err = _action_or_error(request, action_id, admin=True)
+		if err:
+			return err
+		try:
+			fields = validate_action({**_action_input(action), **request.data}, action.headers)
+			with transaction.atomic():
+				for key, value in fields.items():
+					setattr(action, key, value)
+				action.save()
+		except ActionError as e:
+			return _err(e.code, e.message, 400)
+		except IntegrityError:
+			return _err("name_taken", "An action with this name already exists", 409)
+		return _ok(_action_dict(action))
+
+	def delete(self, request, action_id):
+		action, err = _action_or_error(request, action_id, admin=True)
+		if err:
+			return err
+		action.delete()
+		return _ok({"deleted": True})
+
+
+def _run_dict(run) -> dict:
+	return {
+		"id": run.id, "action_id": run.action_id, "action_name": run.action.name, "order_id": str(run.order_id),
+		"status": run.status, "attempt": run.attempt, "http_status": run.http_status, "error": run.error,
+		"response_excerpt": run.response_excerpt, "created_at": run.created_at.isoformat(),
+		"finished_at": run.finished_at.isoformat() if run.finished_at else None,
+	}
+
+
+def _uuids(values) -> list | None:
+	try:
+		return [uuid.UUID(str(v)) for v in values]
+	except (ValueError, TypeError):
+		return None
+
+
+def _sent_conflict(numbers: list):
+	return Response({"success": False, "error": {
+		"code": "already_sent", "message": "Some orders were already sent by this action",
+		"details": [str(n) for n in numbers],
+	}}, status=409)
+
+
+class ActionRunView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, action_id):
+		action, err = _action_or_error(request, action_id)
+		if err:
+			return err
+		raw = request.data.get("order_ids")
+		ids = _uuids(raw) if isinstance(raw, list) and raw else None
+		if not ids:
+			return _err("invalid_ids", "order_ids must be a non-empty list", 400)
+		force = bool(request.data.get("force"))
+		orders = list(Order.objects.filter(project=action.project, id__in=ids, status__in=SENDABLE))
+		with transaction.atomic():
+			OrderAction.objects.select_for_update().get(pk=action.pk)  # one bulk run at a time per action
+			sent = already_sent_orders(action, orders)
+			if sent and not force:
+				return _sent_conflict([o.number for o in sent])
+			result = run_action_for_orders(action, orders, ("user", str(request.user.id)), force=force)
+		return _ok(result)
+
+
+class ActionProgressView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request, action_id):
+		action, err = _action_or_error(request, action_id)
+		if err:
+			return err
+		runs = OrderActionRun.objects.filter(action=action)
+		if request.query_params.get("order_ids"):
+			ids = _uuids(request.query_params["order_ids"].split(","))
+			if ids is None:
+				return _err("invalid_ids", "order_ids must be UUIDs", 400)
+			runs = runs.filter(order_id__in=ids)
+		latest = {}  # newest run per order decides its status
+		for order_id, status in runs.order_by("order_id", "-id").values_list("order_id", "status"):
+			latest.setdefault(order_id, status)
+		counts = {"queued": 0, "running": 0, "succeeded": 0, "failed": 0}
+		for status in latest.values():
+			counts[status] = counts.get(status, 0) + 1
+		return _ok({"counts": counts, "total": len(latest)})
+
+
+class ActionRunListView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		order, err = _order_or_error(request, request.query_params.get("order_id"))
+		if err:
+			return err
+		runs = OrderActionRun.objects.filter(order=order).select_related("action").order_by("-created_at", "-id")
+		return _ok([_run_dict(r) for r in runs])
+
+
+class ActionRunRetryView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, run_id):
+		run = OrderActionRun.objects.select_related("action", "order").filter(pk=run_id).first()
+		if run is None:
+			return _err("not_found", "Run not found", 404)
+		_, err = _scoped(request, admin=False, project_id=run.action.project_id)
+		if err:
+			return err
+		if run.status != "failed":
+			return _err("not_retryable", "Only a failed run can be retried", 409)
+		with transaction.atomic():
+			OrderAction.objects.select_for_update().get(pk=run.action_id)
+			if already_sent_orders(run.action, [run.order]):  # a later attempt may already have succeeded
+				return _sent_conflict([run.order.number])
+			new = OrderActionRun.objects.create(
+				action=run.action, order=run.order, status="queued", attempt=run.attempt + 1,
+				actor_type="user", actor_id=str(request.user.id),
+			)
+			transaction.on_commit(lambda: run_action_run.delay(new.id))
+		return _ok(_run_dict(new), 201)
+
+
+class ActionTestView(APIView):
+	"""Runs one order's request now, in this request, and records it like any other run."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, action_id):
+		action, err = _action_or_error(request, action_id)
+		if err:
+			return err
+		try:
+			number = int(request.data.get("order_number"))
+		except (TypeError, ValueError):
+			return _err("invalid_order", "order_number must be a number", 400)
+		order = Order.objects.filter(project=action.project, number=number, status__in=SENDABLE).first()
+		if order is None:
+			return _err("not_found", "No sendable order with that number", 404)
+		if already_sent_orders(action, [order]) and not request.data.get("force"):
+			return _sent_conflict([number])
+		run = OrderActionRun.objects.create(
+			action=action, order=order, status="queued", actor_type="user", actor_id=str(request.user.id),
+		)
+		execute_run(run.id)
+		run.refresh_from_db()
+		return _ok({"ok": run.status == "succeeded", "http_status": run.http_status, "error": run.error,
+		            "response_excerpt": run.response_excerpt})
+
+
+class NotificationsView(APIView):
+	"""Order email recipients, and a summary of the project's POST integration. The webhook itself is managed
+	under /api/channels/webhook. Its URL receives every project event (conversation.handoff, message.staff_reply and
+	the order events), so receivers filter on the event field."""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project, error = _scoped(request, admin=False)
+		if error:
+			return error
+		settings, _ = OrderSettings.objects.get_or_create(project=project)
+		hook = ProjectWebhook.objects.filter(project=project).first()
+		webhook = {"url": hook.url, "is_active": hook.is_active, "has_secret": bool(hook.secret)} if hook else {
+			"url": "", "is_active": False, "has_secret": False,
+		}
+		return _ok({"emails": settings.notification_emails, "webhook": webhook})
+
+	def patch(self, request):
+		project, error = _scoped(request, admin=True)
+		if error:
+			return error
+		try:
+			emails = _emails(request.data.get("emails"))
+		except _Bad as e:
+			return _err(e.code, e.message, 400)
+		OrderSettings.objects.update_or_create(project=project, defaults={"notification_emails": emails})
+		return self.get(request)

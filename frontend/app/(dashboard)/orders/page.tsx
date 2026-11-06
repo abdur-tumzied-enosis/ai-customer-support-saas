@@ -182,7 +182,14 @@ export default function OrdersPage() {
 						setSelected(new Set());
 					}}
 				/>
-				<ActionBar count={selected.size} busy={busy} onApply={applyStatus} />
+				<ActionBar
+					count={selected.size}
+					busy={busy}
+					onApply={applyStatus}
+					projectId={String(project.id)}
+					ids={[...selected]}
+					onRan={() => void loadOrders()}
+				/>
 				<OrdersTable orders={orders} selected={selected} onToggle={toggle} onToggleAll={toggleAll} onOpen={setOpenId} />
 				<div className="flex items-center justify-between text-sm">
 					<span>

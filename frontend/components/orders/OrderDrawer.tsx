@@ -10,6 +10,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { currencySymbol } from "@/components/knowledge/catalog/ProductTable";
 import { orderApi, type OrderDetail } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
+import ActionLog from "@/components/orders/actions/ActionLog";
 
 const STATUSES = ["new", "confirmed", "shipped", "delivered", "cancelled"];
 
@@ -183,7 +184,7 @@ export default function OrderDrawer({ orderId, onOpenChange, onChanged }: Props)
 
 						<section className="space-y-1">
 							<h3 className="font-medium">Actions</h3>
-							<p className="text-muted-foreground">No actions have run for this order.</p>
+							<ActionLog orderId={order.id} />
 						</section>
 
 						<div className="flex items-center justify-between">
