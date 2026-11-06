@@ -50,6 +50,11 @@ class OrderToolsTest(TestCase):
 		self.assertEqual(out["order_number"], 1001)
 		self.assertTrue(self.context.order_submitted)
 
+	def test_submit_logs_post_so_retry_never_resubmits(self):
+		self.tools["update_draft"]([{"product_id": str(self.product.id), "quantity": 1}], CUSTOMER)
+		self.tools["submit_order"]()
+		self.assertTrue(any(c.get("method") == "POST" for c in self.context.api_call_log))
+
 	def test_change_only_while_new(self):
 		Order.objects.create(
 			project=self.project, conversation=self.conv, channel="facebook", currency="BDT",

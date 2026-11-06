@@ -107,6 +107,24 @@ class OrdersApiTest(TestCase):
 		self.assertTrue(results[str(mine_b.id)]["ok"])
 		self.assertFalse(results[str(other_order.id)]["ok"])
 
+	def test_staff_cannot_set_draft_status(self):
+		order = self.submitted()
+		self.client.force_authenticate(user=self.admin)
+		r = self.client.patch(f"/api/orders/{order.id}/", {"status": "draft"}, format="json")
+		self.assertEqual(r.status_code, 422, r.content)
+		self.assertEqual(r.json()["error"]["code"], "invalid_status_change")
+
+	def test_draft_cannot_jump_to_new_without_submit(self):
+		draft = get_or_create_draft(self.conversation(), self.settings)  # no number yet: it was never submitted
+		self.client.force_authenticate(user=self.admin)
+		r = self.client.patch(f"/api/orders/{draft.id}/", {"status": "new"}, format="json")
+		self.assertEqual(r.status_code, 422, r.content)
+		self.assertEqual(r.json()["error"]["code"], "invalid_status_change")
+		bulk = self.client.post("/api/orders/bulk-status/", {"ids": [str(draft.id)], "status": "new"}, format="json")
+		self.assertFalse(bulk.json()["data"]["results"][0]["ok"])
+		draft.refresh_from_db()
+		self.assertEqual(draft.status, "draft")
+
 	def test_filter_by_conversation(self):
 		order = self.submitted()
 		self.submitted()

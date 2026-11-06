@@ -100,6 +100,8 @@ def build_order_tools(conversation, settings, context) -> list:
 		except OrderValidationError as e:
 			return json.dumps({"order_number": None, "problems": e.problems}, ensure_ascii=False)
 		context.order_submitted = True
+		# a retry after this point must not re-run the agent and submit again (channels_app/reply.py checks for POSTs)
+		context.api_call_log.append({"method": "POST", "url": f"order:{order.number}"})
 		return json.dumps({"order_number": order.number, "status": order.status})
 
 	def change_order(order_number: int, items: list[dict] | None = None, customer: dict | None = None) -> str:

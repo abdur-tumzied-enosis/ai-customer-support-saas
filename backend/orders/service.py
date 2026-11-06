@@ -216,7 +216,17 @@ def submit_order(order, actor):
 	return locked
 
 
+class OrderStatusError(Exception):
+	def __init__(self, code: str, message: str):
+		super().__init__(message)
+		self.code, self.message = code, message
+
+
 def set_status(order, to_status, actor):
+	if to_status == "draft":  # a draft exists only as the chat's open order; it is never set by hand
+		raise OrderStatusError("invalid_status_change", "An order cannot be set back to draft")
+	if order.number is None and to_status not in ("cancelled", "abandoned"):  # only submit_order numbers an order
+		raise OrderStatusError("invalid_status_change", "Submit the draft before changing its status")
 	actor_type, actor_id = actor
 	with transaction.atomic():
 		from_status = order.status

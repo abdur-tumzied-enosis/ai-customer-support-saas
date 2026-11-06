@@ -9,7 +9,7 @@ from accounts.models import Project, ProjectUser
 from channels_app.models import Conversation, CustomerContact, Message
 from knowledge.models import KnowledgeBase, Product
 from orders.from_chat import Prefill, PrefillCustomer, PrefillItem, prefill_from_conversation
-from orders.models import OrderSettings
+from orders.models import Order, OrderSettings
 from orders.service import get_or_create_draft
 
 User = get_user_model()
@@ -69,14 +69,15 @@ class FromChatTest(TestCase):
 		sources = [c.args[3]["source"] for c in track.call_args_list]
 		self.assertEqual(sources, ["order_from_chat", "order_from_chat"])
 
-	def test_create_from_chat_409_when_draft_exists(self):
-		get_or_create_draft(self.conv, self.settings)
+	def test_create_reuses_existing_draft(self):
+		get_or_create_draft(self.conv, self.settings)  # an earlier, incomplete attempt left this draft
 		r = self.client.post("/api/orders/", {
 			"conversation_id": str(self.conv.id),
 			"items": [{"product_id": str(self.shirt.id), "quantity": 1}], "customer": CUSTOMER,
 		}, format="json")
-		self.assertEqual(r.status_code, 409, r.content)
-		self.assertEqual(r.json()["error"]["code"], "draft_exists")
+		self.assertEqual(r.status_code, 201, r.content)
+		self.assertEqual(r.json()["data"]["order_number"], 1001)
+		self.assertEqual(Order.objects.filter(conversation=self.conv).count(), 1)
 
 	def test_create_submits_complete_order(self):
 		r = self.client.post("/api/orders/", {

@@ -16,7 +16,8 @@ from knowledge.models import CustomInstruction, KnowledgeBase, Product
 from .access import project_for
 from .models import Order, OrderSettings
 from .service import (
-	OrderValidationError, apply_lines, get_or_create_draft, set_status, submit_order, update_customer, validate_for_submit,
+	OrderStatusError, OrderValidationError, apply_lines, get_or_create_draft, set_status, submit_order, update_customer,
+	validate_for_submit,
 )
 from .totals import collect_amount
 from .prompt import build_order_prompt
@@ -480,9 +481,7 @@ class OrdersListView(APIView):
 		conv, error = _conversation_or_error(request, request.data.get("conversation_id"))
 		if error:
 			return error
-		if Order.objects.filter(conversation=conv, status="draft").exists():
-			return _err("draft_exists", "This chat already has a draft order", 409)
-		settings, _ = OrderSettings.objects.get_or_create(project=conv.project)
+		settings, _ = OrderSettings.objects.get_or_create(project=conv.project)  # an existing draft is reused, not refused
 		try:
 			with transaction.atomic():  # a refused line must not leave an empty draft behind
 				order = get_or_create_draft(conv, settings)
@@ -536,6 +535,8 @@ class OrderDetailView(APIView):
 		try:
 			with transaction.atomic():
 				_apply_edit(order, request)
+		except OrderStatusError as e:
+			return _err(e.code, e.message, 422)
 		except _Bad as e:
 			return _err(e.code, e.message, 422)
 		except OrderValidationError as e:
@@ -566,7 +567,11 @@ class BulkStatusView(APIView):
 				results.append({"id": str(order_id), "ok": False, "error": "not_found"})
 				continue
 			if order.status != new_status:
-				set_status(order, new_status, ("user", str(request.user.id)))
+				try:
+					set_status(order, new_status, ("user", str(request.user.id)))
+				except OrderStatusError as e:
+					results.append({"id": str(order.id), "ok": False, "error": e.code})
+					continue
 			results.append({"id": str(order.id), "ok": True})
 		return _ok({"results": results})
 
