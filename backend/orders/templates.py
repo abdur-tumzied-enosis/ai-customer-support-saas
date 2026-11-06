@@ -36,12 +36,15 @@ def build_context(order) -> dict:
 	}
 
 
-def render(template: str, context: dict, mode: str) -> str:
+LIVE_PLACEHOLDERS = {"product.external_id", "product.sku"}  # live price URLs only
+
+
+def render(template: str, context: dict, mode: str, allowed=ALLOWED_PLACEHOLDERS) -> str:
 	"""Fill placeholders. mode "json" JSON-encodes each value (the template supplies no quotes);
 	mode "url" percent-encodes scalars. Plain string replacement is never used for user values."""
 	def substitute(match):
 		name = match.group(1)
-		if name not in ALLOWED_PLACEHOLDERS:
+		if name not in allowed:
 			raise TemplateError("unknown_placeholder", f"Unknown placeholder {name}")
 		if context.get(name) is None:
 			raise TemplateError("missing_value", f"No value for {name}")
@@ -71,3 +74,10 @@ def validate_json_template(template: str) -> None:
 		json.loads(rendered)
 	except ValueError:
 		raise TemplateError("invalid_body_template", "The body template does not produce valid JSON")
+
+
+def dig(data, path: str):
+	"""Value at a dotted path such as data.items.0.code. Raises KeyError, IndexError or TypeError when absent."""
+	for part in path.split("."):
+		data = data[int(part)] if isinstance(data, list) else data[part]
+	return data

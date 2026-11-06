@@ -9,7 +9,7 @@ from .http import OutboundError, safe_request
 from .models import OrderActionRun
 from .service import OrderStatusError, set_status
 from .tasks import run_action_run
-from .templates import TemplateError, build_context, render
+from .templates import TemplateError, build_context, dig, render
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +49,6 @@ def run_action_for_orders(action, orders, actor, force: bool = False) -> dict:
 	return {"queued": queued, "already_sent": already_sent}
 
 
-def _dig(data, path: str):
-	for part in path.split("."):
-		data = data[int(part)] if isinstance(data, list) else data[part]
-	return data
-
-
 def _finish(run, status: str, headers: list[dict], http_status=None, excerpt: str = "", error: str = "") -> None:
 	run.status = status
 	run.http_status = http_status
@@ -70,7 +64,7 @@ def _apply_success(action, order, text: str) -> str:
 	path = action.response_mapping.get("tracking_number")
 	if path:
 		try:
-			value = _dig(json.loads(text), path)
+			value = dig(json.loads(text), path)
 		except (ValueError, KeyError, IndexError, TypeError):
 			value = None
 		if value:

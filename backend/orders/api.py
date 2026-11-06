@@ -15,7 +15,7 @@ from rest_framework.views import APIView
 from knowledge.models import CustomInstruction, KnowledgeBase, Product
 
 from .access import project_for
-from .action_config import ActionError, header_summary, validate_action
+from .action_config import ActionError, clean_live_lookup, header_summary, validate_action
 from .actions import already_sent_orders, execute_run, run_action_for_orders, SENDABLE
 from .tasks import run_action_run
 from .models import Order, OrderAction, OrderActionRun, OrderSettings
@@ -163,6 +163,7 @@ def _settings_dict(settings, project) -> dict:
 		"form_fields": settings.form_fields,
 		"notification_emails": settings.notification_emails,
 		"draft_expiry_hours": settings.draft_expiry_hours,
+		"live_lookup": {**settings.live_lookup, "headers": header_summary(settings.live_lookup.get("headers", []))},
 		"enabled": settings.enabled,
 		"test_mode": settings.test_mode,
 		"currency": project.currency,
@@ -190,6 +191,11 @@ class SettingsView(APIView):
 			updates = {key: clean(request.data[key]) for key, clean in CLEANERS.items() if key in request.data}
 		except _Bad as e:
 			return _err(e.code, e.message, 400)
+		if "live_lookup" in request.data:
+			try:
+				updates["live_lookup"] = clean_live_lookup(request.data["live_lookup"], settings.live_lookup)
+			except ActionError as e:
+				return _err(e.code, e.message, 400)
 		for key, value in updates.items():
 			setattr(settings, key, value)
 		settings.save()

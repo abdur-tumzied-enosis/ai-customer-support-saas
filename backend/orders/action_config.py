@@ -3,7 +3,7 @@ import re
 
 from agents.api_tool import _parse_target
 from .models import Order
-from .templates import TemplateError, validate_json_template
+from .templates import LIVE_PLACEHOLDERS, TemplateError, render, validate_json_template
 
 HEADER_NAME = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 RESERVED_HEADERS = {"host", "content-length", "transfer-encoding", "connection"}
@@ -56,17 +56,7 @@ def validate_action(data: dict, existing: list[dict]) -> dict:
 	if method not in ("GET", "POST"):
 		raise ActionError("invalid_method", "Method must be GET or POST")
 	url = str(data.get("url") or "").strip()
-	try:
-		scheme, host = _parse_target(url)
-	except ValueError:
-		raise ActionError("invalid_url", "URL is not valid")
-	if scheme not in ("http", "https") or not host:
-		raise ActionError("invalid_url", "URL must start with http:// or https://")
-	try:
-		if not ipaddress.ip_address(host.strip("[]")).is_global:  # IP literals only; names are checked when the action runs
-			raise ActionError("internal_url", "URL points to a non-public address")
-	except ValueError:
-		pass
+	_check_url(url)
 	body = data.get("body_template") or ""
 	if method == "GET" and body:
 		raise ActionError("invalid_body_template", "A GET action takes no body")
@@ -93,4 +83,44 @@ def validate_action(data: dict, existing: list[dict]) -> dict:
 		"name": name, "method": method, "url": url, "headers": clean_headers(data.get("headers") or [], existing),
 		"body_template": body, "response_mapping": mapping, "success_status": status, "success_codes": codes,
 		"auto_run": auto_run, "is_active": is_active,
+	}
+
+
+def _check_url(url: str) -> None:
+	"""http(s) only, and an IP literal must be public. Names are checked again when a request is made."""
+	try:
+		scheme, host = _parse_target(url)
+	except ValueError:
+		raise ActionError("invalid_url", "URL is not valid")
+	if scheme not in ("http", "https") or not host:
+		raise ActionError("invalid_url", "URL must start with http:// or https://")
+	try:
+		if not ipaddress.ip_address(host.strip("[]")).is_global:
+			raise ActionError("internal_url", "URL points to a non-public address")
+	except ValueError:
+		pass  # a host name, not an IP literal
+
+
+def clean_live_lookup(value, existing: dict) -> dict:
+	"""Live price settings. A blank header value keeps the stored secret, as for actions."""
+	if not isinstance(value, dict):
+		raise ActionError("invalid_live_lookup", "Live lookup must be an object")
+	enabled = bool(value.get("enabled"))
+	url = str(value.get("url_template") or "").strip()
+	price_path = str(value.get("price_path") or "").strip()
+	available_path = str(value.get("available_path") or "").strip() or None
+	if enabled and not (url and price_path):
+		raise ActionError("invalid_live_lookup", "Live lookup needs a URL template and a price path")
+	if url:
+		try:
+			sample = render(url, {"product.external_id": "x", "product.sku": "x"}, "url", LIVE_PLACEHOLDERS)
+		except TemplateError as e:
+			raise ActionError("invalid_live_lookup", e.message)
+		_check_url(sample)
+	for path in (price_path, available_path):
+		if path and not MAPPING_PATH.match(path):
+			raise ActionError("invalid_live_lookup", f"'{path}' is not a dotted path")
+	return {
+		"enabled": enabled, "url_template": url, "price_path": price_path, "available_path": available_path,
+		"headers": clean_headers(value.get("headers") or [], existing.get("headers") or []),
 	}
