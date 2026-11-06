@@ -15,11 +15,16 @@ from knowledge.models import CustomInstruction, KnowledgeBase, Product
 
 from .access import project_for
 from .models import Order, OrderSettings
-from .service import OrderValidationError, apply_lines, set_status, update_customer
+from .service import (
+	OrderValidationError, apply_lines, get_or_create_draft, set_status, submit_order, update_customer, validate_for_submit,
+)
 from .totals import collect_amount
 from .prompt import build_order_prompt
 from .requirements import check
+from channels_app.models import Conversation
+
 from .export import write_orders_csv
+from .from_chat import prefill_from_conversation
 from .guard import check_instruction
 from .improve import NoSafeSuggestion, improve
 from .instructions import RESOLVE_SCOPES, find_order_instructions
@@ -465,6 +470,32 @@ class OrdersListView(APIView):
 		orders = qs.order_by("-created_at")[(page - 1) * size: page * size]
 		return _ok({"orders": [_order_row(o) for o in orders], "count": qs.count()})
 
+	def post(self, request):
+		"""Create an order from a chat. Submitted when complete; otherwise it stays a draft and lists what is missing."""
+		conv, error = _conversation_or_error(request, request.data.get("conversation_id"))
+		if error:
+			return error
+		if Order.objects.filter(conversation=conv, status="draft").exists():
+			return _err("draft_exists", "This chat already has a draft order", 409)
+		settings, _ = OrderSettings.objects.get_or_create(project=conv.project)
+		try:
+			with transaction.atomic():  # a refused line must not leave an empty draft behind
+				order = get_or_create_draft(conv, settings)
+				apply_lines(order, request.data.get("items") or [], settings)
+				update_customer(order, request.data.get("customer") or {}, settings)
+		except OrderValidationError as e:
+			return Response(
+				{"success": False, "error": {"code": "order_invalid", "message": "The order cannot be saved as sent", "problems": e.problems}},
+				status=422,
+			)
+		except ValidationError as e:
+			return _err("invalid", " ".join(e.messages), 422)
+		problems = validate_for_submit(order, settings)
+		if problems:
+			return _ok({"order_number": None, "status": "draft", "problems": problems}, 201)
+		order = submit_order(order, ("user", str(request.user.id)))
+		return _ok({"order_number": order.number, "status": order.status}, 201)
+
 
 class OrdersExportView(APIView):
 	"""CSV of the orders matching the list filters."""
@@ -533,3 +564,27 @@ class BulkStatusView(APIView):
 				set_status(order, new_status, ("user", str(request.user.id)))
 			results.append({"id": str(order.id), "ok": True})
 		return _ok({"results": results})
+
+
+def _conversation_or_error(request, conversation_id):
+	"""(conversation, None) when the caller is a member of its project, else (None, error response)."""
+	try:
+		conv = Conversation.objects.select_related("project", "knowledge_base", "contact").get(pk=conversation_id)
+	except (Conversation.DoesNotExist, ValueError, ValidationError):
+		return None, _err("not_found", "Conversation not found", 404)
+	try:
+		project_for(request, str(conv.project_id))
+	except Http404:
+		return None, _err("not_found", "Conversation not found", 404)
+	return conv, None
+
+
+class FromChatView(APIView):
+	"""Suggested order lines and customer details from a chat. Nothing is saved."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		conv, error = _conversation_or_error(request, request.data.get("conversation_id"))
+		if error:
+			return error
+		return _ok(prefill_from_conversation(conv))
