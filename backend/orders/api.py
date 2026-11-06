@@ -2,7 +2,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import validate_email
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.utils.dateparse import parse_date
@@ -14,7 +14,8 @@ from rest_framework.views import APIView
 from knowledge.models import CustomInstruction, KnowledgeBase, Product
 
 from .access import project_for
-from .models import Order, OrderSettings
+from .action_config import ActionError, header_summary, validate_action
+from .models import Order, OrderAction, OrderSettings
 from .service import (
 	OrderStatusError, OrderValidationError, apply_lines, get_or_create_draft, set_status, submit_order, update_customer,
 	validate_for_submit,
@@ -598,3 +599,85 @@ class FromChatView(APIView):
 		if error:
 			return error
 		return _ok(prefill_from_conversation(conv))
+
+
+def _action_dict(action) -> dict:
+	return {
+		"id": action.id, "name": action.name, "method": action.method, "url": action.url,
+		"headers": header_summary(action.headers), "body_template": action.body_template,
+		"response_mapping": action.response_mapping, "success_status": action.success_status,
+		"success_codes": action.success_codes, "auto_run": action.auto_run, "is_active": action.is_active,
+	}
+
+
+def _action_input(action) -> dict:
+	"""The stored action as request data. Headers carry no values, so a blank value keeps each secret."""
+	return {
+		"name": action.name, "method": action.method, "url": action.url, "body_template": action.body_template,
+		"response_mapping": action.response_mapping, "success_status": action.success_status,
+		"success_codes": action.success_codes, "auto_run": action.auto_run, "is_active": action.is_active,
+		"headers": [{"name": h["name"], "value": ""} for h in action.headers],
+	}
+
+
+def _action_or_error(request, action_id: int, admin: bool = False):
+	action = OrderAction.objects.filter(pk=action_id).first()
+	if action is None:
+		return None, _err("not_found", "Action not found", 404)
+	_, err = _scoped(request, admin, action.project_id)
+	return (action, None) if err is None else (None, err)
+
+
+class ActionListView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project, err = _scoped(request, admin=False)
+		if err:
+			return err
+		return _ok([_action_dict(a) for a in OrderAction.objects.filter(project=project).order_by("name")])
+
+	def post(self, request):
+		project, err = _scoped(request, admin=True)
+		if err:
+			return err
+		try:
+			fields = validate_action(request.data, [])
+			with transaction.atomic():
+				action = OrderAction.objects.create(project=project, **fields)
+		except ActionError as e:
+			return _err(e.code, e.message, 400)
+		except IntegrityError:
+			return _err("name_taken", "An action with this name already exists", 409)
+		return _ok(_action_dict(action), 201)
+
+
+class ActionDetailView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request, action_id):
+		action, err = _action_or_error(request, action_id)
+		return err or _ok(_action_dict(action))
+
+	def patch(self, request, action_id):
+		action, err = _action_or_error(request, action_id, admin=True)
+		if err:
+			return err
+		try:
+			fields = validate_action({**_action_input(action), **request.data}, action.headers)
+			with transaction.atomic():
+				for key, value in fields.items():
+					setattr(action, key, value)
+				action.save()
+		except ActionError as e:
+			return _err(e.code, e.message, 400)
+		except IntegrityError:
+			return _err("name_taken", "An action with this name already exists", 409)
+		return _ok(_action_dict(action))
+
+	def delete(self, request, action_id):
+		action, err = _action_or_error(request, action_id, admin=True)
+		if err:
+			return err
+		action.delete()
+		return _ok({"deleted": True})
