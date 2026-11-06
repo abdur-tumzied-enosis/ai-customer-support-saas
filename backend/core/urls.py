@@ -12,6 +12,7 @@ urlpatterns = [
 	path("api/projects/", include(project_urlpatterns)),
 	path("webhooks/meta/", include("channels_app.urls_facebook")),
 	path("api/kb/", include("knowledge.urls")),
+	path("api/orders/", include("orders.urls")),
 	path("api/channels/", include("channels_app.urls_api")),
 	path("api/analytics/", include("analytics.urls")),
 	path("", include("channels_app.urls_widget")),  # public widget endpoints
