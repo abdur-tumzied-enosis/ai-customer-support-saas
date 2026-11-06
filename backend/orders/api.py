@@ -7,11 +7,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from knowledge.models import CustomInstruction
+from knowledge.models import CustomInstruction, Product
 
 from .access import project_for
 from .models import OrderSettings
 from .prompt import build_order_prompt
+from .requirements import check
 
 CHANNELS = {"facebook", "instagram", "whatsapp", "widget"}
 
@@ -172,3 +173,60 @@ class SettingsView(APIView):
 			setattr(settings, key, value)
 		settings.save()
 		return _ok(_settings_dict(settings, project))
+
+
+class RequirementsView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project, error = _scoped(request, admin=False)
+		if error:
+			return error
+		return _ok(check(project))
+
+
+class EnableView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		project, error = _scoped(request, admin=True)
+		if error:
+			return error
+		if any(item["status"] == "fail" for item in check(project)):
+			return _err("requirements_unmet", "Finish the required setup before going live", 409)
+		if not Product.objects.filter(kb__project=project, status="active").exists():
+			return _err("no_active_product", "Add at least one product with a price before going live", 409)
+		settings, _ = OrderSettings.objects.get_or_create(project=project)
+		settings.enabled = True
+		settings.save(update_fields=["enabled", "updated_at"])
+		return _ok({"enabled": True})
+
+
+class DisableView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		project, error = _scoped(request, admin=True)
+		if error:
+			return error
+		settings, _ = OrderSettings.objects.get_or_create(project=project)
+		settings.enabled = False
+		settings.test_mode = False  # turning ordering off ends test mode too
+		settings.save(update_fields=["enabled", "test_mode", "updated_at"])
+		return _ok({"enabled": False, "test_mode": False})
+
+
+class TestModeView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		project, error = _scoped(request, admin=True)
+		if error:
+			return error
+		flag = request.data.get("on")
+		if not isinstance(flag, bool):
+			return _err("invalid_flag", "on must be true or false", 400)
+		settings, _ = OrderSettings.objects.get_or_create(project=project)
+		settings.test_mode = flag
+		settings.save(update_fields=["test_mode", "updated_at"])
+		return _ok({"test_mode": flag})
