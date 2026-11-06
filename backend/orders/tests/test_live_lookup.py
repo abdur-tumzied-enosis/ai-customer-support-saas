@@ -125,3 +125,20 @@ class LiveLookupTest(TestCase):
 		self.assertEqual(r.status_code, 200, r.content)
 		self.settings.refresh_from_db()
 		self.assertEqual(self.settings.live_lookup["headers"], [{"name": "X-Key", "value": SECRET}])
+
+	def test_failed_lookup_not_retried_within_a_minute(self):
+		with patch("orders.live.safe_request", side_effect=OutboundError("timed out")) as request:
+			quotes_for([self.product])
+			quotes_for([self.product])
+			self.assertEqual(request.call_count, 1)
+			quotes_for([self.product], fresh=True)  # submit always asks the client
+			self.assertEqual(request.call_count, 2)
+
+	def test_lookup_budget_leaves_later_products_on_catalog(self):
+		other = Product.objects.create(kb=self.kb, name="Cap", external_id="S2", price=Decimal("40"), status="active")
+		seq = iter([0, 0, 9, 9])  # start, first product (inside budget), second product (budget spent)
+		with patch("orders.pricing.monotonic", side_effect=lambda: next(seq)), \
+				patch("orders.live.safe_request", return_value=self.live_response()) as request:
+			quotes = quotes_for([self.product, other])
+		self.assertEqual(request.call_count, 1)
+		self.assertEqual(quotes[str(other.id)].price, Decimal("40"))

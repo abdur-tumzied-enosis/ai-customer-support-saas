@@ -3,7 +3,7 @@ import re
 
 from agents.api_tool import _parse_target
 from .models import Order
-from .templates import LIVE_PLACEHOLDERS, TemplateError, render, validate_json_template
+from .templates import LIVE_PLACEHOLDERS, SAMPLE_CONTEXT, TemplateError, render, validate_json_template
 
 HEADER_NAME = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 RESERVED_HEADERS = {"host", "content-length", "transfer-encoding", "connection"}
@@ -56,7 +56,10 @@ def validate_action(data: dict, existing: list[dict]) -> dict:
 	if method not in ("GET", "POST"):
 		raise ActionError("invalid_method", "Method must be GET or POST")
 	url = str(data.get("url") or "").strip()
-	_check_url(url)
+	try:
+		_check_url(render(url, SAMPLE_CONTEXT, "url"))  # placeholders must resolve: unknown names and order.items fail here
+	except TemplateError as e:
+		raise ActionError(e.code, e.message)
 	body = data.get("body_template") or ""
 	if method == "GET" and body:
 		raise ActionError("invalid_body_template", "A GET action takes no body")
