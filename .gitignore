@@ -16,3 +16,5 @@ nginx/prod.conf
 docker-compose.prod.yml
 note
 
+app_logo/
+ideas/

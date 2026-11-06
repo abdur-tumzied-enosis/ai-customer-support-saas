@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { useRequireAuth } from "@/hooks/useAuth";
 import Sidebar from "@/components/layout/Sidebar";
 import MobileSidebar from "@/components/layout/MobileSidebar";
@@ -23,7 +22,6 @@ import { LogOut, Settings, Menu } from "lucide-react";
 import { authApi } from "@/lib/api";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-	const router = useRouter();
 	const { user, loading } = useRequireAuth();
 	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -31,10 +29,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 		try {
 			await authApi.logout();
 		} catch (err) {
-			// Even if logout fails, redirect to sign-in
+			// Even if logout fails, redirect home
 			console.error("Logout error:", err);
 		} finally {
-			router.push("/sign-in");
+			// Full reload resets AuthContext; client-side push kept stale `authenticated` and bounced to /dashboard
+			window.location.href = "/";
 		}
 	}
 
