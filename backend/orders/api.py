@@ -26,7 +26,7 @@ from .service import (
 from .totals import collect_amount
 from .prompt import build_order_prompt
 from .requirements import check
-from channels_app.models import Conversation
+from channels_app.models import Conversation, ProjectWebhook
 
 from .export import write_orders_csv
 from .from_chat import prefill_from_conversation
@@ -812,3 +812,32 @@ class ActionTestView(APIView):
 		run.refresh_from_db()
 		return _ok({"ok": run.status == "succeeded", "http_status": run.http_status, "error": run.error,
 		            "response_excerpt": run.response_excerpt})
+
+
+class NotificationsView(APIView):
+	"""Order email recipients, and a summary of the project's POST integration. The webhook itself is managed
+	under /api/channels/webhook. Its URL receives every project event (conversation.handoff, message.staff_reply and
+	the order events), so receivers filter on the event field."""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request):
+		project, error = _scoped(request, admin=False)
+		if error:
+			return error
+		settings, _ = OrderSettings.objects.get_or_create(project=project)
+		hook = ProjectWebhook.objects.filter(project=project).first()
+		webhook = {"url": hook.url, "is_active": hook.is_active, "has_secret": bool(hook.secret)} if hook else {
+			"url": "", "is_active": False, "has_secret": False,
+		}
+		return _ok({"emails": settings.notification_emails, "webhook": webhook})
+
+	def patch(self, request):
+		project, error = _scoped(request, admin=True)
+		if error:
+			return error
+		try:
+			emails = _emails(request.data.get("emails"))
+		except _Bad as e:
+			return _err(e.code, e.message, 400)
+		OrderSettings.objects.update_or_create(project=project, defaults={"notification_emails": emails})
+		return self.get(request)
