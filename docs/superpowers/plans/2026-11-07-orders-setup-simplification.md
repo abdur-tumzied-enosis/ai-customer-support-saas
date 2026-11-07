@@ -71,7 +71,7 @@ Reviewed against the frontend-design guidance. This is an admin tool inside an e
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| 1 | Backend: settings confirmed flag | [ ] |
+| 1 | Backend: settings confirmed flag | [x] |
 | 2 | Routes and sidebar | [ ] |
 | 3 | Orders page entry panel | [ ] |
 | 4 | Setup flow | [ ] |
@@ -79,20 +79,20 @@ Reviewed against the frontend-design guidance. This is an admin tool inside an e
 
 ## Phase 1: Backend (settings confirmed flag)
 
-- [ ] Add `settings_confirmed_at = DateTimeField(null=True, blank=True)` to `OrderSettings` (`backend/orders/models.py`) and a migration.
-- [ ] Set it in the settings PATCH handler (`SettingsView` in `backend/orders/api.py`) when a user saves zones, payment methods, channels or emails. Do not set it from the setup job.
-- [ ] Return it from settings GET. Add `settings_confirmed_at: string | null` to `OrderSettings` in `frontend/lib/orders-api.ts`.
-- [ ] Tests in `backend/orders/tests/`: PATCH sets it; the setup job does not; GET returns it.
-- [ ] Check that disabling orders does not clear it (turning orders back on must not restart setup).
-- [ ] Add `setup_steps = JSONField(default=list)` to `OrderSettings` (same migration). Each item: `key`, `label`, `status`, `detail`, `error_code`, `error`, `started_at`, `finished_at`, `heartbeat_at`.
-- [ ] Rewrite `backend/orders/setup.py`: replace the Celery `chain` with one `run_step(project_id, kb_id, key)` task per step. Each task marks its step running, does the work, marks it done (with `detail`, for example "Found 12 products"), then queues the next step. Any exception marks the step failed and stops the run, with a user-safe message and `error_code`; the exception goes to the log.
-- [ ] Step 1 (check content): `needs_input` with code `no_content` when the KB has no documents with text.
-- [ ] Step 2 (products): before extracting, delete the KB's candidates that are still `pending` (the extractor has no duplicate check, so a retry would double them). Update `heartbeat_at` after each page. A run where every page fails already raises; keep that as `failed`.
-- [ ] Step 3 (delivery and payment): keep the one call. Save only `zones`, `payment_methods`, `setup_report` with `update_fields`, and only fields that are still empty.
-- [ ] `run_setup(project_id, kb_id, mode)`: `mode` is `resume` (default; start at the first step not done) or `restart` (reset all steps). Guard against two runners: refuse with 409 when a step is running with a fresh heartbeat (compare-and-set update).
-- [ ] Status endpoint (`SetupStatusView`) returns `status` (`not_started`, `running`, `ready`, `failed`, `needs_input`), `steps`, `report`. A running step whose heartbeat is older than 5 minutes is returned as failed with code `interrupted`.
-- [ ] `SetupRunView` accepts `mode`. Keep `setup_status` in sync or derive it from `setup_steps`; no other code should read two sources.
-- [ ] Tests: steps advance in order; a failure stops the run and records the code; resume skips done steps; restart resets them; retry does not duplicate candidates; a stale heartbeat reads as interrupted; a second run is refused while one is fresh; imported products and saved zones are untouched by restart.
+- [x] Add `settings_confirmed_at = DateTimeField(null=True, blank=True)` to `OrderSettings` (`backend/orders/models.py`) and a migration.
+- [x] Set it in the settings PATCH handler (`SettingsView` in `backend/orders/api.py`) when a user saves zones, payment methods, channels or emails. Do not set it from the setup job.
+- [x] Return it from settings GET. Add `settings_confirmed_at: string | null` to `OrderSettings` in `frontend/lib/orders-api.ts`.
+- [x] Tests in `backend/orders/tests/`: PATCH sets it; the setup job does not; GET returns it.
+- [x] Check that disabling orders does not clear it (turning orders back on must not restart setup).
+- [x] Add `setup_steps = JSONField(default=list)` to `OrderSettings` (same migration). Each item: `key`, `label`, `status`, `detail`, `error_code`, `error`, `started_at`, `finished_at`, `heartbeat_at`.
+- [x] Rewrite `backend/orders/setup.py`: replace the Celery `chain` with one `run_step(project_id, kb_id, key)` task per step. Each task marks its step running, does the work, marks it done (with `detail`, for example "Found 12 products"), then queues the next step. Any exception marks the step failed and stops the run, with a user-safe message and `error_code`; the exception goes to the log.
+- [x] Step 1 (check content): `needs_input` with code `no_content` when the KB has no documents with text.
+- [x] Step 2 (products): before extracting, delete the KB's candidates that are still `pending` (the extractor has no duplicate check, so a retry would double them). Update `heartbeat_at` after each page. A run where every page fails already raises; keep that as `failed`.
+- [x] Step 3 (delivery and payment): keep the one call. Save only `zones`, `payment_methods`, `setup_report` with `update_fields`, and only fields that are still empty.
+- [x] `run_setup(project_id, kb_id, mode)`: `mode` is `resume` (default; start at the first step not done) or `restart` (reset all steps). Guard against two runners: refuse with 409 when a step is running with a fresh heartbeat (compare-and-set update).
+- [x] Status endpoint (`SetupStatusView`) returns `status` (`not_started`, `running`, `ready`, `failed`, `needs_input`), `steps`, `report`. A running step whose heartbeat is older than 5 minutes is returned as failed with code `interrupted`.
+- [x] `SetupRunView` accepts `mode`. Keep `setup_status` in sync or derive it from `setup_steps`; no other code should read two sources.
+- [x] Tests: steps advance in order; a failure stops the run and records the code; resume skips done steps; restart resets them; retry does not duplicate candidates; a stale heartbeat reads as interrupted; a second run is refused while one is fresh; imported products and saved zones are untouched by restart.
 
 ## Phase 2: Routes and sidebar
 

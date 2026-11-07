@@ -120,8 +120,8 @@ def _candidate(kb, doc, url: str, item: ExtractedProduct):
 	)
 
 
-def extract_candidates(kb: KnowledgeBase, document_ids: list[str] | None = None) -> int:
-	"""Write review candidates from the KB's pages. Never creates or edits a Product."""
+def extract_candidates(kb: KnowledgeBase, document_ids: list[str] | None = None, on_page=None) -> int:
+	"""Write review candidates from the KB's pages. Never creates or edits a Product. on_page(n) runs after page n is started."""
 	ignored = list(IgnoredProductPage.objects.filter(kb=kb).values_list("url", flat=True))
 	docs = Document.objects.filter(kb=kb).exclude(markdown_content="").order_by("created_at")
 	if document_ids:
@@ -134,6 +134,8 @@ def extract_candidates(kb: KnowledgeBase, document_ids: list[str] | None = None)
 		if url in ignored or not doc.markdown_content.strip():
 			continue
 		attempted += 1
+		if on_page:
+			on_page(attempted)
 		try:
 			images = "\n".join(str(i.get("src")) for i in doc.images_metadata or [] if isinstance(i, dict) and i.get("src"))
 			user = f"URL: {url}\nTitle: {doc.page_title}\n\nImages:\n{images}\n\nContent:\n{doc.markdown_content[:MAX_CHARS_PER_PAGE]}"

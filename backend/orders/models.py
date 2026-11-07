@@ -16,7 +16,8 @@ class OrderSettings(models.Model):
 	notification_emails = models.JSONField(default=list, blank=True)
 	live_lookup = models.JSONField(default=dict, blank=True)  # {"enabled", "url_template", "headers", "price_path", "available_path"}
 	draft_expiry_hours = models.PositiveIntegerField(default=48)
-	setup_status = models.CharField(max_length=16, default="not_started")  # not_started / running / ready
+	setup_status = models.CharField(max_length=16, default="not_started")  # derived from setup_steps; read via setup_state()
+	setup_steps = models.JSONField(default=list, blank=True)  # [{"key", "label", "status", "detail", "error_code", "error", ...}]
 	setup_report = models.JSONField(default=dict, blank=True)
 	settings_confirmed_at = models.DateTimeField(null=True, blank=True)  # set when a user saves settings, never by the setup job
 	updated_at = models.DateTimeField(auto_now=True)

@@ -53,7 +53,7 @@ class SetupJobTest(TestCase):
 		self.assertEqual(sources, ["order_settings_extract", "order_settings_extract"])
 
 	def test_run_sets_running(self):
-		with patch("orders.setup.chain") as chain:
-			run_setup(str(self.project.id), str(self.kb.id))
+		with patch("orders.setup._dispatch") as dispatch:
+			run_setup(str(self.project.id), str(self.kb.id), mode="restart")
 		self.assertEqual(OrderSettings.objects.get(pk=self.settings.pk).setup_status, "running")
-		chain.assert_called_once()
+		dispatch.assert_called_once_with(str(self.project.id), str(self.kb.id), "content")

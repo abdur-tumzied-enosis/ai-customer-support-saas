@@ -33,7 +33,7 @@ from .from_chat import prefill_from_conversation
 from .guard import check_instruction
 from .improve import NoSafeSuggestion, improve
 from .instructions import RESOLVE_SCOPES, find_order_instructions
-from .setup import run_setup
+from .setup import SetupBusy, run_setup, setup_state
 
 CHANNELS = {"facebook", "instagram", "whatsapp", "widget"}
 
@@ -279,7 +279,13 @@ class SetupRunView(APIView):
 			kb_ok = False
 		if not kb_ok:
 			return _err("invalid_kb", "Knowledge base not found in this project", 400)
-		run_setup(str(project.id), str(kb_id))
+		mode = request.data.get("mode", "resume")
+		if mode not in ("resume", "restart"):
+			return _err("invalid_mode", "Mode must be resume or restart", 400)
+		try:
+			run_setup(str(project.id), str(kb_id), mode=mode)
+		except SetupBusy:
+			return _err("setup_running", "Setup is already running", 409)
 		return _ok({"status": "running"}, 202)
 
 
@@ -291,7 +297,7 @@ class SetupStatusView(APIView):
 		if error:
 			return error
 		settings, _ = OrderSettings.objects.get_or_create(project=project)
-		return _ok({"status": settings.setup_status, "report": settings.setup_report})
+		return _ok(setup_state(settings))
 
 
 class InstructionReviewView(APIView):
