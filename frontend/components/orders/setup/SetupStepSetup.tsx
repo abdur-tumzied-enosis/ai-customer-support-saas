@@ -10,7 +10,7 @@ import SetupProgress from "@/components/orders/setup/SetupProgress";
 import SetupStepSettings from "@/components/orders/setup/SetupStepSettings";
 import { useSetupState } from "@/components/orders/setup/useSetupState";
 
-type Props = { projectId: string; kbId: string; onSaved: () => void };
+type Props = { projectId: string; kbId: string; confirmed: boolean; onSaved: () => void };
 
 function summary(found: Record<string, number> | undefined): string {
 	const zones = found?.zones ?? 0;
@@ -19,7 +19,7 @@ function summary(found: Record<string, number> | undefined): string {
 }
 
 // Step 1. The setup job runs first; its form appears only once the job is ready, unless the user fills it in by hand.
-export default function SetupStepSetup({ projectId, kbId, onSaved }: Props) {
+export default function SetupStepSetup({ projectId, kbId, confirmed, onSaved }: Props) {
 	const { state, error, run } = useSetupState(projectId, kbId);
 	const [manual, setManual] = useState(false);
 
@@ -34,7 +34,8 @@ export default function SetupStepSetup({ projectId, kbId, onSaved }: Props) {
 	}
 
 	const ready = state.status === "ready";
-	const showForm = ready || manual;
+	// Once settings are saved, Settings opens on the form (Back from Products), whatever the job is doing.
+	const showForm = ready || manual || confirmed;
 
 	function retry(mode: "resume" | "restart") {
 		setManual(false);

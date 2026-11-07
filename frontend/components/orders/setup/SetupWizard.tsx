@@ -52,6 +52,7 @@ export default function SetupWizard({ projectId }: Props) {
 			<SetupStepSetup
 				projectId={projectId}
 				kbId={kbId}
+				confirmed={confirmed}
 				onSaved={() => {
 					// Clears a ?step=1 left by Back; the saved settings now decide that Products is next.
 					setConfirmed(true);

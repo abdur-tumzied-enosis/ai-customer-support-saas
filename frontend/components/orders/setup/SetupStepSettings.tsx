@@ -10,6 +10,7 @@ import { orderApi, type OrderSettings, type OrderZone, type PaymentMethod } from
 import { formatError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { useSetupDirty } from "@/components/orders/setup/SetupDirty";
+import { ORDERS_CHANGED } from "@/components/orders/OrdersShell";
 
 const CHANNELS = [
 	{ value: "facebook", label: "Facebook Messenger" },
@@ -82,6 +83,7 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 				notification_emails: draft!.notification_emails,
 			});
 			setSaved(JSON.stringify(draft));
+			window.dispatchEvent(new Event(ORDERS_CHANGED));
 			onSaved();
 		} catch (e) {
 			setError(formatError(e));

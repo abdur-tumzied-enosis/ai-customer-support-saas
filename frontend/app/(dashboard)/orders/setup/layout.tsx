@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { orderApi } from "@/lib/orders-api";
 import { setupStep } from "@/lib/orders-setup";
 import { SetupDirtyContext } from "@/components/orders/setup/SetupDirty";
+import { ORDERS_CHANGED } from "@/components/orders/OrdersShell";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +22,12 @@ function SetupHeader({ dirty }: { dirty: boolean }) {
 
 	useEffect(() => {
 		if (!project) return;
-		orderApi.settings(String(project.id)).then((res) => setConfirmed(res.data.settings_confirmed_at !== null)).catch(() => setConfirmed(false));
+		const load = () =>
+			orderApi.settings(String(project.id)).then((res) => setConfirmed(res.data.settings_confirmed_at !== null)).catch(() => setConfirmed(false));
+		load();
+		// Saving settings in step 1 changes the step without changing the URL, so reload when it says so.
+		window.addEventListener(ORDERS_CHANGED, load);
+		return () => window.removeEventListener(ORDERS_CHANGED, load);
 	}, [project, requested]);
 
 	const current = setupStep(confirmed ?? false, requested);
