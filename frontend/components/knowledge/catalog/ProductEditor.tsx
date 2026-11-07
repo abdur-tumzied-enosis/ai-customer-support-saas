@@ -20,6 +20,14 @@ const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp";
 const PHOTO_BADGE: Record<string, string> = { uploading: "Uploading", pending: "Indexing", failed: "Failed" };
 const HALF_SAVED = "Product added, but price and SKU didn't save. Check them and select Save changes.";
 
+// Where a product came from; the editor says so
+const ORIGIN: Record<string, string> = {
+	kb: "a knowledge base page",
+	csv: "a CSV or Excel file",
+	sheet: "a Google Sheet",
+	api: "a REST API",
+};
+
 type Props = {
 	projectId: string;
 	kbId: string;
@@ -144,6 +152,12 @@ export default function ProductEditor({ projectId, kbId, product, currency, imag
 
 	return (
 		<div className="space-y-4 rounded-lg border p-4">
+			{product && product.source in ORIGIN && (
+				<p className="text-xs text-muted-foreground">
+					From {ORIGIN[product.source]}
+					{product.source === "sheet" || product.source === "api" ? ". Its details refresh on each sync unless you edit them here." : "."}
+				</p>
+			)}
 			{!sku.trim() && !externalId.trim() && (
 				<Alert><AlertDescription>{KEY_WARNING}</AlertDescription></Alert>
 			)}

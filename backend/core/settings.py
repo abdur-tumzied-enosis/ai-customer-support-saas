@@ -150,7 +150,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     'sync-product-sources': {
         'task': 'knowledge.tasks.sync_product_sources',
-        'schedule': 3600,
+        'schedule': 300,  # every 5 minutes: runs the sources that are due (hourly/daily each)
     },
     'propose-instructions': {
         'task': 'channels_app.memory.propose_instructions',

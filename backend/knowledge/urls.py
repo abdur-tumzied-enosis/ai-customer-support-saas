@@ -4,9 +4,9 @@ from .products import (
 	ProductImageDetailView, ProductImageFileView, ProductImagesConfirmView,
 )
 from .catalog_views import (
-	CsvSourceCreateView, CsvSourcePreviewView, CsvSourceUploadView, ProductFieldDetailView, ProductFieldListCreateView, SheetSourceCreateView,
-	SheetSourcePreviewView,
-	product_source_delete, product_source_list, product_source_sync, product_summary,
+	ApiSourceCreateView, ApiSourcePreviewView, CsvSourceCreateView, CsvSourcePreviewView, CsvSourceUploadView,
+	MappingSuggestView, ProductFieldDetailView, ProductFieldListCreateView, SheetSourceCreateView, SheetSourcePreviewView,
+	product_source_delete, product_source_list, product_source_schedule, product_source_sync, product_summary,
 )
 from .candidate_views import candidate_ignore_page, candidate_import, candidate_list, product_extract
 from .suggestions import SuggestionDecisionView, SuggestionListView
@@ -54,6 +54,10 @@ urlpatterns = [
 	path("products/sources/csv/", CsvSourceCreateView.as_view(), name="product-source-csv"),
 	path("products/sources/sheet/preview/", SheetSourcePreviewView.as_view(), name="product-source-sheet-preview"),
 	path("products/sources/sheet/", SheetSourceCreateView.as_view(), name="product-source-sheet"),
+	path("products/sources/api/preview/", ApiSourcePreviewView.as_view(), name="product-source-api-preview"),
+	path("products/sources/api/", ApiSourceCreateView.as_view(), name="product-source-api"),
+	path("products/sources/suggest-mapping/", MappingSuggestView.as_view(), name="product-source-suggest"),
+	path("products/sources/<uuid:source_id>/schedule/", product_source_schedule, name="product-source-schedule"),
 	path("products/sources/<uuid:source_id>/sync/", product_source_sync, name="product-source-sync"),
 	path("products/sources/<uuid:source_id>/upload/", CsvSourceUploadView.as_view(), name="product-source-upload"),
 	path("products/sources/<uuid:source_id>/", product_source_delete, name="product-source-delete"),

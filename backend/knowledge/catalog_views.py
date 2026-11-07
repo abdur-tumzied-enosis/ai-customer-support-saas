@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 
 from django.db import IntegrityError, transaction
@@ -14,11 +15,13 @@ from rest_framework.views import APIView
 from .candidate_views import _kb_for
 from .catalog import compute_status
 from .models import Product, ProductField, ProductSource
+from .product_api import clean_api_config, clean_secret, encrypt_blob, fetch_api_table
+from .product_suggest import MAX_COLUMNS as MAX_SUGGEST_COLUMNS, suggest_mapping
 from .product_sources import (
 	MAX_FILE_BYTES, TARGETS, SheetNotPublic, TableError, apply_rows, check_headers, fetch_sheet_csv, guess_mapping, has_key,
 	parse_table, sheet_export_url,
 )
-from .tasks import sync_product_source
+from .tasks import SYNC_LOCK_TIMEOUT, sync_product_source
 from .products import _bad_body, _catalog_gate, _denied, _not_found
 from .views import _kb_error, _project_user, _resolve_kb
 
@@ -184,9 +187,14 @@ class ProductFieldDetailView(APIView):
 
 
 def _source_dict(s) -> dict:
+	running = s.sync_locked_at is not None and s.sync_locked_at > timezone.now() - SYNC_LOCK_TIMEOUT
 	return {"id": str(s.id), "kind": s.kind, "mapping": s.mapping, "sheet_url": s.sheet_url,
 		"last_synced_at": s.last_synced_at.isoformat() if s.last_synced_at else None, "last_error": s.last_error,
-		"key_warning": not has_key(s.mapping), "created_at": s.created_at.isoformat()}
+		"key_warning": not has_key(s.mapping), "created_at": s.created_at.isoformat(),
+		"api_config": s.api_config, "has_secret": s.kind == "api" and s.api_config.get("auth_type", "none") != "none",  # the key never leaves the server
+		"auto_sync_enabled": s.auto_sync_enabled, "schedule": s.schedule,
+		"next_sync_at": s.next_sync_at.isoformat() if s.next_sync_at else None,
+		"sync_failures": s.sync_failures, "sync_running": running}
 
 
 def _read_upload(request):
@@ -224,6 +232,35 @@ def _clean_mapping(raw, headers):
 	return mapping, None
 
 
+def _preview(request, headers, rows):
+	"""What a preview shows: the columns, the guessed or saved mapping, five sample rows."""
+	mapping, err = _clean_mapping(request.data.get("mapping"), headers)
+	if err:
+		return err
+	return Response({"success": True, "data": {
+		"headers": headers, "mapping": mapping, "sample": rows[:5], "key_warning": not has_key(mapping)}})
+
+
+def _create(request, kb, kind, table, **fields):
+	"""Save a new source and import its rows in one transaction. Sheets and APIs sync on a schedule from the start."""
+	headers, rows = table
+	mapping, err = _clean_mapping(request.data.get("mapping"), headers)
+	if err:
+		return err
+	if not mapping.get("name"):
+		return _bad("name_required", "Choose which column holds the product name")
+	started = timezone.now()
+	scheduled = kind != "csv"
+	with transaction.atomic():
+		source = ProductSource.objects.create(kb=kb, kind=kind, mapping=mapping, auto_sync_enabled=scheduled, **fields)
+		result = apply_rows(kb, source, rows, mapping, started)
+		source.last_synced_at = started
+		source.next_sync_at = started + ProductSource.SCHEDULE_INTERVALS[source.schedule] if scheduled else None
+		source.save(update_fields=["last_synced_at", "next_sync_at"])
+	return Response({"success": True, "data": {"source": _source_dict(source), "result": result}},
+		status=status.HTTP_201_CREATED)
+
+
 class CsvSourcePreviewView(APIView):
 	permission_classes = [IsAuthenticated]
 	parser_classes = [MultiPartParser]
@@ -235,12 +272,7 @@ class CsvSourcePreviewView(APIView):
 		table, err = _read_upload(request)
 		if err:
 			return err
-		headers, rows = table
-		mapping, err = _clean_mapping(request.data.get("mapping"), headers)
-		if err:
-			return err
-		return Response({"success": True, "data": {
-			"headers": headers, "mapping": mapping, "sample": rows[:5], "key_warning": not has_key(mapping)}})
+		return _preview(request, *table)
 
 
 class CsvSourceCreateView(APIView):
@@ -254,20 +286,7 @@ class CsvSourceCreateView(APIView):
 		table, err = _read_upload(request)
 		if err:
 			return err
-		headers, rows = table
-		mapping, err = _clean_mapping(request.data.get("mapping"), headers)
-		if err:
-			return err
-		if not mapping.get("name"):
-			return _bad("name_required", "Choose which column holds the product name")
-		started = timezone.now()
-		with transaction.atomic():
-			source = ProductSource.objects.create(kb=kb, kind="csv", mapping=mapping)
-			result = apply_rows(kb, source, rows, mapping, started)
-			source.last_synced_at = started
-			source.save(update_fields=["last_synced_at"])
-		return Response({"success": True, "data": {"source": _source_dict(source), "result": result}},
-			status=status.HTTP_201_CREATED)
+		return _create(request, kb, "csv", table)
 
 
 class CsvSourceUploadView(APIView):
@@ -330,12 +349,7 @@ class SheetSourcePreviewView(APIView):
 		table, err = _read_sheet(request)
 		if err:
 			return err
-		headers, rows = table
-		mapping, err = _clean_mapping(request.data.get("mapping"), headers)
-		if err:
-			return err
-		return Response({"success": True, "data": {
-			"headers": headers, "mapping": mapping, "sample": rows[:5], "key_warning": not has_key(mapping)}})
+		return _preview(request, *table)
 
 
 class SheetSourceCreateView(APIView):
@@ -345,24 +359,80 @@ class SheetSourceCreateView(APIView):
 		kb, err = _kb_for(request, request.data, admin=True)
 		if err:
 			return err
-		sheet_url = str(request.data.get("sheet_url") or "").strip()
 		table, err = _read_sheet(request)
 		if err:
 			return err
-		headers, rows = table
-		mapping, err = _clean_mapping(request.data.get("mapping"), headers)
+		return _create(request, kb, "sheet", table, sheet_url=str(request.data.get("sheet_url") or "").strip())
+
+
+def _api_request(request):
+	"""(config, secret, None) or (None, None, error) from the posted `api` object and `secret`."""
+	try:
+		config = clean_api_config(request.data.get("api"))
+		return config, clean_secret(config["auth_type"], str(request.data.get("secret") or "")), None
+	except TableError as e:
+		return None, None, _bad(e.code, e.message)
+
+
+class ApiSourcePreviewView(APIView):
+	"""Connection test and preview: runs the saved request once and shows what comes back. Stores nothing."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		kb, err = _kb_for(request, request.data, admin=True)
 		if err:
 			return err
-		if not mapping.get("name"):
-			return _bad("name_required", "Choose which column holds the product name")
-		started = timezone.now()
-		with transaction.atomic():
-			source = ProductSource.objects.create(kb=kb, kind="sheet", mapping=mapping, sheet_url=sheet_url)
-			result = apply_rows(kb, source, rows, mapping, started)
-			source.last_synced_at = started
-			source.save(update_fields=["last_synced_at"])
-		return Response({"success": True, "data": {"source": _source_dict(source), "result": result}},
-			status=status.HTTP_201_CREATED)
+		config, secret, err = _api_request(request)
+		if err:
+			return err
+		try:
+			headers, rows = fetch_api_table(config, secret)
+		except TableError as e:
+			return _bad(e.code, e.message)
+		return _preview(request, headers, rows)
+
+
+class ApiSourceCreateView(APIView):
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		kb, err = _kb_for(request, request.data, admin=True)
+		if err:
+			return err
+		config, secret, err = _api_request(request)
+		if err:
+			return err
+		try:
+			table = fetch_api_table(config, secret)
+		except TableError as e:
+			return _bad(e.code, e.message)
+		body = config.pop("body")  # kept only inside the encrypted blob, never in the plain config
+		blob = encrypt_blob({"secret": secret, "body": body}) if (secret or body) else ""
+		return _create(request, kb, "api", table, api_config=config, secret_ciphertext=blob)
+
+
+logger = logging.getLogger(__name__)
+
+
+class MappingSuggestView(APIView):
+	"""AI suggestions for a mapping. Input is the preview's headers and a few rows; nothing is saved."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		kb, err = _kb_for(request, request.data, admin=True)
+		if err:
+			return err
+		headers, sample = request.data.get("headers"), request.data.get("sample")
+		if not isinstance(headers, list) or not headers or len(headers) > MAX_SUGGEST_COLUMNS or not all(isinstance(h, str) for h in headers):
+			return _bad("invalid_value", f"headers must be a list of 1 to {MAX_SUGGEST_COLUMNS} column names")
+		if not isinstance(sample, list) or len(sample) > 5 or not all(isinstance(r, dict) for r in sample):
+			return _bad("invalid_value", "sample must be up to 5 rows")
+		try:
+			suggestions = suggest_mapping(headers, sample, str(kb.project_id), str(kb.id))
+		except Exception:
+			logger.exception("Mapping suggestion failed")
+			return _kb_error("suggest_failed", "Suggestions are unavailable right now. Map the columns by hand.", status.HTTP_503_SERVICE_UNAVAILABLE)
+		return Response({"success": True, "data": {"suggestions": suggestions}})
 
 
 def _source_for(request, source_id):
@@ -380,14 +450,36 @@ def product_source_sync(request, source_id):
 	source, err = _source_for(request, source_id)
 	if err:
 		return err
-	if source.kind != "sheet":
-		return _bad("not_a_sheet", "Only Google Sheet sources can be synced")
+	if source.kind == "csv":
+		return _bad("not_a_sheet", "Only Google Sheet and API sources can be synced")
 	result = sync_product_source(str(source.id))
 	source.refresh_from_db()
 	if "error" in result:
+		code = status.HTTP_409_CONFLICT if result["error"] == "already_syncing" else status.HTTP_400_BAD_REQUEST
 		return Response({"success": False, "error": {"code": result["error"], "message": result["message"]},
-			"data": {"source": _source_dict(source)}}, status=status.HTTP_400_BAD_REQUEST)
+			"data": {"source": _source_dict(source)}}, status=code)
 	return Response({"success": True, "data": {"source": _source_dict(source), "result": result}})
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def product_source_schedule(request, source_id):
+	"""Turn automatic sync on or off and pick its schedule. Turning it on, or changing it, makes the next run due now."""
+	source, err = _source_for(request, source_id)
+	if err:
+		return err
+	if source.kind == "csv":
+		return _bad("not_a_sheet", "Only Google Sheet and API sources have a schedule")
+	enabled = request.data.get("auto_sync_enabled", source.auto_sync_enabled)
+	schedule = request.data.get("schedule", source.schedule)
+	if not isinstance(enabled, bool):
+		return _bad("invalid_value", "auto_sync_enabled must be true or false")
+	if schedule not in dict(ProductSource.SCHEDULE_CHOICES):
+		return _bad("invalid_value", "schedule must be hourly or daily")
+	source.auto_sync_enabled, source.schedule = enabled, schedule
+	source.next_sync_at = timezone.now() if enabled else None
+	source.save(update_fields=["auto_sync_enabled", "schedule", "next_sync_at"])
+	return Response({"success": True, "data": {"source": _source_dict(source)}})
 
 
 @api_view(["DELETE"])
