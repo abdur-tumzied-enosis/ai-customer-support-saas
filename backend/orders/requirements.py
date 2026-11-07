@@ -22,6 +22,7 @@ def check(project) -> list[dict]:
 	has_source = (
 		Document.objects.filter(kb__project=project).exclude(markdown_content="").exists()
 		or ProductSource.objects.filter(kb__project=project).exists()
+		or Product.objects.filter(kb__project=project).exists()
 	)
 	has_keys = Product.objects.filter(kb__project=project).filter(
 		(Q(external_id__isnull=False) & ~Q(external_id="")) | ~Q(sku="")

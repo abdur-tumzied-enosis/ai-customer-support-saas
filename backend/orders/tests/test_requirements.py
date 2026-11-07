@@ -39,6 +39,15 @@ class RequirementsTest(TestCase):
 		self.assertEqual(items["channel"]["status"], "fail")
 		self.assertTrue(items["channel"]["hard"])
 
+	def test_products_alone_count_as_product_information(self):
+		# a project that already has products (added by hand or from a sheet) is not blocked by a missing document
+		self.add_product_without_source()
+		items = {i["key"]: i for i in check(self.project)}
+		self.assertEqual(items["product_source"]["status"], "ok")
+
+	def add_product_without_source(self):
+		Product.objects.create(kb=self.kb, name="Shirt", external_id="S1", price=Decimal("250"), status="needs_info")
+
 	def test_enable_blocked_without_product_source(self):
 		self.add_channel()
 		r = self.client.post("/api/orders/enable/" + self.q)
