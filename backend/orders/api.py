@@ -154,6 +154,9 @@ CLEANERS = {
 }
 
 
+CONFIRMING_KEYS = {"zones", "payment_methods", "channels", "notification_emails"}  # a user saving these confirms setup
+
+
 def _settings_dict(settings, project) -> dict:
 	instructions = [i.message for i in CustomInstruction.objects.filter(project=project, scope="order")]  # every KB's, as the bot sees them
 	return {
@@ -166,6 +169,7 @@ def _settings_dict(settings, project) -> dict:
 		"live_lookup": {**settings.live_lookup, "headers": header_summary(settings.live_lookup.get("headers", []))},
 		"enabled": settings.enabled,
 		"test_mode": settings.test_mode,
+		"settings_confirmed_at": settings.settings_confirmed_at.isoformat() if settings.settings_confirmed_at else None,
 		"currency": project.currency,
 		"prompt_preview": build_order_prompt(settings, instructions, project.currency),
 	}
@@ -196,6 +200,8 @@ class SettingsView(APIView):
 				updates["live_lookup"] = clean_live_lookup(request.data["live_lookup"], settings.live_lookup)
 			except ActionError as e:
 				return _err(e.code, e.message, 400)
+		if CONFIRMING_KEYS & request.data.keys():
+			updates["settings_confirmed_at"] = timezone.now()
 		for key, value in updates.items():
 			setattr(settings, key, value)
 		settings.save()

@@ -22,6 +22,7 @@ export type OrderSettings = {
 	draft_expiry_hours: number;
 	enabled: boolean;
 	test_mode: boolean;
+	settings_confirmed_at: string | null;
 	currency: string;
 	prompt_preview: string;
 };

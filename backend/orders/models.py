@@ -18,6 +18,7 @@ class OrderSettings(models.Model):
 	draft_expiry_hours = models.PositiveIntegerField(default=48)
 	setup_status = models.CharField(max_length=16, default="not_started")  # not_started / running / ready
 	setup_report = models.JSONField(default=dict, blank=True)
+	settings_confirmed_at = models.DateTimeField(null=True, blank=True)  # set when a user saves settings, never by the setup job
 	updated_at = models.DateTimeField(auto_now=True)
 
 
