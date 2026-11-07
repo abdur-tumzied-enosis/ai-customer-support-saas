@@ -99,9 +99,10 @@ export default function ApiSourceForm({ busy, onPreview }: Props) {
 				<label className="grid gap-1 text-sm">Headers (one per line: Name: value)
 					<textarea className={AREA} value={d.headers} onChange={set("headers")} placeholder="Accept: application/json" />
 				</label>
-				<label className="grid gap-1 text-sm">Query parameters (one per line: name=value)
-					<textarea className={AREA} value={d.query} onChange={set("query")} placeholder="currency=BDT" />
-				</label>
+				<label className="grid content-start gap-1 text-sm">Query parameters (one per line: name=value)
+						<textarea className={AREA} value={d.query} onChange={set("query")} placeholder="limit=100" />
+						<span className="text-xs text-muted-foreground">Extra settings sent with every request. To get more products per response, try <b>limit=100</b>.</span>
+					</label>
 			</div>
 
 			<div className="grid gap-2 sm:grid-cols-3">
@@ -126,16 +127,30 @@ export default function ApiSourceForm({ busy, onPreview }: Props) {
 			</div>
 			<p className="text-xs text-muted-foreground">The key is stored encrypted on the server and never shown again.</p>
 
-			<div className="grid gap-2 sm:grid-cols-3">
-				<label className="grid gap-1 text-sm">Where the product list is
-					<Input value={d.response_path} onChange={set("response_path")} placeholder="data.items (empty = top level)" />
+			<div className="grid gap-4 sm:grid-cols-3">
+				<label className="grid content-start gap-1 text-sm">Product list field
+					<Input value={d.response_path} onChange={set("response_path")} placeholder="products" />
+					<span className="text-xs text-muted-foreground">
+						The field that holds the list of products. Leave empty if the response is a plain list.
+						Example: {"{"}&quot;products&quot;: [...]{"}"} means <b>products</b>. For nested data, use dots, such as <b>data.items</b>.
+					</span>
 				</label>
-				<label className="grid gap-1 text-sm">Page parameter (optional)
+				<label className="grid content-start gap-1 text-sm">Page number parameter
 					<Input value={d.page_param} onChange={set("page_param")} placeholder="page" />
+					<span className="text-xs text-muted-foreground">
+						The query parameter that sets the page number, usually <b>page</b>. Leave empty if one response has all products.
+						Offset or skip-based paging is not supported.
+					</span>
 				</label>
-				<label className="grid gap-1 text-sm">Max pages
-					<Input type="number" min={1} max={20} value={d.max_pages} onChange={set("max_pages")} disabled={!d.page_param} />
-				</label>
+				{d.page_param && (
+					<label className="grid content-start gap-1 text-sm">Most pages to read
+						<Input type="number" min={1} max={20} value={d.max_pages} onChange={set("max_pages")} />
+						<span className="text-xs text-muted-foreground">
+							One request per page, up to 20. If products remain after the last page, the sync stops with an error.
+							It never hides products it did not read.
+						</span>
+					</label>
+				)}
 			</div>
 
 			{d.method === "POST" && (
