@@ -77,8 +77,9 @@ def attach_product_images(product, urls: list[str]) -> None:
 	project = product.kb.project
 	slots = MAX_IMAGES_PER_PRODUCT - product.images.count()
 	for url in list(dict.fromkeys(urls))[: max(slots, 0)]:
+		ProductImage.objects.filter(product=product, source_url=url, status="failed").delete()  # a retry replaces the old failure
 		image_id = uuid.uuid4()
-		image = ProductImage.objects.create(id=image_id, product=product, status="pending")
+		image = ProductImage.objects.create(id=image_id, product=product, status="pending", source_url=url)
 		name = None
 		try:
 			data, _ext = fetch_image(url)

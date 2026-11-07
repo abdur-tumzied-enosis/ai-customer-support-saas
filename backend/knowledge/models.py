@@ -1,5 +1,6 @@
 import uuid
 import os
+from datetime import timedelta
 from enum import Enum
 from django.conf import settings
 from django.db import models
@@ -214,15 +215,25 @@ def product_image_path(kb, image_id: str, ext: str) -> str:
 
 
 class ProductSource(models.Model):
-	KIND_CHOICES = [("csv", "CSV"), ("sheet", "Sheet")]
+	KIND_CHOICES = [("csv", "CSV"), ("sheet", "Sheet"), ("api", "REST API")]
+	SCHEDULE_CHOICES = [("hourly", "Hourly"), ("daily", "Daily")]
+	SCHEDULE_INTERVALS = {"hourly": timedelta(hours=1), "daily": timedelta(days=1)}
 
 	id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 	kb = models.ForeignKey(KnowledgeBase, on_delete=models.CASCADE, related_name="product_sources")
 	kind = models.CharField(max_length=16, choices=KIND_CHOICES)
 	mapping = models.JSONField(default=dict)
 	sheet_url = models.URLField(blank=True, default="")
+	api_config = models.JSONField(default=dict, blank=True)  # REST API request, never holds the secret
+	secret_ciphertext = models.TextField(blank=True, default="")  # the API key/token, Fernet-encrypted (product_api)
 	last_synced_at = models.DateTimeField(null=True, blank=True)
 	last_error = models.TextField(blank=True, default="")
+	# Automatic sync (sheets only). Sheets synced hourly before this existed, so the migration turns this on for them.
+	auto_sync_enabled = models.BooleanField(default=False)
+	schedule = models.CharField(max_length=16, choices=SCHEDULE_CHOICES, default="hourly")
+	next_sync_at = models.DateTimeField(null=True, blank=True)  # null = due now
+	sync_failures = models.PositiveIntegerField(default=0)  # consecutive failed syncs; drives the retry backoff
+	sync_locked_at = models.DateTimeField(null=True, blank=True)  # set while a sync runs: the overlap guard
 	created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -305,6 +316,7 @@ class ProductImage(models.Model):
 	file = models.FileField(max_length=255)
 	status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending")
 	error = models.CharField(max_length=255, blank=True, default="")
+	source_url = models.TextField(blank=True, default="")  # the URL a source row gave; a sync skips URLs already attached
 	created_at = models.DateTimeField(auto_now_add=True)
 
 	def _delete_file(self):

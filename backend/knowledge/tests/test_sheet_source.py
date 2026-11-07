@@ -34,7 +34,7 @@ class SheetUrlTests(TestCase):
 
 	def test_beat_schedule_has_sync(self):
 		entry = settings.CELERY_BEAT_SCHEDULE["sync-product-sources"]
-		self.assertEqual((entry["task"], entry["schedule"]), ("knowledge.tasks.sync_product_sources", 3600))
+		self.assertEqual((entry["task"], entry["schedule"]), ("knowledge.tasks.sync_product_sources", 300))
 
 	def test_fetch_refuses_redirect_and_html(self):
 		for r in (resp(b"", 302), resp(b"<!DOCTYPE html><html>", 200, "text/html; charset=utf-8")):
@@ -172,9 +172,9 @@ class SheetSourceTests(TestCase):
 
 	def test_sync_all_continues_after_failure(self):
 		self.create_ok()
-		bad = ProductSource.objects.create(kb=self.kb, kind="sheet", sheet_url="https://evil.example.com/x", mapping={"name": "name"})
+		bad = ProductSource.objects.create(kb=self.kb, kind="sheet", sheet_url="https://evil.example.com/x", mapping={"name": "name"}, auto_sync_enabled=True)
 		good = ProductSource.objects.exclude(id=bad.id).get()
-		with patch("knowledge.product_sources.requests.get", return_value=resp()):
+		with patch("knowledge.product_sources.requests.get", return_value=resp()), 				patch("knowledge.tasks.sync_product_source.delay", side_effect=lambda sid: sync_product_source(sid)):
 			sync_product_sources()
 		bad.refresh_from_db()
 		good.refresh_from_db()

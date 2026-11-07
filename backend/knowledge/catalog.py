@@ -118,6 +118,8 @@ class SourceRow:
 	custom: dict = field(default_factory=dict)
 	variant_label: str = ""
 	attributes: dict = field(default_factory=dict)
+	image_urls: list = field(default_factory=list)  # downloaded after the commit; never part of the match
+	product: object = None  # set by apply_source_row to the product this row created or updated
 
 
 def notify_owners_price_cleared(product) -> None:
@@ -150,10 +152,12 @@ def apply_source_row(kb, source, row: SourceRow, sync_started_at, fields=None) -
 				new.save()
 		except IntegrityError:
 			return "rejected"
+		row.product = new
 		if row.attributes:  # a variant carries the attributes so the next sync matches this row by name + attributes
 			ProductVariant.objects.create(product=new, label=row.variant_label, attributes=row.attributes)
 		return "created"
 
+	row.product = product
 	locked = set(product.locked_fields or [])
 
 	def snapshot():

@@ -1105,18 +1105,41 @@ export const productFieldApi = {
 	remove: (id: string) => apiFetch<null>(`/api/kb/product-fields/${id}/`, { method: "DELETE" }),
 };
 
-export type SourceResult = { created: number; updated: number; unchanged: number; hidden: number; rejected: { row: number; message: string }[] };
+export type SourceResult = { created: number; updated: number; unchanged: number; hidden: number; images_queued?: number; rejected: { row: number; message: string }[] };
 
 export type ProductSource = {
 	id: string;
-	kind: "csv" | "sheet";
+	kind: "csv" | "sheet" | "api";
 	mapping: Record<string, string | null>;
 	sheet_url: string;
+	api_config: { method?: "GET" | "POST"; url?: string } | null;
+	has_secret: boolean;
 	last_synced_at: string | null;
 	last_error: string;
 	key_warning: boolean;
 	created_at: string;
+	auto_sync_enabled: boolean;
+	schedule: "hourly" | "daily";
+	next_sync_at: string | null;
+	sync_failures: number;
+	sync_running: boolean;
 };
+
+// The request a REST API source runs. The key is sent separately and never comes back.
+export type ApiConfig = {
+	method: "GET" | "POST";
+	url: string;
+	headers: Record<string, string>;
+	query: Record<string, string>;
+	auth_type: "none" | "bearer" | "header" | "query";
+	auth_name: string;
+	body: Record<string, unknown> | null;
+	response_path: string;
+	page_param: string;
+	max_pages: number;
+};
+
+export type MappingSuggestion = { target: string; column: string; confidence: number; reason: string };
 
 export type CsvPreview = { headers: string[]; mapping: Record<string, string | null>; sample: Record<string, string>[]; key_warning: boolean };
 
@@ -1193,6 +1216,32 @@ export const productSourceApi = {
 	// A new version of a CSV source's file; the source's saved mapping applies
 	reupload: (projectId: string, kbId: string, id: string, file: File) =>
 		uploadForm<{ source: ProductSource; result: SourceResult }>(`/api/kb/products/sources/${id}/upload/`, csvForm(projectId, kbId, file)),
+
+	previewApi: async (projectId: string, kbId: string, api: ApiConfig, secret: string, mapping?: Record<string, string | null>) =>
+		(await apiFetch<CsvPreview>("/api/kb/products/sources/api/preview/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, api, secret, ...(mapping ? { mapping } : {}) },
+		})).data,
+
+	createApi: async (projectId: string, kbId: string, api: ApiConfig, secret: string, mapping: Record<string, string | null>) =>
+		(await apiFetch<{ source: ProductSource; result: SourceResult }>("/api/kb/products/sources/api/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, api, secret, mapping },
+		})).data,
+
+	// AI suggestions for the previewed columns; nothing is saved
+	suggestMapping: async (projectId: string, kbId: string, headers: string[], sample: Record<string, string>[]) =>
+		(await apiFetch<{ suggestions: MappingSuggestion[] }>("/api/kb/products/sources/suggest-mapping/", {
+			method: "POST",
+			json: { project_id: projectId, kb_id: kbId, headers, sample },
+		})).data.suggestions,
+
+	// Automatic sync on/off and its schedule (Sheet and API sources)
+	updateSchedule: async (projectId: string, kbId: string, id: string, body: { auto_sync_enabled?: boolean; schedule?: "hourly" | "daily" }) =>
+		(await apiFetch<{ source: ProductSource }>(`/api/kb/products/sources/${id}/schedule/?${q(projectId, kbId)}`, {
+			method: "PATCH",
+			json: body,
+		})).data,
 
 	remove: (projectId: string, kbId: string, id: string) =>
 		apiFetch<null>(`/api/kb/products/sources/${id}/?${q(projectId, kbId)}`, { method: "DELETE" }),

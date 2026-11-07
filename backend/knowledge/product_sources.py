@@ -1,16 +1,18 @@
 import csv
 import io
 import re
+from datetime import timedelta
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from .catalog import SourceRow, _attr_key, apply_source_row, normalise_name
-from .models import Product
+from .models import MAX_IMAGES_PER_PRODUCT, Product, ProductImage
 
-TARGETS = ["external_id", "sku", "name", "price", "description", "available", "variant_label", "product_url"]
+TARGETS = ["external_id", "sku", "name", "price", "description", "available", "variant_label", "product_url", "image_url"]
 
 # ASCII keywords match whole tokens; Bengali ones match as substrings (no reliable word boundaries).
 _ASCII = {
@@ -22,6 +24,7 @@ _ASCII = {
 	"available": {"available", "availability", "stock", "instock"},
 	"product_url": {"url", "link"},
 	"variant_label": {"variant", "size", "option"},
+	"image_url": {"image", "images", "img", "photo", "photos", "picture", "pic"},
 }
 _BENGALI = {
 	"sku": ["এসকেইউ"],
@@ -32,6 +35,7 @@ _BENGALI = {
 	"available": ["স্টক", "উপলব্ধ"],
 	"product_url": ["লিংক", "লিঙ্ক"],
 	"variant_label": ["সাইজ", "ধরন"],
+	"image_url": ["ছবি"],
 }
 _SPLIT = re.compile(r"[\s_\-/.,:;()\[\]]+")
 _FALSE = {"no", "n", "false", "0", "out of stock", "outofstock", "unavailable", "sold out", "না", "নেই", "স্টক নেই"}
@@ -44,6 +48,14 @@ class TableError(Exception):
 		super().__init__(message)
 		self.code = code
 		self.message = message
+
+
+_URL_SPLIT = re.compile(r"[\s,;]+")  # a URL has no spaces, so spaces, commas and semicolons can separate them
+
+
+def split_image_urls(text: str) -> list[str]:
+    """Links in one cell, in order, without repeats."""
+    return list(dict.fromkeys(p for p in _URL_SPLIT.split(text or "") if p))
 
 
 def _cell(value) -> str:
@@ -130,6 +142,7 @@ def _source_row(raw: dict, mapping: dict) -> SourceRow:
 		external_id=get("external_id") or None, sku=get("sku") or "", name=get("name") or "",
 		price_text=get("price"), available=None if available is None or available == "" else _to_available(available),
 		description=get("description"), product_url=get("product_url"), variant_label=variant,
+		image_urls=split_image_urls(get("image_url") or ""),
 		attributes={"variant": variant} if variant else {},
 		custom={k[7:]: raw.get(col, "").strip() for k, col in mapping.items() if k.startswith("custom:") and col},
 	)
@@ -146,7 +159,8 @@ def check_headers(mapping: dict, headers: list[str]) -> None:
 def apply_rows(kb, source, rows: list[dict], mapping: dict, sync_started_at) -> dict:
 	"""Apply every row through apply_source_row, then hide this source's products that were not seen."""
 	fields = list(kb.product_fields.all())
-	result = {"created": 0, "updated": 0, "unchanged": 0, "hidden": 0, "rejected": []}
+	result = {"created": 0, "updated": 0, "unchanged": 0, "hidden": 0, "rejected": [], "images_queued": 0}
+	image_jobs: list[tuple] = []  # (product, url) for rows that name an image
 	seen_ids: set[str] = set()
 	seen_names: set[tuple] = set()
 	for n, raw in enumerate(rows, start=2):  # row 1 is the header
@@ -168,6 +182,25 @@ def apply_rows(kb, source, rows: list[dict], mapping: dict, sync_started_at) -> 
 		elif name_key:
 			seen_names.add(name_key)
 		result[outcome] += 1
+		if row.image_urls:
+			image_jobs.append((row.product, row.image_urls))
+	# Only URLs a product does not already have: an hourly sync must not download the same photo again
+	# A failed link is tried again only after a day: a dead image URL must not be downloaded on every hourly sync
+	retry_after = timezone.now() - timedelta(hours=24)
+	attached = set(ProductImage.objects.filter(product__source_ref=source).filter(
+		~Q(status="failed") | Q(created_at__gt=retry_after)).values_list("product_id", "source_url"))
+	queued: dict = {}  # product id -> its new URLs; the product's photo limit is enforced by attach_product_images
+	for product, urls in image_jobs:
+		fresh = [u for u in urls if (product.id, u) not in attached][:MAX_IMAGES_PER_PRODUCT]
+		if fresh:
+			queued[product.id] = fresh
+	if queued:
+		from .tasks import fetch_product_images  # tasks imports this module; a top-level import would loop
+
+		# One task per product, run in the worker after the commit, so slow or broken images never hold up the sync
+		jobs = list(queued.items())
+		transaction.on_commit(lambda: [fetch_product_images.delay(str(pid), urls) for pid, urls in jobs])
+		result["images_queued"] = sum(len(urls) for _, urls in jobs)
 	stale = Product.objects.filter(source_ref=source).exclude(status="hidden").filter(
 		Q(last_seen_at__isnull=True) | Q(last_seen_at__lt=sync_started_at))
 	for product in stale:

@@ -9,6 +9,7 @@ from urllib.parse import urlparse, urljoin, urldefrag
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -840,39 +841,86 @@ def fetch_product_images(product_id: str, image_srcs: list[str]) -> None:
     attach_product_images(product, image_srcs)
 
 
+SYNC_LOCK_TIMEOUT = timedelta(minutes=30)  # a worker that died mid-sync gives its claim up after this
+SYNC_RETRY_BASE = timedelta(minutes=5)  # a failed scheduled sync retries after 5, 10, 20 ... minutes, never past the interval
+
+
+def _claim_sync(source_id) -> bool:
+    """Take the sync lock in one UPDATE. False while another run holds it and has not gone stale."""
+    now = timezone.now()
+    return ProductSource.objects.filter(id=source_id).filter(
+        Q(sync_locked_at__isnull=True) | Q(sync_locked_at__lt=now - SYNC_LOCK_TIMEOUT)
+    ).update(sync_locked_at=now) == 1
+
+
+def _finish_sync(source, started, error: str) -> None:
+    """Save the outcome, release the lock, and set when the next run is due."""
+    source.refresh_from_db()  # the user may have toggled the schedule while the sync ran
+    interval = ProductSource.SCHEDULE_INTERVALS[source.schedule]
+    if error:
+        source.sync_failures += 1
+        retry = min(SYNC_RETRY_BASE * 2 ** min(source.sync_failures - 1, 6), interval)
+    else:
+        source.sync_failures = 0
+        source.last_synced_at = started
+        retry = interval
+    source.last_error = error
+    source.next_sync_at = timezone.now() + retry if source.auto_sync_enabled else None
+    source.sync_locked_at = None
+    source.save(update_fields=["last_error", "last_synced_at", "sync_failures", "next_sync_at", "sync_locked_at"])
+
+
+def _read_source_rows(source) -> tuple[list[str], list[dict]]:
+    """(headers, rows) from the source's live data: a public Sheet or the REST API with its saved request."""
+    from .product_api import decrypt_blob, fetch_api_table
+    from .product_sources import fetch_sheet_csv, parse_table, sheet_export_url
+
+    if source.kind == "api":
+        saved = decrypt_blob(source.secret_ciphertext)
+        return fetch_api_table({**source.api_config, "body": saved.get("body")}, saved.get("secret", ""))
+    return parse_table("sheet.csv", fetch_sheet_csv(sheet_export_url(source.sheet_url)))
+
+
 @shared_task
 def sync_product_source(source_id: str) -> dict:
-    """Re-read one Sheet source with its saved mapping. Failures are saved on the source, never raised."""
-    from .product_sources import (
-        SheetNotPublic, TableError, apply_rows, check_headers, fetch_sheet_csv, parse_table, sheet_export_url,
-    )
+    """Re-read one Sheet source with its saved mapping. Failures are saved on the source, never raised.
+    One run per source at a time: a second run returns already_syncing without touching anything. Safe to retry: the apply is idempotent."""
+    from .product_sources import SheetNotPublic, TableError, apply_rows, check_headers
 
-    source = ProductSource.objects.select_related("kb").filter(id=source_id, kind="sheet").first()
+    source = ProductSource.objects.select_related("kb").filter(id=source_id, kind__in=["sheet", "api"]).first()
     if source is None:
         return {"error": "not_found"}
+    if not _claim_sync(source.id):
+        return {"error": "already_syncing", "message": "This source is already syncing"}
     started = timezone.now()
+    error, result = "", {}
     try:
-        headers, rows = parse_table("sheet.csv", fetch_sheet_csv(sheet_export_url(source.sheet_url)))
+        headers, rows = _read_source_rows(source)
         check_headers(source.mapping, headers)
         result = apply_rows(source.kb, source, rows, source.mapping, started)
     except SheetNotPublic as e:
-        source.last_error = f"sheet_not_public: {e}"
-        source.save(update_fields=["last_error"])
-        return {"error": "sheet_not_public", "message": str(e)}
+        error = f"sheet_not_public: {e}"
     except (TableError, ValueError) as e:
-        source.last_error = f"{getattr(e, 'code', 'invalid_sheet')}: {e}"
-        source.save(update_fields=["last_error"])
-        return {"error": getattr(e, "code", "invalid_sheet"), "message": str(e)}
-    source.last_synced_at, source.last_error = started, ""
-    source.save(update_fields=["last_synced_at", "last_error"])
+        error = f"{getattr(e, 'code', 'invalid_sheet')}: {e}"
+    except Exception:
+        logger.exception("Product source %s sync crashed", source.id)
+        error = "sync_failed: The sync failed unexpectedly. It will be retried."
+    _finish_sync(source, started, error)
+    if error:
+        code, _, message = error.partition(": ")
+        return {"error": code, "message": message}
     return result
 
 
 @shared_task
 def sync_product_sources() -> None:
-    """Hourly: sync every Sheet source. One failing source must not stop the others."""
-    for source_id in ProductSource.objects.filter(kind="sheet").values_list("id", flat=True):
+    """Every 5 minutes: run each enabled Sheet or API source that is due. One failing source must not stop the others."""
+    now = timezone.now()
+    due = ProductSource.objects.filter(kind__in=["sheet", "api"], auto_sync_enabled=True).filter(
+        Q(next_sync_at__isnull=True) | Q(next_sync_at__lte=now)).values_list("id", flat=True)
+    for source_id in list(due):
         try:
-            sync_product_source(str(source_id))
+            # One task per source: a slow API cannot hold up the others, and the per-source lock stops overlap
+            sync_product_source.delay(str(source_id))
         except Exception:
-            logger.exception("Product source %s sync crashed", source_id)
+            logger.exception("Product source %s could not be queued", source_id)
