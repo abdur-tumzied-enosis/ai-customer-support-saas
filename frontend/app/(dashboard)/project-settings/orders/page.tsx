@@ -1,7 +1,13 @@
 "use client";
 
+import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ORDERS_CHANGED } from "@/components/orders/OrdersShell";
+import { orderApi } from "@/lib/orders-api";
+import { formatError } from "@/lib/errors";
 import { Loader2 } from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import SetupStepSettings from "@/components/orders/setup/SetupStepSettings";
 import PromptPreview from "@/components/orders/settings/PromptPreview";
 import FormFieldsEditor from "@/components/orders/settings/FormFieldsEditor";
@@ -11,6 +17,63 @@ import LiveLookupSection from "@/components/orders/settings/LiveLookupSection";
 import ActionsSection from "@/components/orders/actions/ActionsSection";
 import { useAuth } from "@/hooks/useAuth";
 
+// GitHub-style section: heading with a rule under it, then the content.
+function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
+	return (
+		<section className="space-y-4 py-8">
+			<div className="border-b pb-3">
+				<h2 className="text-xl font-semibold">{title}</h2>
+				{description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+			</div>
+			{children}
+		</section>
+	);
+}
+
+function TurnOffOrders({ projectId }: { projectId: string }) {
+	const [enabled, setEnabled] = useState<boolean | null>(null);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		orderApi.settings(projectId).then((res) => setEnabled(res.data.enabled)).catch((e) => setError(formatError(e)));
+	}, [projectId]);
+
+	async function turnOff() {
+		setBusy(true);
+		setError(null);
+		try {
+			await orderApi.disable(projectId);
+			setEnabled(false);
+			window.dispatchEvent(new Event(ORDERS_CHANGED));
+		} catch (e) {
+			setError(formatError(e));
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	return (
+		<div className="space-y-3">
+			{error && (
+				<Alert variant="destructive">
+					<AlertDescription>{error}</AlertDescription>
+				</Alert>
+			)}
+			{enabled === true && (
+				<Button variant="destructive" onClick={turnOff} disabled={busy}>
+					{busy ? "Turning off…" : "Turn off orders"}
+				</Button>
+			)}
+			{enabled === false && (
+				<p className="text-sm text-muted-foreground">
+					Orders are off. <Link href="/orders" className="text-primary underline">Go to Orders</Link> to turn them on.
+				</p>
+			)}
+		</div>
+	);
+}
+
 export default function OrderSettingsPage() {
 	const { projects } = useAuth();
 	const project = projects.length > 0 ? projects[0] : null;
@@ -18,70 +81,32 @@ export default function OrderSettingsPage() {
 	const projectId = String(project.id);
 
 	return (
-		<div className="mx-auto max-w-2xl space-y-6">
-			<h1 className="text-2xl font-semibold">Order settings</h1>
-			<Card>
-				<CardHeader>
-					<CardTitle>What we tell your agent</CardTitle>
-					<CardDescription>Read-only. Built from these settings and your order instructions.</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<PromptPreview projectId={projectId} />
-				</CardContent>
-			</Card>
-			<Card>
-				<CardHeader>
-					<CardTitle>Delivery, payment and notifications</CardTitle>
-				</CardHeader>
-				<CardContent>
-					<SetupStepSettings projectId={projectId} saveLabel="Save" onSaved={() => undefined} />
-				</CardContent>
-			</Card>
-			<Card>
-				<CardHeader>
-					<CardTitle>Customer details</CardTitle>
-					<CardDescription>Extra questions the agent asks before it confirms an order.</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<FormFieldsEditor projectId={projectId} />
-				</CardContent>
-			</Card>
-			<Card>
-				<CardHeader>
-					<CardTitle>Order instructions</CardTitle>
-					<CardDescription>Your wording for taking orders. The protected rules always apply on top.</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<OrderInstructions projectId={projectId} />
-				</CardContent>
-			</Card>
-			<Card>
-				<CardHeader>
-					<CardTitle>Notifications</CardTitle>
-					<CardDescription>Order emails go to the addresses above.</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<NotificationsSection projectSlug={project.slug} />
-				</CardContent>
-			</Card>
-			<Card>
-				<CardHeader>
-					<CardTitle>Live price lookup (advanced)</CardTitle>
-					<CardDescription>Ask your own API for prices and availability by product key, instead of the catalog.</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<LiveLookupSection projectId={projectId} />
-				</CardContent>
-			</Card>
-			<Card>
-				<CardHeader>
-					<CardTitle>Custom actions</CardTitle>
-					<CardDescription>Send selected orders to a courier or your own API. Admins create and edit actions; everyone can run them.</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<ActionsSection projectId={projectId} />
-				</CardContent>
-			</Card>
+		<div className="max-w-3xl">
+			<h1 className="pb-2 text-2xl font-semibold">Order settings</h1>
+			<Section title="Delivery, payment and notifications">
+				<SetupStepSettings projectId={projectId} saveLabel="Save" onSaved={() => undefined} />
+			</Section>
+			<Section title="Customer details" description="Extra questions the agent asks before it confirms an order.">
+				<FormFieldsEditor projectId={projectId} />
+			</Section>
+			<Section title="Order instructions" description="Your wording for taking orders. The protected rules always apply on top.">
+				<OrderInstructions projectId={projectId} />
+			</Section>
+			<Section title="What we tell your agent" description="Read-only. Built from these settings and your order instructions.">
+				<PromptPreview projectId={projectId} />
+			</Section>
+			<Section title="Notifications" description="Order emails go to the addresses above.">
+				<NotificationsSection projectSlug={project.slug} />
+			</Section>
+			<Section title="Live price lookup (advanced)" description="Ask your own API for prices and availability by product key, instead of the catalog.">
+				<LiveLookupSection projectId={projectId} />
+			</Section>
+			<Section title="Custom actions" description="Send selected orders to a courier or your own API. Admins create and edit actions; everyone can run them.">
+				<ActionsSection projectId={projectId} />
+			</Section>
+			<Section title="Turn orders on or off" description="Turning orders off stops the agent taking orders. Your settings and existing orders are kept, so you can turn it back on without setting up again.">
+				<TurnOffOrders projectId={projectId} />
+			</Section>
 		</div>
 	);
 }

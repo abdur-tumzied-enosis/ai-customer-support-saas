@@ -61,18 +61,6 @@ export default function OrdersPage() {
 		loadOrders();
 	}, [loadOrders]);
 
-	async function turnOff() {
-		if (!project) return;
-		setBusy(true);
-		try {
-			await orderApi.disable(String(project.id));
-			await load();
-		} catch (e) {
-			setError(formatError(e));
-		} finally {
-			setBusy(false);
-		}
-	}
 
 	async function tryIt() {
 		if (!project) return;
@@ -126,43 +114,21 @@ export default function OrdersPage() {
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-6">
-			<h1 className="text-2xl font-semibold">Orders</h1>
 			{error && (
 				<Alert variant="destructive">
 					<AlertDescription>{error}</AlertDescription>
 				</Alert>
 			)}
-			{settings.enabled ? (
+			{!settings.enabled && isAdmin && (
 				<Card>
 					<CardHeader>
-						<CardTitle>Taking orders</CardTitle>
-						<CardDescription>The agent takes orders on the channels you chose.</CardDescription>
+						<CardTitle>Start taking orders</CardTitle>
+						<CardDescription>The agent collects an order in the customer&apos;s language and confirms it with you.</CardDescription>
 					</CardHeader>
-					<CardContent className="flex gap-2">
-						{isAdmin && (
-							<Button variant="outline" onClick={turnOff} disabled={busy}>
-								Turn off
-							</Button>
-						)}
-						{isAdmin && (
-							<Button variant="ghost" onClick={() => router.push("/project-settings/orders")}>
-								Order settings
-							</Button>
-						)}
+					<CardContent>
+						<Button onClick={() => setDialogOpen(true)}>Start taking orders</Button>
 					</CardContent>
 				</Card>
-			) : (
-				isAdmin && (
-					<Card>
-						<CardHeader>
-							<CardTitle>Start taking orders</CardTitle>
-							<CardDescription>The agent collects an order in the customer&apos;s language and confirms it with you.</CardDescription>
-						</CardHeader>
-						<CardContent>
-							<Button onClick={() => setDialogOpen(true)}>Start taking orders</Button>
-						</CardContent>
-					</Card>
-				)
 			)}
 
 			<section className="space-y-3">

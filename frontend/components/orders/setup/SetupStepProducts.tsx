@@ -71,7 +71,7 @@ export default function SetupStepProducts({ projectId, kbId, onBack, onGoLive }:
 					{needPrice} products still need a price; they won&apos;t be sold until fixed.
 				</p>
 			)}
-			<div className="flex justify-between">
+			<div className="sticky bottom-0 -mx-1 flex justify-between border-t bg-background/95 px-1 py-3 backdrop-blur">
 				<Button variant="outline" onClick={onBack}>
 					Back
 				</Button>

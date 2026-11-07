@@ -1,0 +1,16 @@
+{
+    "mcpServers": {
+        "meta-social-technologies": {
+            "name": "Meta Social Technologies",
+            "url": "https://mcp.facebook.com/devtools",
+            "description": "Meta Social Technologies is a company that develops social media platforms and related technologies.",
+            "type": "http"
+        },
+        "whatsapp-business-mcp": {
+            "name": "WhatsApp Business Tools",
+            "url": "https://mcp.facebook.com/whatsapp_business_tools",
+            "description": "WhatsApp Business Tools is a suite of tools for managing WhatsApp business accounts.",
+            "type": "http"
+        }
+    }
+}

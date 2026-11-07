@@ -1,16 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronRight, FileText, Globe, Lightbulb, ScrollText, Tag, type LucideIcon } from "lucide-react";
+import { FileText, Globe, Lightbulb, ScrollText, Tag, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { isProcessing, useKnowledge } from "@/components/knowledge/KnowledgeContext";
+import { useKnowledge } from "@/components/knowledge/KnowledgeContext";
 import { cn } from "@/lib/utils";
 
 export const KNOWLEDGE_SECTIONS = [
 	{ slug: "instructions", name: "Custom Instructions", icon: ScrollText },
 	{ slug: "documents", name: "Documents", icon: FileText },
 	{ slug: "websites", name: "Crawled Websites", icon: Globe },
-	{ slug: "products", name: "Product Catalog", icon: Tag },
+	{ slug: "products", name: "Products", icon: Tag },
 	{ slug: "suggestions", name: "Memory Suggestions", icon: Lightbulb },
 ] as const satisfies readonly { slug: string; name: string; icon: LucideIcon }[];
 
@@ -20,38 +20,19 @@ export function isKnowledgeSection(slug: string): slug is KnowledgeSectionSlug {
 	return KNOWLEDGE_SECTIONS.some((s) => s.slug === slug);
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const LOADING = "Loading...";
-
 type Props = {
 	active: KnowledgeSectionSlug | null;
 	/** On /knowledge the instructions view only shows from md up, so the highlight does too */
 	activeOnDesktopOnly?: boolean;
 };
 
-// One card per section, summarised from the lists the layout already holds.
+// Compact icon + text links; badges kept only where they carry a count to act on.
 export default function KnowledgeSectionNav({ active, activeOnDesktopOnly = false }: Props) {
-	const { selectedKb, documents, documentsLoading, instructions, instructionsLoading, productStats, suggestionCount } = useKnowledge();
-
-	const docsPending = !selectedKb || (documentsLoading && documents.length === 0);
-	const files = documents.filter((d) => d.source_type !== "url");
-	const processing = files.filter(isProcessing).length;
-	const sites = documents.filter((d) => d.source_type === "url" && d.parent_crawl_id === null).length;
-	const pages = documents.filter((d) => d.source_type === "url" && d.parent_crawl_id !== null).length;
-
-	const summaries: Record<KnowledgeSectionSlug, string> = {
-		instructions: !selectedKb || (instructionsLoading && instructions.length === 0)
-			? LOADING
-			: `${plural(instructions.length, "instruction")} · API access ${instructions.some((i) => i.api_tool_enabled) ? "on" : "off"}`,
-		documents: docsPending ? LOADING : `${plural(files.length, "file")}${processing > 0 ? ` · ${processing} processing` : ""}`,
-		websites: docsPending ? LOADING : `${plural(sites, "site")}${pages > 0 ? ` · ${plural(pages, "page")}` : ""}`,
-		products: productStats === null ? LOADING : productStats === "unavailable" ? "—" : `${plural(productStats.products, "product")} · ${plural(productStats.photos, "photo")}`,
-		suggestions: suggestionCount === null ? LOADING : `${suggestionCount} waiting for review`,
-	};
+	const { productStats, suggestionCount } = useKnowledge();
 
 	return (
 		<nav aria-label="Knowledge sections">
-			<ul className="space-y-2">
+			<ul className="space-y-1">
 				{KNOWLEDGE_SECTIONS.map(({ slug, name, icon: Icon }) => {
 					const isActive = slug === active;
 					return (
@@ -60,24 +41,18 @@ export default function KnowledgeSectionNav({ active, activeOnDesktopOnly = fals
 								href={`/knowledge/${slug}`}
 								aria-current={isActive && !activeOnDesktopOnly ? "page" : undefined}
 								className={cn(
-									"flex items-center gap-3 rounded-lg border bg-card p-4 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-									isActive && (activeOnDesktopOnly ? "md:border-primary md:bg-primary/5" : "border-primary bg-primary/5"),
+									"flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+									isActive && (activeOnDesktopOnly ? "md:bg-primary/10 md:text-primary" : "bg-primary/10 text-primary"),
 								)}
 							>
-								<Icon className="h-5 w-5 shrink-0 text-primary" />
-								<div className="min-w-0 flex-1">
-									<div className="flex items-center gap-2">
-										<span className="text-sm font-medium">{name}</span>
-										{slug === "suggestions" && !!suggestionCount && (
-											<Badge className="h-5 px-1.5 text-xs">{suggestionCount}</Badge>
-										)}
-										{slug === "products" && productStats && productStats !== "unavailable" && productStats.needsInfo > 0 && (
-											<Badge className="h-5 px-1.5 text-xs">{productStats.needsInfo}</Badge>
-										)}
-									</div>
-									<p className="truncate text-sm text-muted-foreground">{summaries[slug]}</p>
-								</div>
-								<ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground md:hidden" />
+								<Icon className="h-4 w-4 shrink-0" />
+								<span className="min-w-0 flex-1 truncate">{name}</span>
+								{slug === "suggestions" && !!suggestionCount && (
+									<Badge className="h-5 px-1.5 text-xs">{suggestionCount}</Badge>
+								)}
+								{slug === "products" && productStats && productStats !== "unavailable" && productStats.needsInfo > 0 && (
+									<Badge className="h-5 px-1.5 text-xs">{productStats.needsInfo}</Badge>
+								)}
 							</Link>
 						</li>
 					);

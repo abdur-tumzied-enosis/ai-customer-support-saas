@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { knowledgeBaseApi } from "@/lib/api";
@@ -9,13 +10,13 @@ import SetupStepSetup from "@/components/orders/setup/SetupStepSetup";
 import SetupStepSettings from "@/components/orders/setup/SetupStepSettings";
 import SetupStepProducts from "@/components/orders/setup/SetupStepProducts";
 
-const STEPS = ["We set it up", "Settings", "Pick products"];
-
 type Props = { projectId: string; onDone: () => void };
 
 export default function SetupWizard({ projectId, onDone }: Props) {
 	const [kbId, setKbId] = useState<string | null>(null);
-	const [step, setStep] = useState(1);
+	const router = useRouter();
+	const step = Math.min(3, Math.max(1, Number(useSearchParams().get("step")) || 1));
+	const setStep = (n: number) => router.push(`/orders/setup?step=${n}`);
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
@@ -41,13 +42,6 @@ export default function SetupWizard({ projectId, onDone }: Props) {
 
 	return (
 		<div className="mx-auto max-w-2xl space-y-6">
-			<ol className="flex gap-4 text-sm">
-				{STEPS.map((label, i) => (
-					<li key={label} className={i + 1 === step ? "font-semibold" : "text-muted-foreground"}>
-						{i + 1}. {label}
-					</li>
-				))}
-			</ol>
 			{step === 1 && <SetupStepSetup projectId={projectId} kbId={kbId} onReady={() => setStep(2)} />}
 			{step === 2 && <SetupStepSettings projectId={projectId} onSaved={() => setStep(3)} />}
 			{step === 3 && (

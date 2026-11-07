@@ -14,7 +14,11 @@ export default function FormFieldsEditor({ projectId }: { projectId: string }) {
 	const [saved, setSaved] = useState(false);
 
 	useEffect(() => {
-		orderApi.settings(projectId).then((res) => setFormFields(res.data.form_fields)).catch((e) => setError(formatError(e)));
+		// Projects that never saved fields store {} (no "custom" key), so fill in the defaults.
+		orderApi
+			.settings(projectId)
+			.then((res) => setFormFields({ optional: res.data.form_fields?.optional ?? [], custom: res.data.form_fields?.custom ?? [] }))
+			.catch((e) => setError(formatError(e)));
 	}, [projectId]);
 
 	if (!formFields) {

@@ -5,8 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Tag } from "lucide-react";
-import ProductCatalog from "@/components/knowledge/ProductCatalog";
+import { Loader2, Plus, Tag } from "lucide-react";
 import NeedsInfoBanner from "@/components/knowledge/catalog/NeedsInfoBanner";
 import ProductTable from "@/components/knowledge/catalog/ProductTable";
 import ProductEditor from "@/components/knowledge/catalog/ProductEditor";
@@ -25,6 +24,11 @@ const TABS: { value: Tab; label: string }[] = [
 ];
 type View = "products" | "sources" | "review";
 
+const POLL_MS = 3000;
+// A photo that never finishes (worker down) must not keep the page polling forever
+const POLL_LIMIT_MS = 5 * 60 * 1000;
+const isPhotoBusy = (p: Product) => p.images.some((i) => i.status === "uploading" || i.status === "pending");
+
 export default function ProductsSection() {
 	const { projectId, selectedKb, isAdmin, imageSearchOn, reportProducts } = useKnowledge();
 	const kbId = selectedKb?.id;
@@ -32,7 +36,9 @@ export default function ProductsSection() {
 	const [error, setError] = useState<string | null>(null);
 	const [loadFailed, setLoadFailed] = useState(false);
 	const [tab, setTab] = useState<Tab>("all");
-	const [editing, setEditing] = useState<Product | null>(null);
+	// id null = adding a product. session changes only when a different editor opens, so saving never remounts it
+	const [editor, setEditor] = useState<{ id: string | null; session: number } | null>(null);
+	const [stalled, setStalled] = useState(false);
 	const [view, setView] = useState<View>("products");
 	const [pages, setPages] = useState<CandidatePage[]>([]);
 
@@ -67,15 +73,37 @@ export default function ProductsSection() {
 	useEffect(() => {
 		setProducts(null);
 		setLoadFailed(false);
-		setEditing(null);
+		setEditor(null);
 		setPages([]);
 		load();
 		loadCandidates();
 	}, [load, loadCandidates]);
 
-	const replace = (saved: Product) => {
-		setProducts((prev) => (prev ?? []).map((p) => (p.id === saved.id ? saved : p)));
-	};
+	// One list, one poll: keep refreshing while any photo is still being processed
+	const pending = products?.some(isPhotoBusy) ?? false;
+	useEffect(() => {
+		if (!pending) return;
+		setStalled(false);
+		const started = Date.now();
+		const timer = setInterval(() => {
+			if (Date.now() - started > POLL_LIMIT_MS) {
+				clearInterval(timer);
+				setStalled(true);
+				return;
+			}
+			if (!document.hidden) load();
+		}, POLL_MS);
+		return () => clearInterval(timer);
+	}, [pending, load]);
+
+	// Adds a new product, or replaces the one that changed
+	const put = (saved: Product) =>
+		setProducts((prev) => {
+			const list = prev ?? [];
+			return list.some((p) => p.id === saved.id) ? list.map((p) => (p.id === saved.id ? saved : p)) : [...list, saved];
+		});
+
+	const openEditor = (id: string | null) => setEditor((e) => ({ id, session: (e?.session ?? 0) + 1 }));
 
 	const reviewCount = pages.reduce((n, p) => n + p.candidates.length, 0);
 	const needsInfo = products?.filter((p) => p.status === "needs_info").length ?? 0;
@@ -83,84 +111,81 @@ export default function ProductsSection() {
 	const shown = products?.filter((p) => tab === "all" || p.status === tab) ?? [];
 
 	return (
-		<div className="space-y-6">
-			<Card>
-				<CardHeader>
-					<CardTitle className="flex items-center gap-2"><Tag className="h-5 w-5" /> Product Catalog</CardTitle>
-					<CardDescription>Prices and details the assistant uses to answer customers and take orders</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					{error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-					{!selectedKb ? (
-						<p className="text-center py-4 text-muted-foreground">No knowledge base selected</p>
-					) : products === null && loadFailed ? (
-						<div className="flex justify-center py-4">
-							<Button variant="outline" onClick={() => { setLoadFailed(false); load(); }}>Retry</Button>
-						</div>
-					) : products === null ? (
-						<div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-					) : (
-						<>
-							<Tabs value={view} onValueChange={(v) => setView(v as View)}>
-								<TabsList>
-									<TabsTrigger value="products">Products</TabsTrigger>
-									{isAdmin && <TabsTrigger value="sources">Sources</TabsTrigger>}
-									<TabsTrigger value="review">Review ({reviewCount})</TabsTrigger>
-								</TabsList>
-							</Tabs>
-							{view === "sources" && isAdmin && projectId && kbId && (
-								<ProductSourcesPanel projectId={projectId} kbId={kbId} onChanged={refresh} />
-							)}
-							{view === "review" && projectId && kbId && (
-								<CandidateReview
-									projectId={projectId}
-									kbId={kbId}
-									pages={pages}
-									currency={products[0]?.currency ?? "BDT"}
-									isAdmin={isAdmin}
-									onChanged={refresh}
-								/>
-							)}
-							{view === "products" && (<>
-							<NeedsInfoBanner count={needsInfo} />
-							<Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-								<TabsList>
-									{TABS.map((t) => <TabsTrigger key={t.value} value={t.value}>{t.label}</TabsTrigger>)}
-								</TabsList>
-							</Tabs>
-							{editing && projectId && (
-								<ProductEditor
-									key={editing.id}
-									projectId={projectId}
-									kbId={editing.kb_id}
-									product={editing}
-									onSaved={replace}
-									onClose={() => setEditing(null)}
-								/>
-							)}
-							<ProductTable
-								products={shown}
-								onEdit={setEditing}
-								onSavePrice={async (p, price) => replace(await productApi.patch(p.id, { price }))}
+		<Card>
+			<CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+				<div className="space-y-1.5">
+					<CardTitle className="flex items-center gap-2"><Tag className="h-5 w-5" /> Products</CardTitle>
+					<CardDescription>Prices, details and photos the assistant uses to answer customers and take orders</CardDescription>
+				</div>
+				{isAdmin && selectedKb && (
+					<Button onClick={() => openEditor(null)}><Plus className="mr-2 h-4 w-4" />Add product</Button>
+				)}
+			</CardHeader>
+			<CardContent className="space-y-4">
+				{error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+				{!selectedKb ? (
+					<p className="text-center py-4 text-muted-foreground">No knowledge base selected</p>
+				) : products === null && loadFailed ? (
+					<div className="flex justify-center py-4">
+						<Button variant="outline" onClick={() => { setLoadFailed(false); load(); }}>Retry</Button>
+					</div>
+				) : products === null ? (
+					<div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+				) : (
+					<>
+						<Tabs value={view} onValueChange={(v) => setView(v as View)}>
+							<TabsList>
+								<TabsTrigger value="products">Product list</TabsTrigger>
+								{isAdmin && <TabsTrigger value="sources">Sources</TabsTrigger>}
+								<TabsTrigger value="review">Review ({reviewCount})</TabsTrigger>
+							</TabsList>
+						</Tabs>
+						{view === "sources" && isAdmin && projectId && kbId && (
+							<ProductSourcesPanel projectId={projectId} kbId={kbId} onChanged={refresh} />
+						)}
+						{view === "review" && projectId && kbId && (
+							<CandidateReview
+								projectId={projectId}
+								kbId={kbId}
+								pages={pages}
+								currency={products[0]?.currency ?? "BDT"}
+								isAdmin={isAdmin}
+								onChanged={refresh}
 							/>
-							</>)}
-						</>
-					)}
-				</CardContent>
-			</Card>
-
-			{/* Photos need image search; the catalog above does not */}
-			{imageSearchOn && projectId && selectedKb && (
-				<Card>
-					<CardHeader>
-						<CardTitle>Product photos</CardTitle>
-						<CardDescription>Photos let the assistant recognise a product when a customer sends a picture</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<ProductCatalog projectId={projectId} kbId={selectedKb.id} isAdmin={isAdmin} onProductsChange={setProducts} />
-					</CardContent>
-				</Card>
-			)}
-		</div>
+						)}
+						{view === "products" && (<>
+						<NeedsInfoBanner count={needsInfo} />
+						{stalled && pending && (
+							<Alert><AlertDescription>Still indexing. This is taking longer than usual. Reload the page to check again.</AlertDescription></Alert>
+						)}
+						<Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+							<TabsList>
+								{TABS.map((t) => <TabsTrigger key={t.value} value={t.value}>{t.label}</TabsTrigger>)}
+							</TabsList>
+						</Tabs>
+						{editor && projectId && kbId && (
+							<ProductEditor
+								key={editor.session}
+								projectId={projectId}
+								kbId={kbId}
+								product={products.find((p) => p.id === editor.id) ?? null}
+								currency={products[0]?.currency ?? "BDT"}
+								imageSearchOff={imageSearchOn === false}
+								onSaved={(p) => { put(p); setEditor((e) => e && { ...e, id: p.id }); }}
+								onDeleted={(id) => { setProducts((prev) => (prev ?? []).filter((p) => p.id !== id)); setEditor(null); }}
+								onClose={() => setEditor(null)}
+							/>
+						)}
+						<ProductTable
+							products={shown}
+							isAdmin={isAdmin}
+							onEdit={(p) => openEditor(p.id)}
+							onSavePrice={async (p, price) => put(await productApi.patch(p.id, { price }))}
+						/>
+						</>)}
+					</>
+				)}
+			</CardContent>
+		</Card>
 	);
 }

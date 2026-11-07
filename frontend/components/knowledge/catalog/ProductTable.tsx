@@ -6,19 +6,37 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Loader2 } from "lucide-react";
-import type { Product } from "@/lib/api";
+import { API_BASE_URL, type Product } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 
 export const currencySymbol = (code: string) => (code === "BDT" ? "৳" : code);
 
 type Props = {
 	products: Product[];
+	isAdmin: boolean;
 	/** Throws on failure; the table shows the message under the row */
 	onSavePrice: (product: Product, price: string) => Promise<void>;
 	onEdit: (product: Product) => void;
 };
 
-export default function ProductTable({ products, onSavePrice, onEdit }: Props) {
+function Thumb({ p }: { p: Product }) {
+	const cover = p.images.find((i) => i.status === "ready");
+	if (cover) {
+		// eslint-disable-next-line @next/next/no-img-element
+		return <img src={`${API_BASE_URL}${cover.thumb_url}`} alt={p.name} loading="lazy" className="h-10 w-10 rounded object-cover" />;
+	}
+	if (p.images.some((i) => i.status === "uploading" || i.status === "pending")) {
+		return (
+			<span role="img" aria-label="Indexing photo" className="flex h-10 w-10 items-center justify-center rounded border">
+				<Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+			</span>
+		);
+	}
+	const failed = p.images.some((i) => i.status === "failed");
+	return <span role="img" aria-label={failed ? "Photo failed" : "No photo yet"} className="block h-10 w-10 rounded border bg-muted" />;
+}
+
+export default function ProductTable({ products, isAdmin, onSavePrice, onEdit }: Props) {
 	const inputs = useRef(new Map<string, HTMLInputElement>());
 	const [drafts, setDrafts] = useState<Record<string, string>>({});
 	const [busyId, setBusyId] = useState<string | null>(null);
@@ -52,6 +70,7 @@ export default function ProductTable({ products, onSavePrice, onEdit }: Props) {
 		<Table>
 			<TableHeader>
 				<TableRow>
+					<TableHead className="w-14">Photo</TableHead>
 					<TableHead>Name</TableHead>
 					<TableHead>SKU / ID</TableHead>
 					<TableHead className="w-40">Price</TableHead>
@@ -62,6 +81,7 @@ export default function ProductTable({ products, onSavePrice, onEdit }: Props) {
 			<TableBody>
 				{products.map((p, i) => (
 					<TableRow key={p.id}>
+						<TableCell><Thumb p={p} /></TableCell>
 						<TableCell className="font-medium">
 							{p.name}
 							{errors[p.id] && <p className="text-xs text-destructive" role="alert">{errors[p.id]}</p>}
@@ -97,7 +117,7 @@ export default function ProductTable({ products, onSavePrice, onEdit }: Props) {
 							</Badge>
 						</TableCell>
 						<TableCell className="text-right">
-							<Button variant="outline" size="sm" onClick={() => onEdit(p)}>Edit</Button>
+							{isAdmin && <Button variant="outline" size="sm" onClick={() => onEdit(p)}>Edit</Button>}
 						</TableCell>
 					</TableRow>
 				))}

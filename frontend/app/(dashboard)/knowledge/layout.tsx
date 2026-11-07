@@ -61,7 +61,7 @@ function KnowledgeShell({ children }: { children: React.ReactNode }) {
 				</Alert>
 			)}
 
-			<div className="md:grid md:grid-cols-[16rem_minmax(0,1fr)] md:items-start md:gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
+			<div className="md:grid md:grid-cols-[11rem_minmax(0,1fr)] md:items-start md:gap-6 lg:grid-cols-[12rem_minmax(0,1fr)]">
 				<aside className={cn("md:sticky md:top-20", !isIndex && "hidden md:block")}>
 					<KnowledgeSectionNav active={active} activeOnDesktopOnly={isIndex} />
 				</aside>

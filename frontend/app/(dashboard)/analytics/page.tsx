@@ -213,7 +213,7 @@ export default function AnalyticsPage() {
 					<MetricCard
 						title="Photo searches"
 						value={data.token_usage.photo_searches ?? 0}
-						description="Customer photos matched against the catalog"
+						description="Customer photos matched against your products"
 						icon={Camera}
 					/>
 				</StatsGrid>

@@ -4,6 +4,14 @@
       "Bash(docker compose:*)",
       "Bash(xargs grep:*)",
       "Bash(python manage.py makemigrations knowledge --name document_search_query)"
+    ],
+    "deny": [
+      "ReadFile(.env)",
+      "ReadFile(.env.prod)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "meta-social-technologies",
+    "whatsapp-business-mcp"
+  ]
 }

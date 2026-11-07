@@ -18,6 +18,8 @@ type Props = { projectId: string; kbId: string; onReady: () => void };
 export default function SetupStepSetup({ projectId, kbId, onReady }: Props) {
 	const [state, setState] = useState<SetupState | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	// Bumped by "Sync again". Zero means the user has not asked for a new run.
+	const [resync, setResync] = useState(0);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -34,17 +36,26 @@ export default function SetupStepSetup({ projectId, kbId, onReady }: Props) {
 			}
 		}
 
-		orderApi
-			.runSetup(projectId, kbId)
-			.then(() => poll())
-			.catch((e) => {
+		async function start() {
+			try {
+				const current = (await orderApi.setupState(projectId)).data;
+				if (cancelled) return;
+				setState(current);
+				// Setup that already ran is not repeated; only a first run or an explicit "Sync again" starts the workers.
+				const needsRun = current.status === "not_started" || resync > 0;
+				if (needsRun) await orderApi.runSetup(projectId, kbId);
+				if (needsRun || current.status === "running") await poll();
+			} catch (e) {
 				if (!cancelled) setError(formatError(e));
-			});
+			}
+		}
+
+		start();
 		return () => {
 			cancelled = true;
 			if (timer) clearTimeout(timer);
 		};
-	}, [projectId, kbId]);
+	}, [projectId, kbId, resync]);
 
 	const ready = state?.status === "ready";
 	const found = state?.report.found ?? {};
@@ -76,7 +87,12 @@ export default function SetupStepSetup({ projectId, kbId, onReady }: Props) {
 					))}
 				</ul>
 			)}
-			<div className="flex justify-end">
+			<div className="flex justify-end gap-2">
+				{ready && (
+					<Button variant="outline" onClick={() => setResync((n) => n + 1)}>
+						Sync again
+					</Button>
+				)}
 				<Button onClick={onReady} disabled={!ready}>
 					Next
 				</Button>

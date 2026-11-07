@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { orderApi, type OrderSettings, type OrderZone, type PaymentMethod } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
+import { cn } from "@/lib/utils";
 
 const CHANNELS = [
 	{ value: "facebook", label: "Facebook Messenger" },
@@ -22,6 +23,7 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 	const [draft, setDraft] = useState<OrderSettings | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
+	const [triedSave, setTriedSave] = useState(false);
 
 	useEffect(() => {
 		orderApi.settings(projectId).then((res) => setDraft(res.data)).catch((e) => setError(formatError(e)));
@@ -46,8 +48,12 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 	}
 
 	async function save() {
-		if (draft!.zones.some((z) => !z.name.trim() || !z.charge)) {
-			setError("Every delivery zone needs a name and a delivery charge before you go live.");
+		setTriedSave(true);
+		const bad = draft!.zones.findIndex((z) => !z.name.trim() || !z.charge);
+		if (bad >= 0) {
+			setError(
+				`Delivery zone ${bad + 1} is missing a name or a charge. Fill in both boxes in the "Delivery zones and charges" section below (the red boxes), or remove that row with the trash icon. Orders can't go live until every zone is complete.`,
+			);
 			return;
 		}
 		setBusy(true);
@@ -76,8 +82,11 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 				</Alert>
 			)}
 
-			<section className="space-y-2">
+			<section className="space-y-2 pb-2">
 				<Label>Where orders can come from</Label>
+				<p className="text-sm text-muted-foreground">
+					Tick the chats where customers can place orders. The agent only takes orders on the ticked ones. To connect a chat first, go to Channels.
+				</p>
 				{CHANNELS.map((c) => (
 					<label key={c.value} className="flex items-center gap-2 text-sm">
 						<input
@@ -96,13 +105,41 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 				))}
 			</section>
 
-			<section className="space-y-2">
-				<Label>Delivery zones and charges</Label>
+			<section className="space-y-3 rounded-lg border-2 border-primary/50 bg-primary/5 p-4">
+				<div>
+					<Label className="text-base font-semibold">Delivery zones and charges</Label>
+					<p className="text-sm text-muted-foreground">
+						Required. One row per area you deliver to: the area name on the left, its delivery fee (a number) on the right. Enter 0 for free delivery.
+					</p>
+				</div>
+				{draft.zones.length > 0 && (
+					<div className="grid grid-cols-[1fr_9rem_2.5rem] gap-2 text-xs font-medium text-muted-foreground">
+						<span>Area name</span>
+						<span>Delivery fee</span>
+						<span />
+					</div>
+				)}
 				{draft.zones.map((zone, i) => (
-					<div key={i} className="flex gap-2">
-						<Input placeholder="Zone" value={zone.name} onChange={(e) => setZone(i, { name: e.target.value })} />
-						<Input placeholder="Charge" value={zone.charge ?? ""} onChange={(e) => setZone(i, { charge: e.target.value || null })} />
-						<Button variant="ghost" size="icon" onClick={() => update({ zones: draft.zones.filter((_, j) => j !== i) })}>
+					<div key={i} className="grid grid-cols-[1fr_9rem_2.5rem] gap-2">
+						<Input
+							placeholder="e.g. Inside city"
+							aria-label={`Zone ${i + 1} name`}
+							className={triedSave && !zone.name.trim() ? "border-destructive" : undefined}
+							value={zone.name}
+							onChange={(e) => setZone(i, { name: e.target.value })}
+						/>
+						<Input
+							type="number"
+							inputMode="decimal"
+							min="0"
+							step="0.01"
+							placeholder="0.00"
+							aria-label={`Zone ${i + 1} delivery fee`}
+							className={cn("text-right tabular-nums", triedSave && !zone.charge && "border-destructive")}
+							value={zone.charge ?? ""}
+							onChange={(e) => setZone(i, { charge: e.target.value || null })}
+						/>
+						<Button variant="ghost" size="icon" aria-label={`Remove zone ${i + 1}`} onClick={() => update({ zones: draft.zones.filter((_, j) => j !== i) })}>
 							<Trash2 className="h-4 w-4" />
 						</Button>
 					</div>
@@ -112,8 +149,11 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 				</Button>
 			</section>
 
-			<section className="space-y-2">
+			<section className="space-y-2 border-t pt-6">
 				<Label>Payment methods (pick one default)</Label>
+				<p className="text-sm text-muted-foreground">
+					The ways customers can pay. Click the circle next to the one to offer first. Use the trash icon to remove a method you don&apos;t accept.
+				</p>
 				{draft.payment_methods.map((method, i) => (
 					<div key={i} className="flex items-center gap-2">
 						<input type="radio" name="default-payment" checked={method.default} onChange={() => chooseDefault(i)} />
@@ -134,8 +174,11 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 				</Button>
 			</section>
 
-			<section className="space-y-2">
+			<section className="space-y-2 border-t pt-6">
 				<Label htmlFor="emails">Notification emails (comma separated, up to 10)</Label>
+				<p className="text-sm text-muted-foreground">
+					Each new order is emailed to these addresses. Separate them with commas, for example &quot;sales@shop.com, owner@shop.com&quot;.
+				</p>
 				<Input
 					id="emails"
 					value={draft.notification_emails.join(", ")}
@@ -145,7 +188,7 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 				/>
 			</section>
 
-			<div className="flex justify-end">
+			<div className="sticky bottom-0 -mx-1 flex justify-end border-t bg-background/95 px-1 py-3 backdrop-blur">
 				<Button onClick={save} disabled={busy}>
 					{busy ? "Saving…" : saveLabel}
 				</Button>
