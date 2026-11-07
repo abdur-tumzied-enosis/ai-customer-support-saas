@@ -87,7 +87,7 @@ Today the whole photos card is hidden. New behaviour: **photos are always manage
 | `components/knowledge/catalog/ProductEditor.tsx` | Add `PhotosBlock`. Support create mode (no `product`). |
 | `components/knowledge/ProductCatalog.tsx` | **Delete.** Its create, edit, delete and photo logic moves into the editor. |
 | `components/knowledge/KnowledgeSectionNav.tsx` | Keep label "Product Catalog" → rename "Products". Stats text stays "N products · M photos". |
-| `components/orders/RequirementsDialog.tsx` | Link label "Open Product Catalog" → "Open Products". |
+| `components/orders/RequirementsDialog.tsx` | Superseded: the dialog was removed. The Orders page entry panel (`OrdersEntryPanel.tsx`) links to Knowledge, and the setup flow's product step (`SetupStepProducts.tsx`) uses `ProductTable` with save on blur, so the "Open Product Catalog" label no longer exists. |
 | `app/(dashboard)/analytics/page.tsx` | "Customer photos matched against the catalog" → "…against your products". Optional wording. |
 
 Route stays `/knowledge/products`, so no links break.

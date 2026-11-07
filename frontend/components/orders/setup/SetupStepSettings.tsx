@@ -9,6 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { orderApi, type OrderSettings, type OrderZone, type PaymentMethod } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { useSetupDirty } from "@/components/orders/setup/SetupDirty";
 
 const CHANNELS = [
 	{ value: "facebook", label: "Facebook Messenger" },
@@ -24,10 +25,25 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [triedSave, setTriedSave] = useState(false);
+	const [saved, setSaved] = useState("");
+	const setDirty = useSetupDirty();
+	const dirty = draft !== null && JSON.stringify(draft) !== saved;
 
 	useEffect(() => {
-		orderApi.settings(projectId).then((res) => setDraft(res.data)).catch((e) => setError(formatError(e)));
+		orderApi
+			.settings(projectId)
+			.then((res) => {
+				setDraft(res.data);
+				setSaved(JSON.stringify(res.data));
+			})
+			.catch((e) => setError(formatError(e)));
 	}, [projectId]);
+
+	useEffect(() => {
+		setDirty(dirty);
+	}, [dirty, setDirty]);
+
+	useEffect(() => () => setDirty(false), [setDirty]);
 
 	if (!draft) {
 		return error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : <Loader2 className="h-5 w-5 animate-spin" />;
@@ -65,6 +81,7 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 				payment_methods: draft!.payment_methods,
 				notification_emails: draft!.notification_emails,
 			});
+			setSaved(JSON.stringify(draft));
 			onSaved();
 		} catch (e) {
 			setError(formatError(e));
@@ -75,7 +92,6 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 
 	return (
 		<div className="space-y-6">
-			<h2 className="text-lg font-medium">Settings</h2>
 			{error && (
 				<Alert variant="destructive">
 					<AlertDescription>{error}</AlertDescription>

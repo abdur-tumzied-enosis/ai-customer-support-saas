@@ -5,21 +5,26 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { knowledgeBaseApi } from "@/lib/api";
+import { orderApi } from "@/lib/orders-api";
+import { setupStep } from "@/lib/orders-setup";
 import { formatError } from "@/lib/errors";
 import SetupStepSetup from "@/components/orders/setup/SetupStepSetup";
-import SetupStepSettings from "@/components/orders/setup/SetupStepSettings";
 import SetupStepProducts from "@/components/orders/setup/SetupStepProducts";
 
-type Props = { projectId: string; onDone: () => void };
+type Props = { projectId: string };
 
-export default function SetupWizard({ projectId, onDone }: Props) {
-	const [kbId, setKbId] = useState<string | null>(null);
+export default function SetupWizard({ projectId }: Props) {
 	const router = useRouter();
-	const step = Math.min(3, Math.max(1, Number(useSearchParams().get("step")) || 1));
-	const setStep = (n: number) => router.push(`/orders/setup?step=${n}`);
+	const requested = useSearchParams().get("step");
+	const [kbId, setKbId] = useState<string | null>(null);
+	const [confirmed, setConfirmed] = useState<boolean | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
+		orderApi
+			.settings(projectId)
+			.then((res) => setConfirmed(res.data.settings_confirmed_at !== null))
+			.catch((e) => setError(formatError(e)));
 		knowledgeBaseApi
 			.list(projectId)
 			.then((res) => {
@@ -38,15 +43,22 @@ export default function SetupWizard({ projectId, onDone }: Props) {
 			</Alert>
 		);
 	}
-	if (!kbId) return <Loader2 className="h-5 w-5 animate-spin" />;
+	if (!kbId || confirmed === null) return <Loader2 className="h-5 w-5 animate-spin" />;
 
-	return (
-		<div className="mx-auto max-w-2xl space-y-6">
-			{step === 1 && <SetupStepSetup projectId={projectId} kbId={kbId} onReady={() => setStep(2)} />}
-			{step === 2 && <SetupStepSettings projectId={projectId} onSaved={() => setStep(3)} />}
-			{step === 3 && (
-				<SetupStepProducts projectId={projectId} kbId={kbId} onBack={() => setStep(2)} onGoLive={onDone} />
-			)}
-		</div>
-	);
+	// Saving the settings is what moves the flow on; the URL cannot skip ahead (see setupStep).
+	const step = setupStep(confirmed, requested);
+	if (step === 1) {
+		return (
+			<SetupStepSetup
+				projectId={projectId}
+				kbId={kbId}
+				onSaved={() => {
+					// Clears a ?step=1 left by Back; the saved settings now decide that Products is next.
+					setConfirmed(true);
+					router.replace("/orders/setup");
+				}}
+			/>
+		);
+	}
+	return <SetupStepProducts projectId={projectId} kbId={kbId} onBack={() => router.push("/orders/setup?step=1")} />;
 }

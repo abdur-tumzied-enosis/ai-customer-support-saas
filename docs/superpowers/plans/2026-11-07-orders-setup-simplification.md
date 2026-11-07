@@ -72,9 +72,9 @@ Reviewed against the frontend-design guidance. This is an admin tool inside an e
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 1 | Backend: settings confirmed flag | [x] |
-| 2 | Routes and sidebar | [ ] |
-| 3 | Orders page entry panel | [ ] |
-| 4 | Setup flow | [ ] |
+| 2 | Routes and sidebar | [x] |
+| 3 | Orders page entry panel | [x] |
+| 4 | Setup flow | [x] |
 | 5 | Cleanup and verification | [ ] |
 
 ## Phase 1: Backend (settings confirmed flag)
@@ -96,46 +96,46 @@ Reviewed against the frontend-design guidance. This is an admin tool inside an e
 
 ## Phase 2: Routes and sidebar
 
-- [ ] Move the orders list into a route group so the setup route can have a different layout:
+- [x] Move the orders list into a route group so the setup route can have a different layout:
   `orders/(shell)/layout.tsx` (renders `OrdersShell`) and `orders/(shell)/page.tsx`; delete `orders/layout.tsx`. URLs do not change.
-- [ ] Add `orders/setup/layout.tsx`: minimal header (title, step indicator, Exit to `/orders`), no `OrdersShell`.
-- [ ] `OrdersShell.tsx`: delete `STEPS`, `showSteps`, `inSetup`, the Setup group and the `useSearchParams` step read. Rename "All orders" to "Orders". Remove the now unneeded `Suspense` wrapper if nothing else in the shell reads search params.
-- [ ] Keep the "Taking orders / Orders are off" status pill.
+- [x] Add `orders/setup/layout.tsx`: minimal header (title, step indicator, Exit to `/orders`), no `OrdersShell`.
+- [x] `OrdersShell.tsx`: delete `STEPS`, `showSteps`, `inSetup`, the Setup group and the `useSearchParams` step read. Rename "All orders" to "Orders". Remove the now unneeded `Suspense` wrapper if nothing else in the shell reads search params.
+- [x] Keep the "Taking orders / Orders are off" status pill.
 - [ ] Check `project-settings/orders/layout.tsx` still wraps the shell and the sidebar looks the same before and after enabling orders.
 
 ## Phase 3: Orders page entry
 
-- [ ] Replace the "Start taking orders" card (`orders/page.tsx:122-131`) with a panel: title "Start taking orders", one line of explanation, and a [Set up orders] button. When `settings_confirmed_at` is set but orders are off, the button says "Continue setup". While orders are off and there are no orders, show only the panel: hide the filters, table and Export CSV.
-- [ ] Show the two hard blockers (channel, product source) in the panel, from `orderApi.requirements`, with links to Channels and Knowledge. Hide the help text for delivery and product keys.
-- [ ] Keep "Try it" (test mode) in the panel.
-- [ ] Remove `RequirementsDialog` once the panel covers it (or reduce it to the blocker list). Remove its `onContinue`/`onTryIt` wiring from `orders/page.tsx`.
-- [ ] Make sure enabled projects never see the panel.
-- [ ] When the setup job is running, failed or waiting for input, show that on the panel ("We're reading your website and documents", "Setup stopped. Open it to see why") with the button going to `/orders/setup`. This is how a user who left the flow sees progress when they come back.
+- [x] Replace the "Start taking orders" card (`orders/page.tsx:122-131`) with a panel: title "Start taking orders", one line of explanation, and a [Set up orders] button. When `settings_confirmed_at` is set but orders are off, the button says "Continue setup". While orders are off and there are no orders, show only the panel: hide the filters, table and Export CSV.
+- [x] Show the two hard blockers (channel, product source) in the panel, from `orderApi.requirements`, with links to Channels and Knowledge. Hide the help text for delivery and product keys.
+- [x] Keep "Try it" (test mode) in the panel.
+- [x] Remove `RequirementsDialog` once the panel covers it (or reduce it to the blocker list). Remove its `onContinue`/`onTryIt` wiring from `orders/page.tsx`.
+- [x] Make sure enabled projects never see the panel.
+- [x] When the setup job is running, failed or waiting for input, show that on the panel ("We're reading your website and documents", "Setup stopped. Open it to see why") with the button going to `/orders/setup`. This is how a user who left the flow sees progress when they come back.
 
 ## Phase 4: Setup flow
 
-- [ ] `SetupWizard`: derive the step from `settings_confirmed_at` (D2, D3). Drop the `router.push(?step)` navigation except for Back.
-- [ ] On entry: `not_started` starts the job; `running` only polls (never starts a second run); `failed` or `needs_input` shows the problem and waits for the user; `ready` goes straight to the form. Never auto-retry.
-- [ ] New `SetupProgress` component: a checklist with one row per step (done check, spinner, failed cross, empty circle), the step's detail text, and an `aria-live="polite"` region so screen readers hear changes. Poll the status endpoint every 2 seconds while running. It renders only server state.
-- [ ] Failed row: the plain message, then a primary [Try again] (resume; the failed row already names the step) and a quiet [Start over] link (restart). Never repeat the step name inside the button. `needs_input` row: the message plus its link (for example "Add a website or document"), and a [Check again] button that resumes.
-- [ ] [Fill in myself] shows the settings form without the job's results. Only offered on `failed` and `needs_input`; safe because the job saves with `update_fields` and only into empty fields.
-- [ ] Step 1 (Settings): while the job runs show `SetupProgress`; after `ready`, show a one-line summary from the report plus the settings form (`SetupStepSettings`). Keep a small [Run again] link that uses restart. Button: "Save and continue".
-- [ ] Step 2 (Products), zone A: `CandidateReview` as it is today.
-- [ ] Step 2 (Products), zone B: `ProductTable` with needs-a-price rows first. Pass `onSavePrice` through `productApi.patch` (same as `ProductsSection.tsx:183`). Add save on blur.
-- [ ] Copy under the table: "N products ready to sell. M need a price." The "M need a price" text jumps to the first empty price field.
-- [ ] Turn on orders: when disabled, write the reason beside the button and connect it with `aria-describedby`. On success go to `/orders` and show the "Orders are on" empty state there (see Design review).
-- [ ] Confirmation text when some products have no price: "2 products without a price stay hidden until you add one in Knowledge > Products."
+- [x] `SetupWizard`: derive the step from `settings_confirmed_at` (D2, D3). Drop the `router.push(?step)` navigation except for Back.
+- [x] On entry: `not_started` starts the job; `running` only polls (never starts a second run); `failed` or `needs_input` shows the problem and waits for the user; `ready` goes straight to the form. Never auto-retry.
+- [x] New `SetupProgress` component: a checklist with one row per step (done check, spinner, failed cross, empty circle), the step's detail text, and an `aria-live="polite"` region so screen readers hear changes. Poll the status endpoint every 2 seconds while running. It renders only server state.
+- [x] Failed row: the plain message, then a primary [Try again] (resume; the failed row already names the step) and a quiet [Start over] link (restart). Never repeat the step name inside the button. `needs_input` row: the message plus its link (for example "Add a website or document"), and a [Check again] button that resumes.
+- [x] [Fill in myself] shows the settings form without the job's results. Only offered on `failed` and `needs_input`; safe because the job saves with `update_fields` and only into empty fields.
+- [x] Step 1 (Settings): while the job runs show `SetupProgress`; after `ready`, show a one-line summary from the report plus the settings form (`SetupStepSettings`). Keep a small [Run again] link that uses restart. Button: "Save and continue".
+- [x] Step 2 (Products), zone A: `CandidateReview` as it is today.
+- [x] Step 2 (Products), zone B: `ProductTable` with needs-a-price rows first. Pass `onSavePrice` through `productApi.patch` (same as `ProductsSection.tsx:183`). Add save on blur.
+- [x] Copy under the table: "N products ready to sell. M need a price." The "M need a price" text jumps to the first empty price field.
+- [x] Turn on orders: when disabled, write the reason beside the button and connect it with `aria-describedby`. On success go to `/orders` and show the "Orders are on" empty state there (see Design review).
+- [x] Confirmation text when some products have no price: "2 products without a price stay hidden until you add one in Knowledge > Products."
 - [ ] Mobile layout at 375px: step indicator on one line, the product table scrolls inside its container, no horizontal page scroll.
 - [ ] Keyboard: visible focus everywhere, Enter in a price field saves and moves to the next empty price.
 
 ## Phase 5: Cleanup and verification
 
 - [ ] Delete `SetupStepSetup.tsx` if its logic moved into the wizard. Remove unused `LABELS`, imports and the `?step=` query use.
-- [ ] Order settings page (`project-settings/orders/page.tsx`): drop the duplicate "Settings" heading inside `SetupStepSettings` when rendered under the section title.
-- [ ] `npx tsc --noEmit` and lint pass in `frontend/`.
-- [ ] Backend tests for `orders` pass.
+- [x] Order settings page (`project-settings/orders/page.tsx`): drop the duplicate "Settings" heading inside `SetupStepSettings` when rendered under the section title.
+- [x] `npx tsc --noEmit` and lint pass in `frontend/`.
+- [x] Backend tests for `orders` pass.
 - [ ] Browser check with Playwright: (a) new project, KB with crawled site: full setup to live; (b) setup abandoned after step 1, then "Continue setup"; (c) enabled project: sidebar has two items, no panel; (d) turn orders off, then on.
-- [ ] Update `docs/superpowers/specs/2026-11-06-unified-products-design.md` if the product-step behaviour changes what that spec says.
+- [x] Update `docs/superpowers/specs/2026-11-06-unified-products-design.md` if the product-step behaviour changes what that spec says.
 
 ## Risks and open questions
 

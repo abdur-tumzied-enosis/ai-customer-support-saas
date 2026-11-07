@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Loader2 } from "lucide-react";
 import { API_BASE_URL, type Product } from "@/lib/api";
 import { formatError } from "@/lib/errors";
+import { cn } from "@/lib/utils";
 
 export const currencySymbol = (code: string) => (code === "BDT" ? "৳" : code);
 
@@ -17,6 +18,9 @@ type Props = {
 	/** Throws on failure; the table shows the message under the row */
 	onSavePrice: (product: Product, price: string) => Promise<void>;
 	onEdit: (product: Product) => void;
+	/** Setup flow: hide SKU and Edit below the sm breakpoint, and save a price when its field loses focus */
+	compact?: boolean;
+	saveOnBlur?: boolean;
 };
 
 function Thumb({ p }: { p: Product }) {
@@ -36,7 +40,7 @@ function Thumb({ p }: { p: Product }) {
 	return <span role="img" aria-label={failed ? "Photo failed" : "No photo yet"} className="block h-10 w-10 rounded border bg-muted" />;
 }
 
-export default function ProductTable({ products, isAdmin, onSavePrice, onEdit }: Props) {
+export default function ProductTable({ products, isAdmin, onSavePrice, onEdit, compact = false, saveOnBlur = false }: Props) {
 	const inputs = useRef(new Map<string, HTMLInputElement>());
 	const [drafts, setDrafts] = useState<Record<string, string>>({});
 	const [busyId, setBusyId] = useState<string | null>(null);
@@ -44,11 +48,12 @@ export default function ProductTable({ products, isAdmin, onSavePrice, onEdit }:
 
 	const without = (rec: Record<string, string>, id: string) => Object.fromEntries(Object.entries(rec).filter(([k]) => k !== id));
 
-	const save = async (p: Product, i: number) => {
+	// Enter moves on to the next empty price; leaving the field (blur) only saves, so focus is not taken away
+	const save = async (p: Product, i: number, moveNext = true) => {
 		const draft = drafts[p.id];
 		const next = products.slice(i + 1).find((q) => q.status === "needs_info");
 		if (draft === undefined || draft.trim() === (p.price ?? "")) {
-			if (next) inputs.current.get(next.id)?.focus();
+			if (moveNext && next) inputs.current.get(next.id)?.focus();
 			return;
 		}
 		setBusyId(p.id);
@@ -56,7 +61,7 @@ export default function ProductTable({ products, isAdmin, onSavePrice, onEdit }:
 		try {
 			await onSavePrice(p, draft.trim());
 			setDrafts((d) => without(d, p.id));
-			if (next) inputs.current.get(next.id)?.focus();
+			if (moveNext && next) inputs.current.get(next.id)?.focus();
 		} catch (err) {
 			setErrors((e) => ({ ...e, [p.id]: formatError(err) }));
 		} finally {
@@ -72,10 +77,10 @@ export default function ProductTable({ products, isAdmin, onSavePrice, onEdit }:
 				<TableRow>
 					<TableHead className="w-14">Photo</TableHead>
 					<TableHead>Name</TableHead>
-					<TableHead>SKU / ID</TableHead>
+					<TableHead className={compact ? "hidden sm:table-cell" : undefined}>SKU / ID</TableHead>
 					<TableHead className="w-40">Price</TableHead>
 					<TableHead>Status</TableHead>
-					<TableHead />
+					<TableHead className={compact ? "hidden sm:table-cell" : undefined} />
 				</TableRow>
 			</TableHeader>
 			<TableBody>
@@ -86,7 +91,7 @@ export default function ProductTable({ products, isAdmin, onSavePrice, onEdit }:
 							{p.name}
 							{errors[p.id] && <p className="text-xs text-destructive" role="alert">{errors[p.id]}</p>}
 						</TableCell>
-						<TableCell className="text-muted-foreground">{p.sku || p.external_id || "—"}</TableCell>
+						<TableCell className={cn("text-muted-foreground", compact && "hidden sm:table-cell")}>{p.sku || p.external_id || "—"}</TableCell>
 						<TableCell>
 							<div className="flex items-center gap-1">
 								<span className="text-muted-foreground">{currencySymbol(p.currency)}</span>
@@ -97,9 +102,11 @@ export default function ProductTable({ products, isAdmin, onSavePrice, onEdit }:
 									}}
 									inputMode="decimal"
 									aria-label={`Price for ${p.name}`}
+									data-needs-price={p.status === "needs_info" ? "true" : undefined}
 									value={drafts[p.id] ?? p.price ?? ""}
 									disabled={busyId === p.id}
 									onChange={(e) => setDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
+									onBlur={saveOnBlur ? () => void save(p, i, false) : undefined}
 									onKeyDown={(e) => {
 										if (e.key === "Enter") {
 											e.preventDefault();
@@ -116,7 +123,7 @@ export default function ProductTable({ products, isAdmin, onSavePrice, onEdit }:
 								{p.status === "needs_info" ? "Needs info" : p.status === "hidden" ? "Hidden" : "Active"}
 							</Badge>
 						</TableCell>
-						<TableCell className="text-right">
+						<TableCell className={cn("text-right", compact && "hidden sm:table-cell")}>
 							{isAdmin && <Button variant="outline" size="sm" onClick={() => onEdit(p)}>Edit</Button>}
 						</TableCell>
 					</TableRow>

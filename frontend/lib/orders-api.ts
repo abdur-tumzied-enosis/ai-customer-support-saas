@@ -36,8 +36,18 @@ export type LiveLookup = {
 	headers: LiveHeader[];
 };
 
+export type SetupStepStatus = "pending" | "running" | "done" | "failed" | "needs_input";
+export type SetupStep = {
+	key: "content" | "products" | "delivery";
+	label: string;
+	status: SetupStepStatus;
+	detail: string;
+	error_code: string;
+	error: string;
+};
 export type SetupState = {
-	status: "not_started" | "running" | "ready";
+	status: "not_started" | "running" | "ready" | "failed" | "needs_input";
+	steps: SetupStep[];
 	report: { found?: Record<string, number>; not_found?: string[] };
 };
 
@@ -53,8 +63,8 @@ export const orderApi = {
 	settings: (projectId: string) => apiFetch<OrderSettings>(`/api/orders/settings/${withProject(projectId)}`),
 	saveSettings: (projectId: string, data: Partial<OrderSettings>) =>
 		apiFetch<OrderSettings>(`/api/orders/settings/${withProject(projectId)}`, { method: "PATCH", json: data }),
-	runSetup: (projectId: string, kbId: string) =>
-		apiFetch<{ status: string }>("/api/orders/setup/run/", { method: "POST", json: { project_id: projectId, kb_id: kbId } }),
+	runSetup: (projectId: string, kbId: string, mode: "resume" | "restart" = "resume") =>
+		apiFetch<{ status: string }>("/api/orders/setup/run/", { method: "POST", json: { project_id: projectId, kb_id: kbId, mode } }),
 	setupState: (projectId: string) => apiFetch<SetupState>(`/api/orders/setup/${withProject(projectId)}`),
 	list: (projectId: string, filters: OrderFilters, page = 1) => {
 		const params = new URLSearchParams({ project_id: projectId, page: String(page) });

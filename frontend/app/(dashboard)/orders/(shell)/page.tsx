@@ -4,9 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import RequirementsDialog from "@/components/orders/RequirementsDialog";
+import OrdersEntryPanel from "@/components/orders/OrdersEntryPanel";
 import OrderFiltersBar from "@/components/orders/OrderFiltersBar";
 import OrdersTable from "@/components/orders/OrdersTable";
 import ActionBar from "@/components/orders/ActionBar";
@@ -24,7 +23,6 @@ export default function OrdersPage() {
 	const project = projects.length > 0 ? projects[0] : null;
 	const [settings, setSettings] = useState<OrderSettings | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [dialogOpen, setDialogOpen] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [filters, setFilters] = useState<OrderFilters>({});
 	const [page, setPage] = useState(1);
@@ -111,6 +109,7 @@ export default function OrdersPage() {
 
 	const isAdmin = project.role === "admin";
 	const lastPage = Math.max(1, Math.ceil(count / PAGE_SIZE));
+	const hasFilters = Object.values(filters).some(Boolean);
 
 	return (
 		<div className="mx-auto max-w-4xl space-y-6">
@@ -120,18 +119,14 @@ export default function OrdersPage() {
 				</Alert>
 			)}
 			{!settings.enabled && isAdmin && (
-				<Card>
-					<CardHeader>
-						<CardTitle>Start taking orders</CardTitle>
-						<CardDescription>The agent collects an order in the customer&apos;s language and confirms it with you.</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<Button onClick={() => setDialogOpen(true)}>Start taking orders</Button>
-					</CardContent>
-				</Card>
+				<OrdersEntryPanel projectId={String(project.id)} confirmed={settings.settings_confirmed_at !== null} onTryIt={tryIt} />
+			)}
+			{!settings.enabled && !isAdmin && count === 0 && <p className="text-sm text-muted-foreground">Orders are off. Ask an admin to turn them on.</p>}
+			{settings.enabled && count === 0 && !hasFilters && (
+				<p className="text-sm text-muted-foreground">Orders are on. New orders from your chats appear here.</p>
 			)}
 
-			<section className="space-y-3">
+			{(settings.enabled || count > 0) && <section className="space-y-3">
 				<div className="flex items-center justify-between">
 					<h2 className="text-lg font-medium">Order list</h2>
 					{isAdmin && (
@@ -170,15 +165,8 @@ export default function OrdersPage() {
 						</Button>
 					</div>
 				</div>
-			</section>
+			</section>}
 
-			<RequirementsDialog
-				open={dialogOpen}
-				onOpenChange={setDialogOpen}
-				projectId={String(project.id)}
-				onContinue={() => router.push("/orders/setup")}
-				onTryIt={tryIt}
-			/>
 			<OrderDrawer orderId={openId} onOpenChange={(open) => !open && setOpenId(null)} onChanged={loadOrders} />
 		</div>
 	);

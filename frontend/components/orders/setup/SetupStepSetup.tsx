@@ -1,102 +1,106 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import Link from "next/link";
+import type { Route } from "next";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { orderApi, type SetupState } from "@/lib/orders-api";
-import { formatError } from "@/lib/errors";
+import SetupProgress from "@/components/orders/setup/SetupProgress";
+import SetupStepSettings from "@/components/orders/setup/SetupStepSettings";
+import { useSetupState } from "@/components/orders/setup/useSetupState";
 
-const LABELS: Record<string, string> = {
-	zones: "delivery zones",
-	payment_methods: "payment methods",
-	product_candidates: "product candidates",
-};
+type Props = { projectId: string; kbId: string; onSaved: () => void };
 
-type Props = { projectId: string; kbId: string; onReady: () => void };
+function summary(found: Record<string, number> | undefined): string {
+	const zones = found?.zones ?? 0;
+	const payments = found?.payment_methods ?? 0;
+	return `Found ${zones} delivery zones, ${payments ? `${payments} payment methods` : "no payment methods"}.`;
+}
 
-export default function SetupStepSetup({ projectId, kbId, onReady }: Props) {
-	const [state, setState] = useState<SetupState | null>(null);
-	const [error, setError] = useState<string | null>(null);
-	// Bumped by "Sync again". Zero means the user has not asked for a new run.
-	const [resync, setResync] = useState(0);
+// Step 1. The setup job runs first; its form appears only once the job is ready, unless the user fills it in by hand.
+export default function SetupStepSetup({ projectId, kbId, onSaved }: Props) {
+	const { state, error, run } = useSetupState(projectId, kbId);
+	const [manual, setManual] = useState(false);
 
-	useEffect(() => {
-		let cancelled = false;
-		let timer: ReturnType<typeof setTimeout> | undefined;
+	if (!state) {
+		return error ? (
+			<Alert variant="destructive">
+				<AlertDescription>{error}</AlertDescription>
+			</Alert>
+		) : (
+			<Loader2 className="h-5 w-5 animate-spin" />
+		);
+	}
 
-		async function poll() {
-			try {
-				const res = await orderApi.setupState(projectId);
-				if (cancelled) return;
-				setState(res.data);
-				if (res.data.status === "running") timer = setTimeout(poll, 2000);
-			} catch (e) {
-				if (!cancelled) setError(formatError(e));
-			}
-		}
+	const ready = state.status === "ready";
+	const showForm = ready || manual;
 
-		async function start() {
-			try {
-				const current = (await orderApi.setupState(projectId)).data;
-				if (cancelled) return;
-				setState(current);
-				// Setup that already ran is not repeated; only a first run or an explicit "Sync again" starts the workers.
-				const needsRun = current.status === "not_started" || resync > 0;
-				if (needsRun) await orderApi.runSetup(projectId, kbId);
-				if (needsRun || current.status === "running") await poll();
-			} catch (e) {
-				if (!cancelled) setError(formatError(e));
-			}
-		}
-
-		start();
-		return () => {
-			cancelled = true;
-			if (timer) clearTimeout(timer);
-		};
-	}, [projectId, kbId, resync]);
-
-	const ready = state?.status === "ready";
-	const found = state?.report.found ?? {};
-	const notFound = state?.report.not_found ?? [];
+	function retry(mode: "resume" | "restart") {
+		setManual(false);
+		void run(mode);
+	}
 
 	return (
-		<div className="space-y-4">
-			<h2 className="text-lg font-medium">We set it up for you</h2>
-			<p className="text-sm text-muted-foreground">
-				We read your website and documents to fill in what we can. You can change everything in the next step.
-			</p>
+		<div className="space-y-6">
 			{error && (
 				<Alert variant="destructive">
 					<AlertDescription>{error}</AlertDescription>
 				</Alert>
 			)}
-			{!ready && !error && <Loader2 className="h-5 w-5 animate-spin" />}
-			{ready && (
-				<ul className="space-y-1 text-sm">
-					{Object.entries(found).map(([key, count]) => (
-						<li key={key}>
-							Found {count} {LABELS[key] ?? key}
-						</li>
-					))}
-					{notFound.map((item) => (
-						<li key={item} className="text-muted-foreground">
-							Not found: {item}
-						</li>
-					))}
-				</ul>
+
+			{!showForm && (
+				<div className="space-y-4">
+					<p className="text-sm text-muted-foreground">
+						We read your website and documents to fill in what we can. Nothing changes until you save.
+					</p>
+					<SetupProgress steps={state.steps} />
+					{state.status === "running" && (
+						<p className="text-sm text-muted-foreground">This can take a few minutes. You can leave this page and come back.</p>
+					)}
+					{state.status === "needs_input" && (
+						<p className="text-sm">
+							<Link href={"/knowledge/websites" as Route} className="text-primary underline">
+								Add a website or document
+							</Link>
+							, then check again.
+						</p>
+					)}
+					{state.status === "failed" && (
+						<div className="flex flex-wrap items-center gap-3">
+							<Button onClick={() => retry("resume")}>Try again</Button>
+							<Button variant="ghost" onClick={() => retry("restart")}>
+								Start over
+							</Button>
+							<Button variant="outline" onClick={() => setManual(true)}>
+								Fill in myself
+							</Button>
+						</div>
+					)}
+					{state.status === "needs_input" && (
+						<div className="flex flex-wrap items-center gap-3">
+							<Button onClick={() => retry("resume")}>Check again</Button>
+							<Button variant="outline" onClick={() => setManual(true)}>
+								Fill in myself
+							</Button>
+						</div>
+					)}
+				</div>
 			)}
-			<div className="flex justify-end gap-2">
-				{ready && (
-					<Button variant="outline" onClick={() => setResync((n) => n + 1)}>
-						Sync again
-					</Button>
-				)}
-				<Button onClick={onReady} disabled={!ready}>
-					Next
-				</Button>
-			</div>
+
+			{showForm && (
+				<div className="space-y-6">
+					{ready && (
+						<div className="flex flex-wrap items-center justify-between gap-3">
+							<p className="text-sm">{summary(state.report.found)}</p>
+							<Button variant="link" className="h-auto p-0" onClick={() => retry("restart")}>
+								Run again
+							</Button>
+						</div>
+					)}
+					<SetupStepSettings projectId={projectId} onSaved={onSaved} />
+				</div>
+			)}
 		</div>
 	);
 }
