@@ -1136,6 +1136,9 @@ export type ApiConfig = {
 	body: Record<string, unknown> | null;
 	response_path: string;
 	page_param: string;
+	offset_param: string;
+	size_param: string;
+	page_size: number;
 	max_pages: number;
 };
 

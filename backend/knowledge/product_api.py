@@ -14,6 +14,7 @@ from .product_sources import MAX_FILE_BYTES, TableError
 METHODS = ("GET", "POST")
 AUTH_TYPES = ("none", "bearer", "header", "query")
 MAX_API_PAGES = 20
+MAX_PAGE_SIZE = 500
 MAX_API_ROWS = 5000
 API_TIMEOUT = 15
 MAX_PAIRS = 30
@@ -88,19 +89,30 @@ def clean_api_config(raw) -> dict:
 	if response_path and not _PATH.match(response_path):
 		raise TableError("invalid_value", "The response path can use letters, numbers, dots, dashes and underscores")
 	page_param = str(raw.get("page_param") or "").strip()
-	if page_param and not _NAME.match(page_param):
-		raise TableError("invalid_value", "The page parameter name is not valid")
+	offset_param = str(raw.get("offset_param") or "").strip()
+	size_param = str(raw.get("size_param") or "").strip()
+	if page_param and offset_param:
+		raise TableError("invalid_value", "Use page numbers or offset paging, not both")
+	for name in (page_param, offset_param, size_param):
+		if name and not _NAME.match(name):
+			raise TableError("invalid_value", f"{name!r} is not a valid parameter name")
 	try:
 		max_pages = int(raw.get("max_pages") or 1)
+		page_size = int(raw.get("page_size") or 0)
 	except (TypeError, ValueError):
-		raise TableError("invalid_value", "Max pages must be a whole number")
+		raise TableError("invalid_value", "Max pages and products per request must be whole numbers")
+	if offset_param and not 1 <= page_size <= MAX_PAGE_SIZE:
+		raise TableError("invalid_value", f"Products per request must be between 1 and {MAX_PAGE_SIZE}")
+	paged = bool(page_param or offset_param)
 	return {
 		"method": method, "url": url,
 		"headers": _pairs(raw.get("headers"), "header", check_credentials=True),
 		"query": _pairs(raw.get("query"), "query parameter", check_credentials=True),
 		"auth_type": auth, "auth_name": auth_name if auth in ("header", "query") else "",
 		"body": body or None, "response_path": response_path,
-		"page_param": page_param, "max_pages": min(max(max_pages, 1), MAX_API_PAGES) if page_param else 1,
+		"page_param": page_param, "offset_param": offset_param, "size_param": size_param if offset_param else "",
+		"page_size": page_size if offset_param else 0,
+		"max_pages": min(max(max_pages, 1), MAX_API_PAGES) if paged else 1,
 	}
 
 
@@ -193,7 +205,13 @@ def fetch_api_table(config: dict, secret: str) -> tuple[list[str], list[dict]]:
 	previous_first = None
 	more = False  # True when the last page we read was full: the API has rows past Max pages
 	for page in range(1, config["max_pages"] + 1):
-		params = {**query, config["page_param"]: page} if config["page_param"] else query
+		params = dict(query)
+		if config["page_param"]:
+			params[config["page_param"]] = page
+		if config["offset_param"]:
+			params[config["offset_param"]] = (page - 1) * config["page_size"]
+			if config["size_param"]:
+				params[config["size_param"]] = config["page_size"]
 		items = _get_page(config, headers, params)
 		if not items:
 			more = False
@@ -205,10 +223,14 @@ def fetch_api_table(config: dict, secret: str) -> tuple[list[str], list[dict]]:
 		previous_first = first
 		records.extend({str(k).strip(): v for k, v in i.items()} for i in items)
 		more = True
+		# A short page is the last one, but only when we asked for a size: otherwise the API's own size may differ
+		if config["size_param"] and len(items) < config["page_size"]:
+			more = False
+			break
 		if len(records) > MAX_API_ROWS:
 			raise TableError("too_many_rows", f"The API returned more than {MAX_API_ROWS} rows")
 	# Stopping early would hide the products on the missing pages at every sync, so refuse instead
-	if more and config["page_param"]:
+	if more and (config["page_param"] or config["offset_param"]):
 		raise TableError("too_many_pages", f"The API has more pages than Max pages ({config['max_pages']}). Raise Max pages, up to {MAX_API_PAGES}.")
 	names: dict[str, None] = {}
 	for rec in records:

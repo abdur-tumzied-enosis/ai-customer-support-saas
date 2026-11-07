@@ -65,6 +65,14 @@ class ApiConfigTests(TestCase):
 		self.assertEqual(len(rows), 2)
 		self.assertEqual(req.call_count, 2)
 
+	def test_page_numbers_and_offset_cannot_mix(self):
+		with self.assertRaises(TableError):
+			clean_api_config(cfg(page_param="page", offset_param="skip", size_param="limit", page_size=10))
+
+	def test_offset_needs_a_sensible_page_size(self):
+		with self.assertRaises(TableError):
+			clean_api_config(cfg(offset_param="skip", page_size=0))
+
 	def test_page_count_is_capped(self):
 		self.assertEqual(clean_api_config(cfg(page_param="page", max_pages=999))["max_pages"], 20)
 		self.assertEqual(clean_api_config(cfg(max_pages=5))["max_pages"], 1)  # no page parameter: one request
@@ -96,6 +104,22 @@ class ApiFetchTests(TestCase):
 				fetch_api_table(clean_api_config(cfg(response_path="")), SECRET)
 		self.assertEqual(cm.exception.code, "invalid_response")
 		self.assertIn("products, total", cm.exception.message)
+
+	def test_offset_paging_stops_at_a_short_page(self):
+		pages = [api_json({"data": {"items": ITEMS}}), api_json({"data": {"items": [{"id": 3, "name": "Hat"}]}})]
+		config = clean_api_config(cfg(offset_param="skip", size_param="limit", page_size=2, max_pages=5))
+		with patch("knowledge.product_api._is_public_host", return_value=True), 				patch("knowledge.product_api.requests.request", side_effect=pages) as req:
+			_, rows = fetch_api_table(config, SECRET)
+		self.assertEqual([r["name"] for r in rows], ["Shoe", "Bag", "Hat"])
+		self.assertEqual([(c.kwargs["params"]["skip"], c.kwargs["params"]["limit"]) for c in req.call_args_list], [(0, 2), (2, 2)])
+
+	def test_offset_paging_refuses_when_pages_remain(self):
+		full = [api_json({"data": {"items": ITEMS}}), api_json({"data": {"items": [{"id": 9, "name": "Cap"}, {"id": 8, "name": "Mug"}]}})]
+		config = clean_api_config(cfg(offset_param="skip", size_param="limit", page_size=2, max_pages=2))
+		with patch("knowledge.product_api._is_public_host", return_value=True), 				patch("knowledge.product_api.requests.request", side_effect=full):
+			with self.assertRaises(TableError) as cm:
+				fetch_api_table(config, SECRET)
+		self.assertEqual(cm.exception.code, "too_many_pages")
 
 	def test_errors_never_echo_the_secret(self):
 		config = clean_api_config(cfg(auth_type="query", auth_name="key"))

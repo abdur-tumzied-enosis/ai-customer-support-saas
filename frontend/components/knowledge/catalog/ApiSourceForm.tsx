@@ -14,13 +14,17 @@ type Draft = {
 	auth_type: ApiConfig["auth_type"];
 	auth_name: string;
 	response_path: string;
+	paging: "none" | "page" | "offset";
 	page_param: string;
+	offset_param: string;
+	size_param: string;
+	page_size: string;
 	max_pages: string;
 };
 
 const EMPTY: Draft = {
 	method: "GET", url: "", headers: "", query: "", body: "", auth_type: "none", auth_name: "",
-	response_path: "", page_param: "", max_pages: "1",
+	response_path: "", paging: "none", page_param: "page", offset_param: "skip", size_param: "limit", page_size: "30", max_pages: "1",
 };
 
 // One "name<sep>value" per line; blank lines are skipped
@@ -54,7 +58,10 @@ export function toApiConfig(d: Draft): ApiConfig {
 		auth_name: d.auth_name.trim(),
 		body,
 		response_path: d.response_path.trim(),
-		page_param: d.page_param.trim(),
+		page_param: d.paging === "page" ? d.page_param.trim() : "",
+		offset_param: d.paging === "offset" ? d.offset_param.trim() : "",
+		size_param: d.paging === "offset" ? d.size_param.trim() : "",
+		page_size: d.paging === "offset" ? Number(d.page_size) || 0 : 0,
 		max_pages: Number(d.max_pages) || 1,
 	};
 }
@@ -135,14 +142,39 @@ export default function ApiSourceForm({ busy, onPreview }: Props) {
 						Example: {"{"}&quot;products&quot;: [...]{"}"} means <b>products</b>. For nested data, use dots, such as <b>data.items</b>.
 					</span>
 				</label>
-				<label className="grid content-start gap-1 text-sm">Page number parameter
-					<Input value={d.page_param} onChange={set("page_param")} placeholder="page" />
-					<span className="text-xs text-muted-foreground">
-						The query parameter that sets the page number, usually <b>page</b>. Leave empty if one response has all products.
-						Offset or skip-based paging is not supported.
-					</span>
+				<label className="grid content-start gap-1 text-sm">How the API splits products into pages
+					<select className={SELECT} value={d.paging} onChange={set("paging")}>
+						<option value="none">One response has all products</option>
+						<option value="page">Page numbers: page=1, page=2</option>
+						<option value="offset">Offset: skip=0, skip=30</option>
+					</select>
+					<span className="text-xs text-muted-foreground">Look for &quot;page&quot;, &quot;offset&quot; or &quot;skip&quot; in the API&apos;s documentation.</span>
 				</label>
-				{d.page_param && (
+				{d.paging === "page" && (
+					<label className="grid content-start gap-1 text-sm">Page number parameter
+						<Input value={d.page_param} onChange={set("page_param")} placeholder="page" />
+						<span className="text-xs text-muted-foreground">The query parameter that sets the page number, usually <b>page</b>.</span>
+					</label>
+				)}
+				{d.paging === "offset" && (
+					<>
+						<label className="grid content-start gap-1 text-sm">Offset parameter
+							<Input value={d.offset_param} onChange={set("offset_param")} placeholder="skip" />
+							<span className="text-xs text-muted-foreground">Where each page starts, usually <b>skip</b> or <b>offset</b>. The first request sends 0.</span>
+						</label>
+						<label className="grid content-start gap-1 text-sm">Products per request
+							<Input type="number" min={1} max={500} value={d.page_size} onChange={set("page_size")} />
+							<span className="text-xs text-muted-foreground">How many products one response returns, such as <b>30</b> or <b>100</b>.</span>
+						</label>
+						<label className="grid content-start gap-1 text-sm">Size parameter (optional)
+							<Input value={d.size_param} onChange={set("size_param")} placeholder="limit" />
+							<span className="text-xs text-muted-foreground">
+								The query parameter that asks for that many products, usually <b>limit</b>. Leave empty if the API sets the size itself.
+							</span>
+						</label>
+					</>
+				)}
+				{d.paging !== "none" && (
 					<label className="grid content-start gap-1 text-sm">Most pages to read
 						<Input type="number" min={1} max={20} value={d.max_pages} onChange={set("max_pages")} />
 						<span className="text-xs text-muted-foreground">
