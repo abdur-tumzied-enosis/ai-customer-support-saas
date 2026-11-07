@@ -2,6 +2,9 @@
 
 Status: not started. Tick a box when the task is done and checked. Update the "Progress" table as phases close.
 
+## FE design ;
+for FE design use frontend design skills; 
+
 ## Problem
 
 1. Setup is a one-time job but lives in the permanent Orders sidebar, with its own copy of the settings screen.
