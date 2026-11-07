@@ -167,6 +167,11 @@ def _get_page(config: dict, headers: dict, query: dict) -> list[dict]:
 	except ValueError:
 		raise TableError("invalid_response", "The API response is not JSON")
 	items = _walk(data, config["response_path"])
+	if isinstance(items, dict) and items:
+		# An object wrapping the list (e.g. {"products": [...]}): name its fields so the user can point at one
+		names = ", ".join(str(k)[:50] for k in list(items)[:20])
+		raise TableError("invalid_response", f"The data at that place is an object with these fields: {names}. "
+			"Set 'Where the product list is' to one of them, for example products.")
 	if not isinstance(items, list):
 		raise TableError("invalid_response", "The data at that place in the response is not a list")
 	return [i for i in items if isinstance(i, dict)]

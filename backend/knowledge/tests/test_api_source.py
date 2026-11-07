@@ -90,6 +90,13 @@ class ApiFetchTests(TestCase):
 		self.assertEqual([r["name"] for r in rows], ["Shoe", "Bag", "Hat"])
 		self.assertEqual([c.kwargs["params"]["page"] for c in req.call_args_list], [1, 2, 3])
 
+	def test_object_response_names_its_fields(self):
+		with patch("knowledge.product_api._is_public_host", return_value=True), 				patch("knowledge.product_api.requests.request", return_value=api_json({"products": ITEMS, "total": 2})):
+			with self.assertRaises(TableError) as cm:
+				fetch_api_table(clean_api_config(cfg(response_path="")), SECRET)
+		self.assertEqual(cm.exception.code, "invalid_response")
+		self.assertIn("products, total", cm.exception.message)
+
 	def test_errors_never_echo_the_secret(self):
 		config = clean_api_config(cfg(auth_type="query", auth_name="key"))
 		with patch("knowledge.product_api._is_public_host", return_value=True), \
