@@ -118,8 +118,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
 # Shared across processes: the per-conversation reply lock (channels_app.reply) needs it
 CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}}
-CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
+# Tests get an in-memory broker: a task a test queues must never reach the live workers (its rows are in the test DB)
+CELERY_BROKER_URL = "memory://" if TESTING else REDIS_URL
+CELERY_RESULT_BACKEND = "cache+memory://" if TESTING else REDIS_URL
 # Customer replies get their own queue/worker so document ingestion can't delay them (docker-compose: celery-replies)
 CELERY_TASK_ROUTES = {
     "channels_app.reply.process_reply": {"queue": "replies"},

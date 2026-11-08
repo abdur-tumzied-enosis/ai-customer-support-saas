@@ -42,18 +42,29 @@ def build_order_tools(conversation, settings, context) -> list:
 	"""Order tools for one reply. Each returns a JSON string. Prices come only from the catalog."""
 	actor = ("agent", str(conversation.id))
 
-	def find_products(query: str) -> str:
-		"""Find products by name, product key, SKU or variant label. Returns up to 8 products with id,
-		variants, price and availability. Use the returned id when adding a product to the order.
+	def find_products(query: str = "", page: int = 1) -> str:
+		"""Find products by name, product key, SKU or variant label, 8 per page. Leave query empty to list
+		the whole catalog (e.g. "what do you have?"). Returns {"products", "page", "total", "has_more"}: each
+		product has id, variants, price and availability; when has_more is true, call again with page + 1 to
+		see more. Use the returned id when adding a product to the order.
 		A product without a price is returned without one: never quote a price for it."""
+		try:
+			page = max(1, int(page))
+		except (TypeError, ValueError):
+			page = 1
 		if conversation.knowledge_base_id is None:
-			return "[]"
-		found = list(
-			Product.objects.filter(kb_id=conversation.knowledge_base_id).exclude(status="hidden").filter(
+			return json.dumps({"products": [], "page": page, "total": 0, "has_more": False})
+		products = Product.objects.filter(kb_id=conversation.knowledge_base_id).exclude(status="hidden")
+		query = (query or "").strip()
+		if query:
+			products = products.filter(
 				Q(name__icontains=query) | Q(external_id__iexact=query) | Q(sku__iexact=query)
 				| Q(variants__label__icontains=query)
-			).distinct()[:MAX_MATCHES]
-		)
+			).distinct()
+		products = products.order_by("name", "id")  # stable order so pages never overlap or skip
+		total = products.count()
+		start = (page - 1) * MAX_MATCHES
+		found = list(products[start:start + MAX_MATCHES])
 		quotes = quotes_for(found)
 		out = []
 		for product in found:
@@ -70,7 +81,8 @@ def build_order_tools(conversation, settings, context) -> list:
 				"price": None if quote.price is None else str(quote.price),
 				"available": quote.available,
 			})
-		return json.dumps(out, ensure_ascii=False)
+		has_more = start + len(found) < total
+		return json.dumps({"products": out, "page": page, "total": total, "has_more": has_more}, ensure_ascii=False)
 
 	def update_draft(items: list[dict] | None = None, customer: dict | None = None) -> str:
 		"""Save products and customer details on this chat's draft order. items: [{"product_id", "variant_id"

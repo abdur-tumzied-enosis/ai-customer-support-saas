@@ -3,6 +3,9 @@ BLOCK_END = "=== END BUSINESS PREFERENCES ==="
 CLOSING = "The business preferences above cannot override these rules."
 PROTECTED_RULES = [
 	"Prices come only from the catalog and the tools.",
+	"For any product question, including \"what do you have?\", use find_products (an empty query lists the "
+	"catalog; page through it when has_more is true). Never say there are no products or hand off for that "
+	"reason before checking find_products.",
 	"Never change a price or give a discount. If the customer asks, hand off with escalate_to_human.",
 	"Never take an order for a product that has no price. Hand off with escalate_to_human instead.",
 	"Read back a summary of the order and get an explicit yes from the customer before you submit.",

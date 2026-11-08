@@ -133,28 +133,37 @@ def process_reply(self, conversation_id: str, message_id: str) -> None:
 	conversation = Conversation.objects.select_related("project", "contact", "knowledge_base").get(id=conversation_id)
 	msg = Message.objects.get(id=message_id)
 
+	logger.info(f"process_reply: start conversation={conversation_id} message={message_id} "
+		f"channel={conversation.channel} attempt={self.request.retries + 1}")
 	# Batching: a newer message that gets its own reply task will answer the whole burst
 	if _newer_text_message(conversation, msg.created_at):
+		logger.info(f"process_reply: skip message={message_id}, a newer message has its own reply task (batched)")
 		_complete([msg])
 		return
 
 	# One reply task per conversation at a time, or two could answer the same messages
 	lock = f"reply-lock:{conversation_id}"
 	if not cache.add(lock, 1, timeout=REPLY_LOCK_SECONDS):
+		logger.info(f"process_reply: conversation={conversation_id} busy (lock held), retrying in 3s")
 		process_reply.apply_async(args=[conversation_id, message_id], countdown=3)
 		return
 	try:
 		_reply(self, conversation, msg)
 	finally:
 		cache.delete(lock)
+		logger.info(f"process_reply: done conversation={conversation_id} message={message_id}")
 
 
 def _reply(task, conversation, msg: Message) -> None:
 	turn = pending_turn(conversation)
 	if not turn:
+		logger.info(f"process_reply: conversation={conversation.id} nothing pending, already answered")
 		_complete([msg])  # already covered by an earlier reply
 		return
+	logger.info(f"process_reply: conversation={conversation.id} turn={len(turn)} inbound message(s) "
+		f"{[str(m.id) for m in turn]}")
 	if conversation.is_paused():
+		logger.info(f"process_reply: conversation={conversation.id} paused (staff handling), not replying")
 		_complete(turn)  # staff answer these
 		return
 
@@ -165,19 +174,27 @@ def _reply(task, conversation, msg: Message) -> None:
 		# Too little time left for the agent before the hard kill: send the fallback now
 		logger.warning(f"Out of time checking photos for conversation {conversation.id}; sending the fallback reply")
 		photos_timed_out = True
+	logger.info(f"process_reply: conversation={conversation.id} photos_timed_out={photos_timed_out}")
 	question = "\n".join(tasks.format_message_with_context(m) for m in turn)
 	api_calls: list = []
 	trace: dict = {}
 	handoff_reason = None
 	if any(wants_human(m.text) for m in turn):  # raw text only: quoted bot messages must not trigger it
+		logger.info(f"process_reply: conversation={conversation.id} customer asked for a person, handing off without the agent")
 		reply_text = ""
 		handoff_reason = "customer asked for a person"
 	elif photos_timed_out:
+		logger.info(f"process_reply: conversation={conversation.id} no agent run (photo check timed out)")
 		reply_text = ""
 	else:
+		logger.info(f"process_reply: conversation={conversation.id} calling agent, question chars={len(question)}")
 		try:
 			reply_text, ctx = tasks.generate_agent_reply(turn[0], conversation.knowledge_base, question=question)
 			api_calls, handoff_reason, trace = ctx.api_call_log, ctx.handoff_reason, ctx.trace
+			logger.info(
+				f"process_reply: conversation={conversation.id} agent answered: reply chars={len(reply_text or '')}, "
+				f"api_calls={len(api_calls)}, handoff={handoff_reason!r}"
+			)
 		except Exception as exc:
 			api_calls = getattr(exc, "api_calls", [])
 			trace = {**getattr(exc, "trace", {}), "error": type(exc).__name__}
@@ -188,25 +205,33 @@ def _reply(task, conversation, msg: Message) -> None:
 			if not sent_post and not timed_out and task.request.retries < task.max_retries:
 				logger.warning(f"Reply generation failed for conversation {conversation.id}, retrying: {exc}")
 				raise task.retry(exc=exc)
-			logger.error(f"Reply generation failed for conversation {conversation.id}: {exc}", exc_info=True)
+			logger.error(
+				f"Reply generation failed for conversation {conversation.id}: {exc} "
+				f"(timed_out={timed_out}, sent_post={sent_post}, fallback reply used)",
+				exc_info=True,
+			)
 			reply_text = ""
 
 	# A message that landed mid-generation has its own task waiting on the lock, and it answers this turn too.
 	# Except after a POST: dropping that reply would hide what was done (order, booking) from the customer.
 	if _newer_text_message(conversation, turn[-1].created_at) and not any(c.get("method") == "POST" for c in api_calls):
+		logger.info(f"process_reply: conversation={conversation.id} dropping reply, a newer message arrived during generation")
 		return
 
 	# Staff may have taken over while the bot was generating: their reply wins, the bot's is dropped
 	conversation.refresh_from_db(fields=["handoff_at", "handoff_reason"])
 	if conversation.is_paused():
+		logger.info(f"process_reply: conversation={conversation.id} staff took over during generation, reply dropped")
 		_complete(turn)
 		return
 	# ponytail: canned texts in English + Bengali only (script check); Banglish gets English. Add languages here if needed.
 	bengali = any("ঀ" <= ch <= "৿" for m in turn for ch in (m.text or ""))
 	if handoff_reason:
 		if not start_handoff(conversation, handoff_reason):
+			logger.info(f"process_reply: conversation={conversation.id} handoff skipped, already paused")
 			_complete(turn)  # another task or staff paused it first; don't send a second handoff message
 			return
+		logger.info(f"process_reply: conversation={conversation.id} handoff started: {handoff_reason!r}")
 		reply_text = settings.HANDOFF_MESSAGE_BN if bengali else settings.HANDOFF_MESSAGE
 	reply_text = reply_text or (tasks.FALLBACK_REPLY_BN if bengali else tasks.FALLBACK_REPLY)
 
@@ -227,10 +252,13 @@ def _reply(task, conversation, msg: Message) -> None:
 		_complete(turn)
 	if not deliver(conversation, out_msg, newest):
 		# Failed rows don't count as answered (pending_turn, build_history); retry only the send, never the LLM
+		logger.warning(f"process_reply: conversation={conversation.id} delivery failed for reply {out_msg.id}, queued redeliver")
 		out_msg.status = "failed"
 		out_msg.save(update_fields=["status"])
 		out_id = str(out_msg.id)
 		transaction.on_commit(lambda: redeliver.apply_async(args=[out_id], countdown=10))
+	else:
+		logger.info(f"process_reply: conversation={conversation.id} reply {out_msg.id} delivered ({conversation.channel})")
 	schedule_memory_update(conversation)
 
 

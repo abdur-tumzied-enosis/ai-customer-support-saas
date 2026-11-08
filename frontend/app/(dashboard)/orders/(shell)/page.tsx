@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import OrdersEntryPanel from "@/components/orders/OrdersEntryPanel";
+import OrdersLiveStrip from "@/components/orders/OrdersLiveStrip";
 import OrderFiltersBar from "@/components/orders/OrderFiltersBar";
 import OrdersTable from "@/components/orders/OrdersTable";
 import ActionBar from "@/components/orders/ActionBar";
@@ -63,7 +64,8 @@ export default function OrdersPage() {
 	async function tryIt() {
 		if (!project) return;
 		try {
-			await orderApi.setTestMode(String(project.id), true);
+			// while ordering is on the test chat already takes orders; test mode is only for trying it before turning on
+			if (!settings?.enabled) await orderApi.setTestMode(String(project.id), true);
 			const res = await conversationApi.create({ project_slug: project.slug });
 			router.push(`/conversations/${res.data.conversation.id}`);
 		} catch (e) {
@@ -122,8 +124,9 @@ export default function OrdersPage() {
 				<OrdersEntryPanel projectId={String(project.id)} confirmed={settings.settings_confirmed_at !== null} onTryIt={tryIt} />
 			)}
 			{!settings.enabled && !isAdmin && count === 0 && <p className="text-sm text-muted-foreground">Orders are off. Ask an admin to turn them on.</p>}
+			{settings.enabled && <OrdersLiveStrip channels={settings.channels} isAdmin={isAdmin} onOpenTestChat={tryIt} />}
 			{settings.enabled && count === 0 && !hasFilters && (
-				<p className="text-sm text-muted-foreground">Orders are on. New orders from your chats appear here.</p>
+				<p className="text-sm text-muted-foreground">New orders from your chats appear here.</p>
 			)}
 
 			{(settings.enabled || count > 0) && <section className="space-y-3">

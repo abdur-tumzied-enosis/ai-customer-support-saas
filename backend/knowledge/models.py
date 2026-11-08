@@ -185,14 +185,18 @@ class Document(models.Model):
 		super().save(*args, **kwargs)
 
 	def delete(self, *args, **kwargs):
-		# Delete vectors from Qdrant if they exist
-		if self.vector_chunk_ids and self.kb:
+		# Delete vectors from Qdrant before the rows go. Crawled child pages are removed by the
+		# cascade, which skips their delete(), so their vectors are collected here too.
+		from agents.vector_store import delete_vectors_from_collection
+		base = self.kb.vector_collection
+		by_collection: dict[str, list[str]] = {}
+		for doc in [self, *Document.objects.filter(parent_crawl_id=self)]:
+			if doc.vector_chunk_ids:
+				collection = base + "_web" if doc.source_type == "url" else base
+				by_collection.setdefault(collection, []).extend(doc.vector_chunk_ids)
+		for collection, vector_ids in by_collection.items():
 			try:
-				from agents.vector_store import delete_vectors_from_collection
-				delete_vectors_from_collection(
-					collection_name=self.kb.vector_collection,
-					vector_ids=self.vector_chunk_ids
-				)
+				delete_vectors_from_collection(collection_name=collection, vector_ids=vector_ids)
 			except Exception as e:
 				# Log error but don't fail deletion
 				import logging

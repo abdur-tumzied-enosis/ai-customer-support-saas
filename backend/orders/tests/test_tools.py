@@ -36,9 +36,26 @@ class OrderToolsTest(TestCase):
 
 	def test_find_products_hides_needs_info_price(self):
 		Product.objects.create(kb=self.kb, name="Cap", external_id="C1", price=None, status="needs_info")
-		out = json.loads(self.tools["find_products"]("Cap"))
+		out = json.loads(self.tools["find_products"]("Cap"))["products"]
 		self.assertEqual(out[0]["status"], "needs_info")
 		self.assertNotIn("price", out[0])
+
+	def test_find_products_empty_query_lists_catalog_with_pages(self):
+		for i in range(9):  # 10 visible with the Shirt from setUp: pages of 8 and 2
+			Product.objects.create(kb=self.kb, name=f"Item {i}", price=Decimal("10"), status="active")
+		Product.objects.create(kb=self.kb, name="Secret", price=Decimal("10"), status="hidden")
+		first = json.loads(self.tools["find_products"]())
+		second = json.loads(self.tools["find_products"]("", page=2))
+		self.assertEqual((first["total"], len(first["products"]), first["has_more"]), (10, 8, True))
+		self.assertEqual((second["page"], len(second["products"]), second["has_more"]), (2, 2, False))
+		names = [p["name"] for p in first["products"] + second["products"]]
+		self.assertEqual(len(set(names)), 10)  # no overlap between pages
+		self.assertNotIn("Secret", names)
+
+	def test_find_products_bad_page_falls_back_to_first(self):
+		out = json.loads(self.tools["find_products"]("Shirt", page="x"))
+		self.assertEqual((out["page"], out["products"][0]["name"]), (1, "Shirt"))
+		self.assertEqual(json.loads(self.tools["find_products"]("Shirt", page=5))["products"], [])
 
 	def test_update_draft_has_no_price_argument(self):
 		params = inspect.signature(self.tools["update_draft"]).parameters
@@ -58,7 +75,7 @@ class OrderToolsTest(TestCase):
 	def test_find_products_variant_without_price_uses_product_price(self):
 		product = Product.objects.create(kb=self.kb, name="Mug", external_id="M1", price=Decimal("100"), status="active")
 		ProductVariant.objects.create(product=product, label="Large", price=None, available=True)
-		out = json.loads(self.tools["find_products"]("Mug"))
+		out = json.loads(self.tools["find_products"]("Mug"))["products"]
 		self.assertEqual(out[0]["variants"][0]["price"], "100.00")
 
 	def test_change_only_while_new(self):
