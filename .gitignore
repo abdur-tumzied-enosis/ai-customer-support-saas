@@ -18,5 +18,6 @@ note
 
 app_logo/
 ideas/
-backend/*/*/__pycache__*
-backend/*/*/*.pyc
+
+__pycache__/
+*.pyc
