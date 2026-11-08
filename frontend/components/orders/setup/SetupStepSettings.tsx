@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { orderApi, type OrderSettings, type OrderZone, type PaymentMethod } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,7 @@ type Props = { projectId: string; onSaved: () => void; saveLabel?: string };
 export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Save and continue" }: Props) {
 	const [draft, setDraft] = useState<OrderSettings | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const toast = useToast();
 	const [busy, setBusy] = useState(false);
 	const [triedSave, setTriedSave] = useState(false);
 	const [saved, setSaved] = useState("");
@@ -68,13 +70,12 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 		setTriedSave(true);
 		const bad = draft!.zones.findIndex((z) => !z.name.trim() || !z.charge);
 		if (bad >= 0) {
-			setError(
+			toast.error(
 				`Delivery zone ${bad + 1} is missing a name or a charge. Fill in both boxes in the "Delivery zones and charges" section below (the red boxes), or remove that row with the trash icon. Orders can't go live until every zone is complete.`,
 			);
 			return;
 		}
 		setBusy(true);
-		setError(null);
 		try {
 			await orderApi.saveSettings(projectId, {
 				channels: draft!.channels,
@@ -86,7 +87,7 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 			window.dispatchEvent(new Event(ORDERS_CHANGED));
 			onSaved();
 		} catch (e) {
-			setError(formatError(e));
+			toast.error(formatError(e));
 		} finally {
 			setBusy(false);
 		}
@@ -94,11 +95,6 @@ export default function SetupStepSettings({ projectId, onSaved, saveLabel = "Sav
 
 	return (
 		<div className="space-y-6">
-			{error && (
-				<Alert variant="destructive">
-					<AlertDescription>{error}</AlertDescription>
-				</Alert>
-			)}
 
 			<section className="space-y-2 pb-2">
 				<Label>Where orders can come from</Label>

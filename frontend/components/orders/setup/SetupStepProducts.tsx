@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import CandidateReview from "@/components/knowledge/catalog/CandidateReview";
+import { useToast } from "@/components/ui/toast";
 import ProductTable from "@/components/knowledge/catalog/ProductTable";
 import { ORDERS_CHANGED } from "@/components/orders/OrdersShell";
 import { candidateApi, productApi, type CandidatePage, type Product } from "@/lib/api";
@@ -29,6 +30,7 @@ export default function SetupStepProducts({ projectId, kbId, onBack }: Props) {
 	const [currency, setCurrency] = useState("BDT");
 	const [requirements, setRequirements] = useState<Requirement[]>([]);
 	const [error, setError] = useState<string | null>(null);
+	const toast = useToast();
 	const [busy, setBusy] = useState(false);
 	const tableRef = useRef<HTMLDivElement>(null);
 
@@ -47,6 +49,7 @@ export default function SetupStepProducts({ projectId, kbId, onBack }: Props) {
 			setRequirements(reqs.data);
 		} catch (e) {
 			setError(formatError(e));
+			toast.error(formatError(e));
 		}
 	}, [projectId, kbId]);
 
@@ -86,24 +89,18 @@ export default function SetupStepProducts({ projectId, kbId, onBack }: Props) {
 
 	async function turnOn() {
 		setBusy(true);
-		setError(null);
 		try {
 			await orderApi.enable(projectId);
 			window.dispatchEvent(new Event(ORDERS_CHANGED));
 			router.push("/orders");
 		} catch (e) {
-			setError(formatError(e));
+			toast.error(formatError(e));
 			setBusy(false);
 		}
 	}
 
 	return (
 		<div className="space-y-8 pb-28">
-			{error && (
-				<Alert variant="destructive">
-					<AlertDescription>{error}</AlertDescription>
-				</Alert>
-			)}
 
 			<section className="space-y-3">
 				<h2 className="text-base font-medium">From your website</h2>

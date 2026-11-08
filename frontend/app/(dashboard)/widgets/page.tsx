@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, Loader2, Pencil, Plus, Trash2 } from "lucide-react";
+import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import CopyField from "@/components/channels/CopyField";
@@ -37,6 +37,7 @@ type Form = {
 };
 
 export default function WidgetsPage() {
+	const toast = useToast();
 	const { projects } = useAuth();
 	const projectSlug = projects.length > 0 ? projects[0].slug : "";
 	const projectId = projects.length > 0 ? String(projects[0].id) : "";
@@ -44,8 +45,6 @@ export default function WidgetsPage() {
 	const [widgets, setWidgets] = useState<Widget[]>([]);
 	const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
 	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const [success, setSuccess] = useState<string | null>(null);
 
 	const [editing, setEditing] = useState<Widget | "new" | null>(null);
 	const [tab, setTab] = useState("general");
@@ -60,7 +59,7 @@ export default function WidgetsPage() {
 		knowledgeBaseApi
 			.list(projectId)
 			.then((r) => setKnowledgeBases(r.data.knowledge_bases))
-			.catch((err) => setError(formatError(err)));
+			.catch((err) => toast.error(formatError(err)));
 	}, [projectSlug, projectId]);
 
 	const [imageSearchOn, setImageSearchOn] = useState(false);
@@ -77,7 +76,7 @@ export default function WidgetsPage() {
 			await widgetApi.update(widget.id, { image_search_enabled: !widget.image_search_enabled });
 			load();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		}
 	};
 
@@ -86,7 +85,7 @@ export default function WidgetsPage() {
 		try {
 			setWidgets((await widgetApi.list(projectSlug)).data.widgets);
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -136,7 +135,7 @@ export default function WidgetsPage() {
 			setEditing(saved);
 			setForm({ ...form, origins: saved.allowed_origins.join("\n") }); // show them normalized
 			if (editing === "new") setTab("install"); // next step: copy the snippet
-			setSuccess(editing === "new" ? "Widget created. Copy the install code below." : "Widget saved.");
+			toast.success(editing === "new" ? "Widget created. Copy the install code below." : "Widget saved.");
 			load();
 		} catch (err) {
 			setFormError(formatError(err));
@@ -147,7 +146,6 @@ export default function WidgetsPage() {
 
 	const closeEditor = () => {
 		setEditing(null);
-		setSuccess(null); // its messages refer to the dialog
 	};
 
 	const toggleActive = async (widget: Widget) => {
@@ -155,7 +153,7 @@ export default function WidgetsPage() {
 			await widgetApi.update(widget.id, { is_active: !widget.is_active });
 			load();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		}
 	};
 
@@ -163,11 +161,11 @@ export default function WidgetsPage() {
 		if (!deleting) return;
 		try {
 			await widgetApi.remove(deleting.id);
-			setSuccess("Widget deleted. Its conversations stay in the inbox.");
+			toast.success("Widget deleted. Its conversations stay in the inbox.");
 			setDeleting(null);
 			load();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		}
 	};
 
@@ -190,18 +188,6 @@ export default function WidgetsPage() {
 				</Button>
 			</div>
 
-			{error && (
-				<Alert variant="destructive">
-					<AlertCircle className="h-4 w-4" />
-					<AlertDescription>{error}</AlertDescription>
-				</Alert>
-			)}
-			{success && !editing && (
-				<Alert>
-					<CheckCircle2 className="h-4 w-4" />
-					<AlertDescription>{success}</AlertDescription>
-				</Alert>
-			)}
 
 			{loading && widgets.length === 0 ? (
 				<div className="flex justify-center p-8">
@@ -418,7 +404,6 @@ export default function WidgetsPage() {
 						</Tabs>
 					)}
 					{formError && <p className="text-sm text-destructive">{formError}</p>}
-					{success && editing && <p className="text-sm text-green-600">{success}</p>}
 					<DialogFooter>
 						<Button variant="outline" onClick={closeEditor}>
 							Close

@@ -6,7 +6,7 @@ import type { Route } from "next";
 import { Check, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { orderApi, type Requirement, type SetupState } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
 
@@ -30,10 +30,10 @@ type Props = { projectId: string; confirmed: boolean; onTryIt: () => void };
 export default function OrdersEntryPanel({ projectId, confirmed, onTryIt }: Props) {
 	const [requirements, setRequirements] = useState<Requirement[] | null>(null);
 	const [setup, setSetup] = useState<SetupState | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const toast = useToast();
 
 	useEffect(() => {
-		orderApi.requirements(projectId).then((res) => setRequirements(res.data)).catch((e) => setError(formatError(e)));
+		orderApi.requirements(projectId).then((res) => setRequirements(res.data)).catch((e) => toast.error(formatError(e)));
 		orderApi.setupState(projectId).then((res) => setSetup(res.data)).catch(() => setSetup(null));
 	}, [projectId]);
 
@@ -47,11 +47,6 @@ export default function OrdersEntryPanel({ projectId, confirmed, onTryIt }: Prop
 				<CardDescription>The agent takes orders from your chats and confirms each one with you.</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
-				{error && (
-					<Alert variant="destructive">
-						<AlertDescription>{error}</AlertDescription>
-					</Alert>
-				)}
 				{line && <p className="text-sm">{line}</p>}
 				{blockers.length > 0 && (
 					<ul className="space-y-2 text-sm">

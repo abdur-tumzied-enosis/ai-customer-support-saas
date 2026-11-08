@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { orderInstructionApi, type OrderInstruction } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
@@ -13,13 +13,12 @@ import { formatError } from "@/lib/errors";
 const MAX_CHARS = 2000;
 
 type Editing = { id: string | null; label: string; message: string };
-type Notice = { kind: "ok" | "error"; text: string };
 
 export default function OrderInstructions({ projectId }: { projectId: string }) {
 	const [items, setItems] = useState<OrderInstruction[]>([]);
 	const [editing, setEditing] = useState<Editing | null>(null);
 	const [suggestion, setSuggestion] = useState<{ suggestion: string; why: string } | null>(null);
-	const [notice, setNotice] = useState<Notice | null>(null);
+	const toast = useToast();
 	const [busy, setBusy] = useState(false);
 
 	const load = useCallback(async () => {
@@ -27,7 +26,7 @@ export default function OrderInstructions({ projectId }: { projectId: string }) 
 			const res = await orderInstructionApi.list(projectId);
 			setItems(res.data.instructions.filter((i) => i.scope === "order"));
 		} catch (e) {
-			setNotice({ kind: "error", text: formatError(e) });
+			toast.error(formatError(e));
 		}
 	}, [projectId]);
 
@@ -38,21 +37,17 @@ export default function OrderInstructions({ projectId }: { projectId: string }) 
 	async function save() {
 		if (!editing) return;
 		setBusy(true);
-		setNotice(null);
 		try {
 			const res = editing.id
 				? await orderInstructionApi.update(editing.id, { label: editing.label, message: editing.message })
 				: await orderInstructionApi.create(projectId, { label: editing.label, message: editing.message, scope: "order" });
 			const warnings = res.data.warnings ?? [];
-			setNotice({
-				kind: "ok",
-				text: warnings.length > 0 ? `Saved. Please check: ${warnings.join("; ")}` : "Saved.",
-			});
+				toast.success(warnings.length > 0 ? `Saved. Please check: ${warnings.join("; ")}` : "Saved.");
 			setEditing(null);
 			setSuggestion(null);
 			await load();
 		} catch (e) {
-			setNotice({ kind: "error", text: formatError(e) });
+			toast.error(formatError(e));
 		} finally {
 			setBusy(false);
 		}
@@ -61,12 +56,11 @@ export default function OrderInstructions({ projectId }: { projectId: string }) 
 	async function improve() {
 		if (!editing) return;
 		setBusy(true);
-		setNotice(null);
 		try {
 			const res = await orderInstructionApi.improve(projectId, editing.message);
 			setSuggestion(res.data);
 		} catch (e) {
-			setNotice({ kind: "error", text: formatError(e) });
+			toast.error(formatError(e));
 		} finally {
 			setBusy(false);
 		}
@@ -74,11 +68,6 @@ export default function OrderInstructions({ projectId }: { projectId: string }) 
 
 	return (
 		<div className="space-y-4">
-			{notice && (
-				<Alert variant={notice.kind === "error" ? "destructive" : "default"}>
-					<AlertDescription>{notice.text}</AlertDescription>
-				</Alert>
-			)}
 
 			{items.map((item) => (
 				<div key={item.id} className="flex items-start justify-between gap-2 rounded-md border p-3 text-sm">

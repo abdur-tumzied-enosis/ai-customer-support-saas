@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
 import Link from "next/link";
 import { useSelectedLayoutSegment } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import KnowledgeBaseBar from "@/components/knowledge/KnowledgeBaseBar";
 import KnowledgeSectionNav, { isKnowledgeSection } from "@/components/knowledge/KnowledgeSectionNav";
 import { KnowledgeProvider, useKnowledge } from "@/components/knowledge/KnowledgeContext";
@@ -21,15 +19,10 @@ export default function KnowledgeLayout({ children }: { children: React.ReactNod
 // Desktop: section list on the left, the open section on the right. Mobile: /knowledge is the list, each section its own page.
 function KnowledgeShell({ children }: { children: React.ReactNode }) {
 	const segment = useSelectedLayoutSegment();
-	const { authLoading, projectId, knowledgeBases, selectedKb, selectKb, fetchKnowledgeBases, alert, setAlert } = useKnowledge();
+	const { authLoading, projectId, knowledgeBases, selectedKb, selectKb, fetchKnowledgeBases } = useKnowledge();
 	// /knowledge itself shows Custom Instructions from md up (see page.tsx)
 	const isIndex = segment === null;
 	const active = isIndex ? "instructions" : isKnowledgeSection(segment) ? segment : null;
-
-	// A message from one section doesn't belong on the next
-	useEffect(() => {
-		setAlert(null);
-	}, [segment, setAlert]);
 
 	// Show loading state while auth is loading
 	if (authLoading) {
@@ -54,12 +47,6 @@ function KnowledgeShell({ children }: { children: React.ReactNode }) {
 					/>
 				)}
 			</div>
-
-			{alert && (
-				<Alert className={alert.type === "error" ? "border-destructive" : ""}>
-					<AlertDescription>{alert.message}</AlertDescription>
-				</Alert>
-			)}
 
 			<div className="md:grid md:grid-cols-[11rem_minmax(0,1fr)] md:items-start md:gap-6 lg:grid-cols-[12rem_minmax(0,1fr)]">
 				<aside className={cn("md:sticky md:top-20", !isIndex && "hidden md:block")}>

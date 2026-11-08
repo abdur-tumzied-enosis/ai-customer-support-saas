@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -66,7 +67,7 @@ type Props = { projectId: string; kbId: string; onChanged: () => void };
 
 export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Props) {
 	const [sources, setSources] = useState<ProductSource[] | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const toast = useToast();
 	const [notice, setNotice] = useState<{ text: string; rejected: SourceResult["rejected"] } | null>(null);
 	const [busy, setBusy] = useState<string | null>(null);
 	const [file, setFile] = useState<File | null>(null);
@@ -85,7 +86,7 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 		try {
 			setSources(await productSourceApi.list(projectId, kbId));
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		}
 	}, [projectId, kbId]);
 
@@ -94,22 +95,21 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 	// One wrapper so every action shows its busy state and error the same way
 	const run = async (id: string, fn: () => Promise<void>) => {
 		setBusy(id);
-		setError(null);
 		try {
 			await fn();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setBusy(null);
 		}
 	};
 
 	const summarize = (r: SourceResult) => {
-		setNotice({
-			text: `${r.created} added, ${r.updated} updated, ${r.unchanged} unchanged, ${r.hidden} hidden` +
-				(r.images_queued ? `, ${r.images_queued} ${r.images_queued === 1 ? "image" : "images"} downloading` : ""),
-			rejected: r.rejected,
-		});
+		const text = `${r.created} added, ${r.updated} updated, ${r.unchanged} unchanged, ${r.hidden} hidden` +
+			(r.images_queued ? `, ${r.images_queued} ${r.images_queued === 1 ? "image" : "images"} downloading` : "");
+		toast.success(text);
+		// Only the rejected rows stay on screen; the counts are in the snackbar
+		setNotice({ text, rejected: r.rejected });
 		onChanged();
 	};
 
@@ -235,16 +235,12 @@ export default function ProductSourcesPanel({ projectId, kbId, onChanged }: Prop
 
 	return (
 		<div className="space-y-6">
-			{error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-			{notice && (
+			{notice && notice.rejected.length > 0 && (
 				<Alert>
 					<AlertDescription>
-						{notice.text}
-						{notice.rejected.length > 0 && (
-							<ul className="mt-2 list-disc pl-5">
-								{notice.rejected.map((r, i) => <li key={i}>Row {r.row}: {r.message}</li>)}
-							</ul>
-						)}
+						<ul className="list-disc pl-5">
+							{notice.rejected.map((r, i) => <li key={i}>Row {r.row}: {r.message}</li>)}
+						</ul>
 					</AlertDescription>
 				</Alert>
 			)}

@@ -7,53 +7,40 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { authApi } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { useAuth } from "@/hooks/useAuth";
 
-type Status = { kind: "ok" | "error"; text: string } | null;
-
-function StatusLine({ status }: { status: Status }) {
-	if (!status) return null;
-	return (
-		<Alert variant={status.kind === "error" ? "destructive" : "default"}>
-			<AlertDescription>{status.text}</AlertDescription>
-		</Alert>
-	);
-}
 
 export default function SettingsPage() {
+	const toast = useToast();
 	const { user, checkAuth } = useAuth();
 	const router = useRouter();
 
 	const [firstName, setFirstName] = useState(user?.first_name ?? "");
 	const [lastName, setLastName] = useState(user?.last_name ?? "");
-	const [profileStatus, setProfileStatus] = useState<Status>(null);
 	const [savingProfile, setSavingProfile] = useState(false);
 
 	const [currentPassword, setCurrentPassword] = useState("");
 	const [newPassword, setNewPassword] = useState("");
 	const [confirmPassword, setConfirmPassword] = useState("");
-	const [passwordStatus, setPasswordStatus] = useState<Status>(null);
 	const [savingPassword, setSavingPassword] = useState(false);
 
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [deletePassword, setDeletePassword] = useState("");
-	const [deleteError, setDeleteError] = useState("");
 	const [deleting, setDeleting] = useState(false);
 
 	async function saveProfile(e: React.FormEvent) {
 		e.preventDefault();
 		setSavingProfile(true);
-		setProfileStatus(null);
 		try {
 			await authApi.updateProfile({ first_name: firstName.trim(), last_name: lastName.trim() });
 			await checkAuth();
-			setProfileStatus({ kind: "ok", text: "Profile saved." });
+			toast.success("Profile saved.");
 		} catch (err) {
-			setProfileStatus({ kind: "error", text: formatError(err) });
+			toast.error(formatError(err));
 		} finally {
 			setSavingProfile(false);
 		}
@@ -62,19 +49,18 @@ export default function SettingsPage() {
 	async function changePassword(e: React.FormEvent) {
 		e.preventDefault();
 		if (newPassword !== confirmPassword) {
-			setPasswordStatus({ kind: "error", text: "New passwords do not match." });
+			toast.error("New passwords do not match.");
 			return;
 		}
 		setSavingPassword(true);
-		setPasswordStatus(null);
 		try {
 			await authApi.changePassword({ current_password: currentPassword, new_password: newPassword });
 			setCurrentPassword("");
 			setNewPassword("");
 			setConfirmPassword("");
-			setPasswordStatus({ kind: "ok", text: "Password changed. Other devices have been signed out." });
+			toast.success("Password changed. Other devices have been signed out.");
 		} catch (err) {
-			setPasswordStatus({ kind: "error", text: formatError(err) });
+			toast.error(formatError(err));
 		} finally {
 			setSavingPassword(false);
 		}
@@ -83,13 +69,12 @@ export default function SettingsPage() {
 	async function deleteAccount(e: React.FormEvent) {
 		e.preventDefault();
 		setDeleting(true);
-		setDeleteError("");
 		try {
 			await authApi.deleteAccount(deletePassword);
 			await checkAuth();
 			router.push("/");
 		} catch (err) {
-			setDeleteError(formatError(err));
+			toast.error(formatError(err));
 			setDeleting(false);
 		}
 	}
@@ -107,7 +92,6 @@ export default function SettingsPage() {
 				</CardHeader>
 				<CardContent>
 					<form onSubmit={saveProfile} className="space-y-4">
-						<StatusLine status={profileStatus} />
 						<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 							<div className="space-y-1">
 								<Label htmlFor="first-name">First name</Label>
@@ -137,7 +121,6 @@ export default function SettingsPage() {
 				</CardHeader>
 				<CardContent>
 					<form onSubmit={changePassword} className="space-y-4">
-						<StatusLine status={passwordStatus} />
 						<div className="space-y-1">
 							<Label htmlFor="current-password">Current password</Label>
 							<Input
@@ -222,7 +205,6 @@ export default function SettingsPage() {
 					if (deleting) return;
 					setDeleteOpen(open);
 					setDeletePassword("");
-					setDeleteError("");
 				}}
 			>
 				<DialogContent>
@@ -234,11 +216,7 @@ export default function SettingsPage() {
 								password to confirm.
 							</DialogDescription>
 						</DialogHeader>
-						{deleteError && (
-							<Alert variant="destructive">
-								<AlertDescription>{deleteError}</AlertDescription>
-							</Alert>
-						)}
+						
 						<div className="space-y-1">
 							<Label htmlFor="delete-password">Password</Label>
 							<Input
