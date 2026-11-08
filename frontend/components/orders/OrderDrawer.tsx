@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { currencySymbol } from "@/components/knowledge/catalog/ProductTable";
 import { orderApi, type OrderDetail } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
@@ -43,19 +43,18 @@ type Props = { orderId: string | null; onOpenChange: (open: boolean) => void; on
 export default function OrderDrawer({ orderId, onOpenChange, onChanged }: Props) {
 	const [order, setOrder] = useState<OrderDetail | null>(null);
 	const [draft, setDraft] = useState<Draft | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const toast = useToast();
 	const [busy, setBusy] = useState(false);
 
 	useEffect(() => {
 		if (!orderId) return;
-		setError(null);
 		orderApi
 			.detail(orderId)
 			.then((res) => {
 				setOrder(res.data);
 				setDraft(toDraft(res.data));
 			})
-			.catch((e) => setError(formatError(e)));
+			.catch((e) => toast.error(formatError(e)));
 	}, [orderId]);
 
 	async function save() {
@@ -77,14 +76,13 @@ export default function OrderDrawer({ orderId, onOpenChange, onChanged }: Props)
 		}
 		if (draft.status !== order.status) payload.status = draft.status;
 		setBusy(true);
-		setError(null);
 		try {
 			const res = await orderApi.patch(order.id, payload);
 			setOrder(res.data);
 			setDraft(toDraft(res.data));
 			onChanged();
 		} catch (e) {
-			setError(formatError(e));
+			toast.error(formatError(e));
 		} finally {
 			setBusy(false);
 		}
@@ -105,11 +103,6 @@ export default function OrderDrawer({ orderId, onOpenChange, onChanged }: Props)
 					<DialogTitle>{order ? `Order ${order.number ?? "(draft)"}` : "Order"}</DialogTitle>
 					<DialogDescription>{order ? `${order.channel} · ${order.status}${order.is_test ? " · test" : ""}` : ""}</DialogDescription>
 				</DialogHeader>
-				{error && (
-					<Alert variant="destructive">
-						<AlertDescription>{error}</AlertDescription>
-					</Alert>
-				)}
 				{order && draft && (
 					<div className="space-y-5 text-sm">
 						<section className="space-y-2">

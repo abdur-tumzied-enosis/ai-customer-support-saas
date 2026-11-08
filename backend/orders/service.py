@@ -29,7 +29,8 @@ def ordering_active(conversation):
 		return None
 	if settings.enabled and conversation.channel in settings.channels:
 		return settings
-	if settings.test_mode and conversation.channel == "self":
+	# the owner's test chat always gets ordering while it is live, so they can try what customers see
+	if (settings.enabled or settings.test_mode) and conversation.channel == "self":
 		return settings
 	return None
 

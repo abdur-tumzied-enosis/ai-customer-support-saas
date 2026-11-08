@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2, Plus, Tag } from "lucide-react";
 import NeedsInfoBanner from "@/components/knowledge/catalog/NeedsInfoBanner";
-import ProductTable from "@/components/knowledge/catalog/ProductTable";
+import ProductTable, { type BulkAction } from "@/components/knowledge/catalog/ProductTable";
 import ProductEditor from "@/components/knowledge/catalog/ProductEditor";
 import { useKnowledge } from "@/components/knowledge/KnowledgeContext";
 import ProductSourcesPanel from "@/components/knowledge/catalog/ProductSourcesPanel";
@@ -33,7 +34,7 @@ export default function ProductsSection() {
 	const { projectId, selectedKb, isAdmin, imageSearchOn, reportProducts } = useKnowledge();
 	const kbId = selectedKb?.id;
 	const [products, setProducts] = useState<Product[] | null>(null);
-	const [error, setError] = useState<string | null>(null);
+	const toast = useToast();
 	const [loadFailed, setLoadFailed] = useState(false);
 	const [tab, setTab] = useState<Tab>("all");
 	// id null = adding a product. session changes only when a different editor opens, so saving never remounts it
@@ -44,11 +45,10 @@ export default function ProductsSection() {
 
 	const load = useCallback(async () => {
 		if (!projectId || !kbId) return;
-		setError(null);
 		try {
 			setProducts(await productApi.list(projectId, kbId));
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 			setLoadFailed(true);
 		}
 	}, [projectId, kbId]);
@@ -58,7 +58,7 @@ export default function ProductsSection() {
 		try {
 			setPages((await candidateApi.list(projectId, kbId)).pages);
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		}
 	}, [projectId, kbId]);
 
@@ -103,6 +103,22 @@ export default function ProductsSection() {
 			return list.some((p) => p.id === saved.id) ? list.map((p) => (p.id === saved.id ? saved : p)) : [...list, saved];
 		});
 
+	// One request per product; a failed one is reported, the others still apply
+	const runBulk = async (action: BulkAction, ids: string[]) => {
+		const results = await Promise.allSettled(ids.map(async (id) => {
+			if (action === "delete") {
+				await productApi.remove(id);
+				return null;
+			}
+			return productApi.patch(id, { status: action });
+		}));
+		const updated = results.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
+		const removed = new Set(ids.filter((_, i) => action === "delete" && results[i].status === "fulfilled"));
+		setProducts((prev) => (prev ?? []).filter((p) => !removed.has(p.id)).map((p) => updated.find((u) => u.id === p.id) ?? p));
+		const failed = results.filter((r) => r.status === "rejected").length;
+		if (failed) toast.error(`${failed} of ${ids.length} could not be updated. A product needs a price to be set active.`);
+	};
+
 	const openEditor = (id: string | null) => setEditor((e) => ({ id, session: (e?.session ?? 0) + 1 }));
 
 	const reviewCount = pages.reduce((n, p) => n + p.candidates.length, 0);
@@ -118,11 +134,10 @@ export default function ProductsSection() {
 					<CardDescription>Prices, details and photos the assistant uses to answer customers and take orders</CardDescription>
 				</div>
 				{isAdmin && selectedKb && (
-					<Button onClick={() => openEditor(null)}><Plus className="mr-2 h-4 w-4" />Add product</Button>
+					<Button onClick={() => { setView("products"); openEditor(null); }}><Plus className="mr-2 h-4 w-4" />Add product</Button>
 				)}
 			</CardHeader>
 			<CardContent className="space-y-4">
-				{error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
 				{!selectedKb ? (
 					<p className="text-center py-4 text-muted-foreground">No knowledge base selected</p>
 				) : products === null && loadFailed ? (
@@ -179,6 +194,7 @@ export default function ProductsSection() {
 						<ProductTable
 							products={shown}
 							isAdmin={isAdmin}
+							onBulk={runBulk}
 							onEdit={(p) => openEditor(p.id)}
 							onSavePrice={async (p, price) => put(await productApi.patch(p.id, { price }))}
 						/>

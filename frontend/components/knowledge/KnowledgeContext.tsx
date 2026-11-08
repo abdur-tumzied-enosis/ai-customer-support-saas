@@ -5,6 +5,7 @@ import { documentApi, featuresApi, customInstructionApi, knowledgeBaseApi, produ
 import { getStoredKbId, pickKb, storeKbId } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
+import { useToast } from "@/components/ui/toast";
 
 export type KbDocument = {
 	id: string;
@@ -62,8 +63,7 @@ type KnowledgeState = {
 	reportProducts: (products: Product[]) => void;
 	suggestionCount: number | null;
 	setSuggestionCount: (count: number) => void;
-	alert: KnowledgeAlert;
-	setAlert: Dispatch<SetStateAction<KnowledgeAlert>>;
+	setAlert: (alert: KnowledgeAlert) => void;
 };
 
 const KnowledgeContext = createContext<KnowledgeState | null>(null);
@@ -94,7 +94,9 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 	const [instructionsLoading, setInstructionsLoading] = useState(false);
 	const [productStats, setProductStats] = useState<ProductStats>(null);
 	const [suggestionCount, setSuggestionCount] = useState<number | null>(null);
-	const [alert, setAlert] = useState<KnowledgeAlert>(null);
+	const toast = useToast();
+	// Knowledge sections report results through this; it shows a snackbar
+	const setAlert = useCallback((a: KnowledgeAlert) => { if (a) toast[a.type](a.message); }, [toast]);
 
 	useEffect(() => {
 		if (!projectId) return;
@@ -238,12 +240,11 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 		reportProducts,
 		suggestionCount,
 		setSuggestionCount,
-		alert,
 		setAlert,
 	}), [
 		authLoading, projectId, isAdmin, knowledgeBases, selectedKb, selectKb, fetchKnowledgeBases, imageSearchOn,
 		documents, documentsLoading, fetchDocuments, instructions, instructionsLoading, fetchInstructions,
-		productStats, reportProducts, suggestionCount, alert,
+		productStats, reportProducts, suggestionCount, setAlert,
 	]);
 
 	return <KnowledgeContext.Provider value={value}>{children}</KnowledgeContext.Provider>;

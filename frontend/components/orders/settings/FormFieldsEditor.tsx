@@ -7,11 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { orderApi, type CustomField, type OrderSettings } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
+import { useToast } from "@/components/ui/toast";
 
 export default function FormFieldsEditor({ projectId }: { projectId: string }) {
 	const [formFields, setFormFields] = useState<OrderSettings["form_fields"] | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [saved, setSaved] = useState(false);
+	const toast = useToast();
 
 	useEffect(() => {
 		// Projects that never saved fields store {} (no "custom" key), so fill in the defaults.
@@ -34,23 +36,17 @@ export default function FormFieldsEditor({ projectId }: { projectId: string }) {
 	const setCustom = (custom: CustomField[]) => setFormFields({ ...formFields, custom });
 
 	async function save() {
-		setError(null);
 		setSaved(false);
 		try {
 			await orderApi.saveSettings(projectId, { form_fields: formFields! });
 			setSaved(true);
 		} catch (e) {
-			setError(formatError(e));
+			toast.error(formatError(e));
 		}
 	}
 
 	return (
 		<div className="space-y-3">
-			{error && (
-				<Alert variant="destructive">
-					<AlertDescription>{error}</AlertDescription>
-				</Alert>
-			)}
 			{formFields.custom.map((field, i) => (
 				<div key={i} className="flex flex-wrap items-center gap-2">
 					<Input

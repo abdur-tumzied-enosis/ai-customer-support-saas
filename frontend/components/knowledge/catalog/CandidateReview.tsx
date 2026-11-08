@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
@@ -27,9 +28,8 @@ export default function CandidateReview({ projectId, kbId, pages, currency, isAd
 	const [picked, setPicked] = useState<Set<string>>(new Set());
 	const [index, setIndex] = useState(0);
 	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const toast = useToast();
 	const [rejected, setRejected] = useState<{ id: string; message: string }[]>([]);
-	const [info, setInfo] = useState<string | null>(null);
 
 	const names = new Map(pages.flatMap((p) => p.candidates.map((c) => [c.id, c.name] as const)));
 
@@ -42,12 +42,10 @@ export default function CandidateReview({ projectId, kbId, pages, currency, isAd
 
 	const run = async (fn: () => Promise<void>) => {
 		setBusy(true);
-		setError(null);
-		setInfo(null);
 		try {
 			await fn();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setBusy(false);
 		}
@@ -61,7 +59,7 @@ export default function CandidateReview({ projectId, kbId, pages, currency, isAd
 		const pageGoesAway = page.candidates.every((c) => picked.has(c.id));
 		const r = await candidateApi.import(projectId, kbId, [...picked]);
 		setRejected(r.rejected);
-		setInfo(`${r.imported} added, ${r.updated} updated`);
+		toast.success(`${r.imported} added, ${r.updated} updated`);
 		setPicked(new Set());
 		if (!pageGoesAway) setIndex(current + 1);
 		onChanged();
@@ -74,7 +72,7 @@ export default function CandidateReview({ projectId, kbId, pages, currency, isAd
 
 	const rerun = () => run(async () => {
 		await candidateApi.extract(projectId, kbId);
-		setInfo("Extraction started. Check back in a minute.");
+		toast.success("Extraction started. Check back in a minute.");
 	});
 
 	return (
@@ -83,8 +81,6 @@ export default function CandidateReview({ projectId, kbId, pages, currency, isAd
 				<p className="text-sm text-muted-foreground">Nothing is added to your catalog until you pick it.</p>
 				{isAdmin && <Button variant="outline" size="sm" disabled={busy} onClick={rerun}>Re-run extraction</Button>}
 			</div>
-			{error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-			{info && <Alert><AlertDescription>{info}</AlertDescription></Alert>}
 			{rejected.length > 0 && (
 				<Alert variant="destructive">
 					<AlertDescription>

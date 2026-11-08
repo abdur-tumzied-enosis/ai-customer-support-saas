@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { orderFromChatApi, type PrefillLine } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
 
@@ -25,13 +26,12 @@ export default function CreateFromChatDialog({ open, onOpenChange, conversationI
 	const [needsPrice, setNeedsPrice] = useState<{ product_id: string; name: string }[]>([]);
 	const [loading, setLoading] = useState(false);
 	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const toast = useToast();
 	const [problems, setProblems] = useState<string[]>([]);
 
 	useEffect(() => {
 		if (!open) return;
 		setLoading(true);
-		setError(null);
 		setProblems([]);
 		orderFromChatApi
 			.prefill(conversationId)
@@ -40,13 +40,12 @@ export default function CreateFromChatDialog({ open, onOpenChange, conversationI
 				setCustomer(res.data.customer as Record<string, string>);
 				setNeedsPrice(res.data.needs_price);
 			})
-			.catch((e) => setError(formatError(e)))
+			.catch((e) => toast.error(formatError(e)))
 			.finally(() => setLoading(false));
 	}, [open, conversationId]);
 
 	async function create() {
 		setBusy(true);
-		setError(null);
 		setProblems([]);
 		try {
 			const res = await orderFromChatApi.create(
@@ -61,7 +60,7 @@ export default function CreateFromChatDialog({ open, onOpenChange, conversationI
 				setProblems((res.data.problems ?? []).map((p) => p.message));
 			}
 		} catch (e) {
-			setError(formatError(e));
+			toast.error(formatError(e));
 		} finally {
 			setBusy(false);
 		}
@@ -75,11 +74,6 @@ export default function CreateFromChatDialog({ open, onOpenChange, conversationI
 					<DialogDescription>Check the lines and details the assistant read from the chat, then create the order.</DialogDescription>
 				</DialogHeader>
 				{loading && <p className="text-sm text-muted-foreground">Reading the chat…</p>}
-				{error && (
-					<Alert variant="destructive">
-						<AlertDescription>{error}</AlertDescription>
-					</Alert>
-				)}
 				{problems.length > 0 && (
 					<Alert variant="destructive">
 						<AlertDescription>

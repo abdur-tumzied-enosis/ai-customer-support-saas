@@ -107,7 +107,7 @@ class LiveLookupTest(TestCase):
 		)
 		tools = {t.__name__: t for t in build_order_tools(conv, self.settings, context)}
 		with patch("orders.live.safe_request", return_value=self.live_response('{"data": {}}')):
-			out = json.loads(tools["find_products"]("Shirt"))
+			out = json.loads(tools["find_products"]("Shirt"))["products"]
 		self.assertIsNone(out[0]["price"])
 		self.assertFalse(out[0]["available"])
 

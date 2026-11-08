@@ -3,13 +3,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { ORDERS_CHANGED } from "@/components/orders/OrdersShell";
 import { orderApi } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
 import { Loader2 } from "lucide-react";
 import SetupStepSettings from "@/components/orders/setup/SetupStepSettings";
-import PromptPreview from "@/components/orders/settings/PromptPreview";
 import FormFieldsEditor from "@/components/orders/settings/FormFieldsEditor";
 import OrderInstructions from "@/components/orders/settings/OrderInstructions";
 import NotificationsSection from "@/components/orders/settings/NotificationsSection";
@@ -31,23 +30,22 @@ function Section({ title, description, children }: { title: string; description?
 }
 
 function TurnOffOrders({ projectId }: { projectId: string }) {
+	const toast = useToast();
 	const [enabled, setEnabled] = useState<boolean | null>(null);
 	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState<string | null>(null);
 
 	useEffect(() => {
-		orderApi.settings(projectId).then((res) => setEnabled(res.data.enabled)).catch((e) => setError(formatError(e)));
+		orderApi.settings(projectId).then((res) => setEnabled(res.data.enabled)).catch((e) => toast.error(formatError(e)));
 	}, [projectId]);
 
 	async function turnOff() {
 		setBusy(true);
-		setError(null);
 		try {
 			await orderApi.disable(projectId);
 			setEnabled(false);
 			window.dispatchEvent(new Event(ORDERS_CHANGED));
 		} catch (e) {
-			setError(formatError(e));
+			toast.error(formatError(e));
 		} finally {
 			setBusy(false);
 		}
@@ -55,11 +53,6 @@ function TurnOffOrders({ projectId }: { projectId: string }) {
 
 	return (
 		<div className="space-y-3">
-			{error && (
-				<Alert variant="destructive">
-					<AlertDescription>{error}</AlertDescription>
-				</Alert>
-			)}
 			{enabled === true && (
 				<Button variant="destructive" onClick={turnOff} disabled={busy}>
 					{busy ? "Turning off…" : "Turn off orders"}
@@ -91,9 +84,6 @@ export default function OrderSettingsPage() {
 			</Section>
 			<Section title="Order instructions" description="Your wording for taking orders. The protected rules always apply on top.">
 				<OrderInstructions projectId={projectId} />
-			</Section>
-			<Section title="What we tell your agent" description="Read-only. Built from these settings and your order instructions.">
-				<PromptPreview projectId={projectId} />
 			</Section>
 			<Section title="Notifications" description="Order emails go to the addresses above.">
 				<NotificationsSection projectSlug={project.slug} />

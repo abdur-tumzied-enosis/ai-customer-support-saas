@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { authApi } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 
@@ -19,15 +19,14 @@ function ResetPasswordForm() {
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
 	const [confirmPassword, setConfirmPassword] = useState("");
-	const [error, setError] = useState("");
+	const toast = useToast();
 	const [success, setSuccess] = useState("");
 	const [loading, setLoading] = useState(false);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		setError("");
 		if (uid && token && password !== confirmPassword) {
-			setError("Passwords do not match");
+			toast.error("Passwords do not match");
 			return;
 		}
 		setLoading(true);
@@ -36,8 +35,9 @@ function ResetPasswordForm() {
 				? await authApi.confirmPasswordReset({ uid, token, new_password: password })
 				: await authApi.requestPasswordReset(email.trim());
 			setSuccess(res.message);
+			toast.success(res.message);
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -53,16 +53,9 @@ function ResetPasswordForm() {
 			</CardHeader>
 			<CardContent>
 				{success ? (
-					<Alert>
-						<AlertDescription>{success}</AlertDescription>
-					</Alert>
+					<p className="text-sm">{success}</p>
 				) : (
 					<form onSubmit={handleSubmit} className="space-y-4">
-						{error && (
-							<Alert variant="destructive">
-								<AlertDescription>{error}</AlertDescription>
-							</Alert>
-						)}
 						{uid && token ? (
 							<>
 								<div className="space-y-2">

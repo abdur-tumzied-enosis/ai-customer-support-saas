@@ -107,9 +107,10 @@ class ServiceTest(TestCase):
 		s = self.settings
 		OrderSettings.objects.filter(pk=s.pk).update(enabled=True, channels=["facebook"], test_mode=False)
 		self.assertIsNotNone(ordering_active(self.conv))  # enabled, channel listed
-		self.assertIsNone(ordering_active(self.test_conv))  # enabled, self not listed, no test mode
+		self.assertIsNotNone(ordering_active(self.test_conv))  # enabled: the owner's test chat always gets it
 		OrderSettings.objects.filter(pk=s.pk).update(channels=[])
 		self.assertIsNone(ordering_active(self.conv))  # enabled, channel not listed
+		self.assertIsNotNone(ordering_active(self.test_conv))  # enabled, no channels: test chat still gets it
 		OrderSettings.objects.filter(pk=s.pk).update(enabled=False, test_mode=True)
 		self.assertIsNotNone(ordering_active(self.test_conv))  # test mode on the self chat
 		self.assertIsNone(ordering_active(self.conv))  # feature off for real channels

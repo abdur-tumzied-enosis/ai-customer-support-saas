@@ -112,6 +112,9 @@ def build_reply_context(project, knowledge_base: KnowledgeBase, conversation=Non
 		retrieved_factory_for_crawler_url_context=lambda: get_web_crawl_retriever(str(knowledge_base.id), k=10)
 	)
 	order_settings = ordering_active(conversation) if conversation else None
+	if conversation:
+		# ordering off means no find_products/order tools: the agent can only search the KB for products
+		logger.info(f"Ordering {'on' if order_settings else 'off'} for conversation {conversation.id} (channel={conversation.channel})")
 	if order_settings:
 		context.order_tools = build_order_tools(conversation, order_settings, context)
 		order_texts = [i.message for i in CustomInstruction.effective_order_instructions(str(project.id), str(knowledge_base.id))]

@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { useRouter } from "next/navigation";
 import { ApiError, authApi } from "@/lib/api";
 import { formatError } from "@/lib/errors";
@@ -18,7 +18,7 @@ export default function SignInPage() {
 	const { checkAuth } = useAuth();
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
-	const [error, setError] = useState("");
+	const toast = useToast();
 	const [loading, setLoading] = useState(false);
 
 	if (authLoading) {
@@ -31,7 +31,6 @@ export default function SignInPage() {
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		setError("");
 		setLoading(true);
 
 		try {
@@ -50,7 +49,7 @@ export default function SignInPage() {
 				router.push(`/verify-email?email=${encodeURIComponent(email.trim())}`); // backend just sent a fresh code
 				return;
 			}
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -66,11 +65,6 @@ export default function SignInPage() {
 			</CardHeader>
 			<CardContent>
 				<form onSubmit={handleSubmit} className="space-y-4">
-					{error && (
-						<Alert variant="destructive">
-							<AlertDescription>{error}</AlertDescription>
-						</Alert>
-					)}
 					<div className="space-y-2">
 						<Label htmlFor="email">Email</Label>
 						<Input

@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Facebook, Instagram, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle, Copy, Check, ExternalLink, RefreshCw } from "lucide-react";
 import { channelApi, featuresApi, platformApi, knowledgeBaseApi, type ChannelCredential, type KnowledgeBase, type Platform } from "@/lib/api";
@@ -35,13 +35,12 @@ const VERIFY_TOKEN = "verify_token";
 const newVerifyToken = () => crypto.randomUUID().replace(/-/g, "");
 
 export default function ChannelsPage() {
+	const toast = useToast();
 	const { projects } = useAuth();
 	const [channels, setChannels] = useState<ChannelCredential[]>([]);
 	const [platforms, setPlatforms] = useState<Platform[]>([]);
 	const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
 	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const [success, setSuccess] = useState<string | null>(null);
 	
 	// Dialog states
 	const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -79,7 +78,7 @@ export default function ChannelsPage() {
 			await channelApi.update(channel.id, { image_search_enabled: !channel.image_search_enabled });
 			fetchChannels();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		}
 	};
 
@@ -109,7 +108,7 @@ export default function ChannelsPage() {
 			const response = await channelApi.list(projectSlug);
 			setChannels(response.data.channels);
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -128,12 +127,12 @@ export default function ChannelsPage() {
 
 	const handleAddChannel = async () => {
 		if (!selectedPlatform) {
-			setError("Please select a platform");
+			toast.error("Please select a platform");
 			return;
 		}
 
 		if (!formData.name.trim()) {
-			setError("Please enter a name for this channel");
+			toast.error("Please enter a name for this channel");
 			return;
 		}
 
@@ -143,18 +142,17 @@ export default function ChannelsPage() {
 			.map(field => field.label);
 
 		if (missingFields.length > 0) {
-			setError(`Please fill in required fields: ${missingFields.join(", ")}`);
+			toast.error(`Please fill in required fields: ${missingFields.join(", ")}`);
 			return;
 		}
 
 		// The backend ignores incoming messages on channels without a knowledge base
 		if (!formData.knowledge_base_id) {
-			setError("Please select a knowledge base");
+			toast.error("Please select a knowledge base");
 			return;
 		}
 
 		setLoading(true);
-		setError(null);
 
 		try {
 			await channelApi.create({
@@ -165,12 +163,12 @@ export default function ChannelsPage() {
 				knowledge_base_id: formData.knowledge_base_id || null,
 			});
 
-			setSuccess("Channel added successfully!");
+			toast.success("Channel added successfully!");
 			setAddDialogOpen(false);
 			resetForm();
 			fetchChannels();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -180,7 +178,6 @@ export default function ChannelsPage() {
 		if (!editingChannel) return;
 
 		setLoading(true);
-		setError(null);
 
 		// Empty fields mean "keep current value", so they are not sent
 		const changedCredentials = Object.fromEntries(
@@ -194,13 +191,13 @@ export default function ChannelsPage() {
 				knowledge_base_id: formData.knowledge_base_id || null,
 			});
 
-			setSuccess("Channel updated successfully!");
+			toast.success("Channel updated successfully!");
 			setEditDialogOpen(false);
 			setEditingChannel(null);
 			resetForm();
 			fetchChannels();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -210,16 +207,15 @@ export default function ChannelsPage() {
 		if (!deletingChannel) return;
 
 		setLoading(true);
-		setError(null);
 
 		try {
 			await channelApi.delete(deletingChannel.id);
-			setSuccess("Channel deleted successfully!");
+			toast.success("Channel deleted successfully!");
 			setDeleteDialogOpen(false);
 			setDeletingChannel(null);
 			fetchChannels();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -410,20 +406,7 @@ export default function ChannelsPage() {
 				</Button>
 			</div>
 
-			{/* Alerts */}
-			{error && (
-				<Alert variant="destructive">
-					<AlertCircle className="h-4 w-4" />
-					<AlertDescription>{error}</AlertDescription>
-				</Alert>
-			)}
 
-			{success && (
-				<Alert>
-					<CheckCircle2 className="h-4 w-4" />
-					<AlertDescription>{success}</AlertDescription>
-				</Alert>
-			)}
 
 			{/* Loading State */}
 			{loading && channels.length === 0 && (

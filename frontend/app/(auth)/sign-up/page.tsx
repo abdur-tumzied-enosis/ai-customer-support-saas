@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { useRouter } from "next/navigation";
 import { authApi } from "@/lib/api";
 import { formatError } from "@/lib/errors";
@@ -22,7 +22,7 @@ export default function SignUpPage() {
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
 	const [confirmPassword, setConfirmPassword] = useState("");
-	const [error, setError] = useState("");
+	const toast = useToast();
 	const [loading, setLoading] = useState(false);
 
 	if (authLoading) {
@@ -35,25 +35,24 @@ export default function SignUpPage() {
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		setError("");
 
 		if (!firstName.trim()) {
-			setError("First name is required");
+			toast.error("First name is required");
 			return;
 		}
 
 		if (!lastName.trim()) {
-			setError("Last name is required");
+			toast.error("Last name is required");
 			return;
 		}
 
 		if (password !== confirmPassword) {
-			setError("Passwords do not match");
+			toast.error("Passwords do not match");
 			return;
 		}
 
 		if (password.length < 8) {
-			setError("Password must be at least 8 characters long");
+			toast.error("Password must be at least 8 characters long");
 			return;
 		}
 
@@ -72,7 +71,7 @@ export default function SignUpPage() {
 			// Not signed in until the emailed code is entered
 			router.push(`/verify-email?email=${encodeURIComponent(email.trim())}`);
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setLoading(false);
 		}
@@ -88,11 +87,6 @@ export default function SignUpPage() {
 			</CardHeader>
 			<CardContent>
 				<form onSubmit={handleSubmit} className="space-y-4">
-					{error && (
-						<Alert variant="destructive">
-							<AlertDescription>{error}</AlertDescription>
-						</Alert>
-					)}
 					<div className="grid grid-cols-2 gap-4">
 						<div className="space-y-2">
 							<Label htmlFor="firstName">First Name</Label>

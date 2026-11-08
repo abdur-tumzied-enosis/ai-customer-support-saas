@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Plus, Trash2, Upload, X } from "lucide-react";
 import { API_BASE_URL, productApi, productFieldApi, type Product, type ProductField, type ProductImage, type ProductVariant } from "@/lib/api";
@@ -62,7 +63,7 @@ export default function ProductEditor({ projectId, kbId, product, currency, imag
 	const previews = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
 	useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
 	const [saving, setSaving] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const toast = useToast();
 
 	useEffect(() => {
 		productFieldApi.list(projectId, kbId).then(setFields).catch(() => {});
@@ -87,7 +88,6 @@ export default function ProductEditor({ projectId, kbId, product, currency, imag
 
 	const save = async () => {
 		setSaving(true);
-		setError(null);
 		let id = savedId;
 		let created = false;
 		try {
@@ -105,18 +105,17 @@ export default function ProductEditor({ projectId, kbId, product, currency, imag
 			onSaved(await productApi.patch(id, details()));
 			onClose();
 		} catch (err) {
-			setError(created || createdHere ? HALF_SAVED : formatError(err));
+			toast.error(created || createdHere ? HALF_SAVED : formatError(err));
 		} finally {
 			setSaving(false);
 		}
 	};
 
 	const photoOp = async (fn: () => Promise<void>) => {
-		setError(null);
 		try {
 			await fn();
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		}
 	};
 
@@ -138,12 +137,11 @@ export default function ProductEditor({ projectId, kbId, product, currency, imag
 		const photos = n ? ` and its ${n} photo${n === 1 ? "" : "s"}` : "";
 		if (!window.confirm(`Delete ${product.name}${photos}?`)) return;
 		setSaving(true);
-		setError(null);
 		try {
 			await productApi.remove(product.id);
 			onDeleted(product.id);
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 			setSaving(false);
 		}
 	};
@@ -161,7 +159,6 @@ export default function ProductEditor({ projectId, kbId, product, currency, imag
 			{!sku.trim() && !externalId.trim() && (
 				<Alert><AlertDescription>{KEY_WARNING}</AlertDescription></Alert>
 			)}
-			{error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
 			<div className="grid gap-3 sm:grid-cols-2">
 				<div className="space-y-1">
 					<Label htmlFor="pe-name">Name</Label>

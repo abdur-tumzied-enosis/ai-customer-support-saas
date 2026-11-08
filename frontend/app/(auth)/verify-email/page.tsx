@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { authApi } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { useAuth } from "@/hooks/useAuth";
@@ -17,32 +17,29 @@ function VerifyEmailForm() {
 	const { checkAuth } = useAuth();
 	const email = useSearchParams().get("email") || "";
 	const [code, setCode] = useState("");
-	const [error, setError] = useState("");
-	const [notice, setNotice] = useState("");
+	const toast = useToast();
 	const [loading, setLoading] = useState(false);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
-		setError("");
 		setLoading(true);
 		try {
 			await authApi.verifyEmail({ email, code: code.trim() });
 			await checkAuth();
 			router.push("/dashboard");
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		} finally {
 			setLoading(false);
 		}
 	}
 
 	async function handleResend() {
-		setError("");
 		try {
 			const res = await authApi.resendVerification(email);
-			setNotice(res.message);
+			toast.success(res.message);
 		} catch (err) {
-			setError(formatError(err));
+			toast.error(formatError(err));
 		}
 	}
 
@@ -56,16 +53,6 @@ function VerifyEmailForm() {
 			</CardHeader>
 			<CardContent>
 				<form onSubmit={handleSubmit} className="space-y-4">
-					{error && (
-						<Alert variant="destructive">
-							<AlertDescription>{error}</AlertDescription>
-						</Alert>
-					)}
-					{notice && (
-						<Alert>
-							<AlertDescription>{notice}</AlertDescription>
-						</Alert>
-					)}
 					<div className="space-y-2">
 						<Label htmlFor="code">Verification code</Label>
 						<Input

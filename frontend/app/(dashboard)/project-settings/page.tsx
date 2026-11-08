@@ -7,24 +7,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { useToast } from "@/components/ui/toast";
 import { featuresApi, projectSettingsApi, type Features } from "@/lib/api";
 import { CURRENCIES } from "@/lib/currencies";
 import { formatError } from "@/lib/errors";
 import { useAuth } from "@/hooks/useAuth";
 
-type Status = { kind: "ok" | "error"; text: string } | null;
-
-function StatusLine({ status }: { status: Status }) {
-	if (!status) return null;
-	return (
-		<Alert variant={status.kind === "error" ? "destructive" : "default"}>
-			<AlertDescription>{status.text}</AlertDescription>
-		</Alert>
-	);
-}
 
 export default function ProjectSettingsPage() {
+	const toast = useToast();
 	const { projects, checkAuth } = useAuth();
 	const project = projects.length > 0 ? projects[0] : null;
 	const isAdmin = project?.role === "admin";
@@ -32,11 +23,9 @@ export default function ProjectSettingsPage() {
 	const [name, setName] = useState("");
 	const [currency, setCurrency] = useState("BDT");
 	const [filter, setFilter] = useState("");
-	const [status, setStatus] = useState<Status>(null);
 	const [saving, setSaving] = useState(false);
 
 	const [features, setFeatures] = useState<Features | null>(null);
-	const [featuresStatus, setFeaturesStatus] = useState<Status>(null);
 	const [savingFeatures, setSavingFeatures] = useState(false);
 
 	useEffect(() => {
@@ -48,7 +37,7 @@ export default function ProjectSettingsPage() {
 				setName(s.name);
 				setCurrency(s.currency);
 			})
-			.catch((err) => setStatus({ kind: "error", text: formatError(err) }));
+			.catch((err) => toast.error(formatError(err)));
 		featuresApi
 			.get(id)
 			.then(setFeatures)
@@ -59,15 +48,14 @@ export default function ProjectSettingsPage() {
 		e.preventDefault();
 		if (!project) return;
 		setSaving(true);
-		setStatus(null);
 		try {
 			const s = await projectSettingsApi.update(String(project.id), { name: name.trim(), currency });
 			setName(s.name);
 			setCurrency(s.currency);
 			await checkAuth();
-			setStatus({ kind: "ok", text: "Project settings saved." });
+			toast.success("Project settings saved.");
 		} catch (err) {
-			setStatus({ kind: "error", text: formatError(err) });
+			toast.error(formatError(err));
 		} finally {
 			setSaving(false);
 		}
@@ -76,11 +64,10 @@ export default function ProjectSettingsPage() {
 	async function toggleImageSearch() {
 		if (!project || !features) return;
 		setSavingFeatures(true);
-		setFeaturesStatus(null);
 		try {
 			setFeatures(await featuresApi.update(String(project.id), !features.image_search));
 		} catch (err) {
-			setFeaturesStatus({ kind: "error", text: formatError(err) });
+			toast.error(formatError(err));
 		} finally {
 			setSavingFeatures(false);
 		}
@@ -106,7 +93,6 @@ export default function ProjectSettingsPage() {
 				</CardHeader>
 				<CardContent>
 					<form onSubmit={save} className="space-y-4">
-						<StatusLine status={status} />
 						<div className="space-y-2">
 							<Label htmlFor="project-name">Project name</Label>
 							<Input
@@ -176,7 +162,6 @@ export default function ProjectSettingsPage() {
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
-						<StatusLine status={featuresStatus} />
 						{isAdmin ? (
 							<Button
 								type="button"
