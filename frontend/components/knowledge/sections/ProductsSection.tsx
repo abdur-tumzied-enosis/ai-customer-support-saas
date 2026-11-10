@@ -13,7 +13,7 @@ import ProductEditor from "@/components/knowledge/catalog/ProductEditor";
 import { useKnowledge } from "@/components/knowledge/KnowledgeContext";
 import ProductSourcesPanel from "@/components/knowledge/catalog/ProductSourcesPanel";
 import CandidateReview from "@/components/knowledge/catalog/CandidateReview";
-import { candidateApi, productApi, type CandidatePage, type Product, type ProductStatus } from "@/lib/api";
+import { candidateApi, productApi, type CandidatePage, type LastExtraction, type Product, type ProductStatus } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 
 type Tab = "all" | ProductStatus;
@@ -42,6 +42,7 @@ export default function ProductsSection() {
 	const [stalled, setStalled] = useState(false);
 	const [view, setView] = useState<View>("products");
 	const [pages, setPages] = useState<CandidatePage[]>([]);
+	const [lastExtraction, setLastExtraction] = useState<LastExtraction>({});
 
 	const load = useCallback(async () => {
 		if (!projectId || !kbId) return;
@@ -56,7 +57,9 @@ export default function ProductsSection() {
 	const loadCandidates = useCallback(async () => {
 		if (!projectId || !kbId) return;
 		try {
-			setPages((await candidateApi.list(projectId, kbId)).pages);
+			const r = await candidateApi.list(projectId, kbId);
+			setPages(r.pages);
+			setLastExtraction(r.last_extraction);
 		} catch (err) {
 			toast.error(formatError(err));
 		}
@@ -163,6 +166,7 @@ export default function ProductsSection() {
 								projectId={projectId}
 								kbId={kbId}
 								pages={pages}
+								lastExtraction={lastExtraction}
 								currency={products[0]?.currency ?? "BDT"}
 								isAdmin={isAdmin}
 								onChanged={refresh}

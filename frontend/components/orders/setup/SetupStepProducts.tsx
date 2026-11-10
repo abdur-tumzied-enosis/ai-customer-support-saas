@@ -9,7 +9,7 @@ import CandidateReview from "@/components/knowledge/catalog/CandidateReview";
 import { useToast } from "@/components/ui/toast";
 import ProductTable from "@/components/knowledge/catalog/ProductTable";
 import { ORDERS_CHANGED } from "@/components/orders/OrdersShell";
-import { candidateApi, productApi, type CandidatePage, type Product } from "@/lib/api";
+import { candidateApi, productApi, type CandidatePage, type LastExtraction, type Product } from "@/lib/api";
 import { orderApi, type Requirement } from "@/lib/orders-api";
 import { formatError } from "@/lib/errors";
 
@@ -25,6 +25,7 @@ const BLOCK_REASON: Record<string, string> = {
 export default function SetupStepProducts({ projectId, kbId, onBack }: Props) {
 	const router = useRouter();
 	const [pages, setPages] = useState<CandidatePage[] | null>(null);
+	const [lastExtraction, setLastExtraction] = useState<LastExtraction>({});
 	const [products, setProducts] = useState<Product[]>([]);
 	const [counts, setCounts] = useState<Record<string, number>>({});
 	const [currency, setCurrency] = useState("BDT");
@@ -43,6 +44,7 @@ export default function SetupStepProducts({ projectId, kbId, onBack }: Props) {
 				orderApi.requirements(projectId),
 			]);
 			setPages(candidates.pages);
+			setLastExtraction(candidates.last_extraction);
 			setCounts(summary.counts);
 			setCurrency(summary.currency);
 			setProducts(list);
@@ -104,7 +106,7 @@ export default function SetupStepProducts({ projectId, kbId, onBack }: Props) {
 
 			<section className="space-y-3">
 				<h2 className="text-base font-medium">From your website</h2>
-				<CandidateReview projectId={projectId} kbId={kbId} pages={pages} currency={currency} isAdmin onChanged={load} />
+				<CandidateReview projectId={projectId} kbId={kbId} pages={pages} lastExtraction={lastExtraction} currency={currency} isAdmin onChanged={load} />
 			</section>
 
 			{products.length > 0 && (

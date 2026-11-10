@@ -6,7 +6,7 @@ import { useToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
-import { candidateApi, type CandidatePage } from "@/lib/api";
+import { candidateApi, type CandidatePage, type LastExtraction } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { currencySymbol } from "./ProductTable";
 
@@ -19,12 +19,13 @@ type Props = {
 	projectId: string;
 	kbId: string;
 	pages: CandidatePage[];
+	lastExtraction?: LastExtraction;
 	currency: string;
 	isAdmin: boolean;
 	onChanged: () => void;
 };
 
-export default function CandidateReview({ projectId, kbId, pages, currency, isAdmin, onChanged }: Props) {
+export default function CandidateReview({ projectId, kbId, pages, lastExtraction, currency, isAdmin, onChanged }: Props) {
 	const [picked, setPicked] = useState<Set<string>>(new Set());
 	const [index, setIndex] = useState(0);
 	const [busy, setBusy] = useState(false);
@@ -81,6 +82,15 @@ export default function CandidateReview({ projectId, kbId, pages, currency, isAd
 				<p className="text-sm text-muted-foreground">Nothing is added to your catalog until you pick it.</p>
 				{isAdmin && <Button variant="outline" size="sm" disabled={busy} onClick={rerun}>Re-run extraction</Button>}
 			</div>
+			{lastExtraction && "status" in lastExtraction && (lastExtraction.status === "stopped: out of credits" ? (
+				<Alert>
+					<AlertDescription>
+						We stopped after {lastExtraction.saved} of {lastExtraction.found} products: your project ran out of credits. Top up, then run extraction again to get the rest.
+					</AlertDescription>
+				</Alert>
+			) : lastExtraction.status === "completed" && (
+				<p className="text-sm text-muted-foreground">Last run read {lastExtraction.pages} pages and found {lastExtraction.saved} products.</p>
+			))}
 			{rejected.length > 0 && (
 				<Alert variant="destructive">
 					<AlertDescription>

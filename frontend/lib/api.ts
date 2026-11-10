@@ -1161,6 +1161,7 @@ export type ProductCandidate = {
 	matched_by: "" | "external_id" | "sku" | "name";
 };
 
+export type LastExtraction = { status: string; pages: number; found: number; saved: number; skipped: number; finished_at: string } | Record<string, never>;
 export type CandidatePage = { page_url: string; page_title: string; candidates: ProductCandidate[] };
 
 // multipart: apiFetch forces a JSON content type, so the file upload sends its own request
@@ -1255,7 +1256,7 @@ export const productSourceApi = {
 
 export const candidateApi = {
 	list: async (projectId: string, kbId: string) =>
-		(await apiFetch<{ pages: CandidatePage[]; ignored_pages: string[] }>(`/api/kb/products/candidates/?${q(projectId, kbId)}`)).data,
+		(await apiFetch<{ pages: CandidatePage[]; ignored_pages: string[]; last_extraction: LastExtraction }>(`/api/kb/products/candidates/?${q(projectId, kbId)}`)).data,
 
 	// Admin-only from here
 	import: async (projectId: string, kbId: string, ids: string[]) =>
