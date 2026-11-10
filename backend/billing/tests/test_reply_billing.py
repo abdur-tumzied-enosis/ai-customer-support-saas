@@ -88,6 +88,13 @@ class ReplyBillingTest(PipelineBase):
 		self.conv.refresh_from_db()
 		self.assertEqual(self.conv.handoff_reason, "out of credits")
 		self.assertEqual(self.rows().count(), 0)
+		self.assertNotIn("billable", self.outbound()[0].meta)
+
+	def test_precheck_error_fails_open(self):
+		with mock.patch("channels_app.reply.shopper_blocked", side_effect=RuntimeError("db down")):
+			self.run_reply(self.inbound("hello"))
+		self.assertEqual(self.gen.call_count, 1)
+		self.assertEqual(self.outbound()[0].status, "completed")
 
 	@override_settings(IMAGE_SEARCH_ENABLED=True)
 	def test_overdraft_counts_photo(self):

@@ -171,8 +171,12 @@ def _reply(task, conversation, msg: Message) -> None:
 
 	out_of_credits = False
 	if conversation.channel != "self":
-		cost = price_of("reply") + (price_of("photo_search") if any((m.meta or {}).get("photo_reply") for m in turn) else 0)
-		out_of_credits = shopper_blocked(conversation.project, cost)
+		try:
+			cost = price_of("reply") + (price_of("photo_search") if any((m.meta or {}).get("photo_reply") for m in turn) else 0)
+			out_of_credits = shopper_blocked(conversation.project, cost)
+		except Exception:  # fail open: a billing error never stops a shopper reply
+			logger.exception("Out-of-credits check failed for conversation %s", conversation.id)
+			out_of_credits = False
 
 	try:
 		if not out_of_credits:
