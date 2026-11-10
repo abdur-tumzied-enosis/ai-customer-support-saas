@@ -12,6 +12,11 @@ export const metadata: Metadata = {
 	description: "Multi-channel AI assistant dashboard",
 	applicationName: "TumarAgent",
 	openGraph: { siteName: "TumarAgent", title: "TumarAgent", description: "Multi-channel AI assistant dashboard", url: "/" },
+	verification: {
+		other: {
+			"facebook-domain-verification": "qosq3kxdp7mblk7gvu4z8wi63m5swz",
+		},
+	},
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
