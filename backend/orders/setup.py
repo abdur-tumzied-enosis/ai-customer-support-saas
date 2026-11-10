@@ -13,6 +13,7 @@ from knowledge.product_extract import MAX_CHARS_PER_PAGE, MAX_PAGES_PER_RUN, ext
 from usage.utils import llm_costs, track_token_usage
 
 from .models import OrderSettings
+from billing.service import can_afford, charge, price_of
 
 logger = logging.getLogger(__name__)
 SETUP_MAX_TOKENS = 2048
@@ -190,7 +191,14 @@ def _products(project_id: str, kb_id: str, beat) -> tuple[str, str, str]:
 
 
 def _delivery(project_id: str, kb_id: str, beat) -> tuple[str, str, str]:
+	project = KnowledgeBase.objects.select_related("project").get(pk=kb_id).project
+	price = price_of("order_setup")
+	if price and not can_afford(project, price):
+		return "needs_input", "Not enough credits to read your delivery and payment settings. Ask us to top up your project.", "insufficient_credits"
 	found = extract_order_settings(project_id, kb_id)["found"]
+	steps = OrderSettings.objects.get(project_id=project_id).setup_steps or []
+	started_at = next((s.get("started_at") for s in steps if s["key"] == "delivery"), None)
+	charge(project, "order_setup", key=f"order_setup:{project_id}:{started_at}")
 	payments = f"{found['payment_methods']} payment methods" if found["payment_methods"] else "no payment methods"
 	return "done", f"Found {found['zones']} delivery zones, {payments}", ""
 

@@ -1,4 +1,5 @@
 from datetime import timedelta
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
@@ -7,6 +8,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
+from billing import service
 from knowledge.models import Document, KnowledgeBase, ProductCandidate
 from orders.models import OrderSettings
 from orders.setup import SetupBusy, _run_step, run_setup
@@ -23,6 +25,7 @@ class StepsTestBase(TestCase):
 		self.kb = KnowledgeBase.objects.create(project=self.project, name="Products", vector_collection="vc-steps")
 		Document.objects.create(kb=self.kb, source_type="url", page_url="https://shop.test/d", markdown_content="Dhaka 60 taka.")
 		self.pid, self.kid = str(self.project.id), str(self.kb.id)
+		service.grant(self.project, Decimal("100"), "adjust", key="seed")
 		self.dispatch = patch("orders.setup._dispatch").start()
 		self.extract = patch("orders.setup.extract_candidates", return_value=2).start()
 		self.delivery = patch("orders.setup.extract_order_settings", return_value=REPORT).start()

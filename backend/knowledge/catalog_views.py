@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import uuid
 
 from django.db import IntegrityError, transaction
 from django.db.models import Count
@@ -12,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from billing.service import can_afford, charge, insufficient_credits_response, price_of
 from .candidate_views import _kb_for
 from .catalog import compute_status
 from .models import Product, ProductField, ProductSource
@@ -427,11 +429,15 @@ class MappingSuggestView(APIView):
 			return _bad("invalid_value", f"headers must be a list of 1 to {MAX_SUGGEST_COLUMNS} column names")
 		if not isinstance(sample, list) or len(sample) > 5 or not all(isinstance(r, dict) for r in sample):
 			return _bad("invalid_value", "sample must be up to 5 rows")
+		price = price_of("product_suggest")
+		if price and not can_afford(kb.project, price):
+			return insufficient_credits_response(price)
 		try:
 			suggestions = suggest_mapping(headers, sample, str(kb.project_id), str(kb.id))
 		except Exception:
 			logger.exception("Mapping suggestion failed")
 			return _kb_error("suggest_failed", "Suggestions are unavailable right now. Map the columns by hand.", status.HTTP_503_SERVICE_UNAVAILABLE)
+		charge(kb.project, "product_suggest", key=f"product_suggest:{uuid.uuid4()}")
 		return Response({"success": True, "data": {"suggestions": suggestions}})
 
 

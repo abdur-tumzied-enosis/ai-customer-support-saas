@@ -32,6 +32,7 @@ from .export import write_orders_csv
 from .from_chat import prefill_from_conversation
 from .guard import check_instruction
 from .improve import NoSafeSuggestion, improve
+from billing.service import can_afford, charge, insufficient_credits_response, price_of
 from .instructions import RESOLVE_SCOPES, find_order_instructions
 from .setup import SetupBusy, run_setup, setup_state
 
@@ -282,6 +283,9 @@ class SetupRunView(APIView):
 		mode = request.data.get("mode", "resume")
 		if mode not in ("resume", "restart"):
 			return _err("invalid_mode", "Mode must be resume or restart", 400)
+		price = price_of("order_setup")
+		if price and not can_afford(project, price):
+			return insufficient_credits_response(price)
 		try:
 			run_setup(str(project.id), str(kb_id), mode=mode)
 		except SetupBusy:
@@ -357,10 +361,15 @@ class InstructionImproveView(APIView):
 			return _err("invalid_text", "text is required", 400)
 		if scope not in ("general", "order"):
 			return _err("invalid_scope", "scope must be general or order", 400)
+		price = price_of("instruction_improve")
+		if price and not can_afford(project, price):
+			return insufficient_credits_response(price)
 		try:
-			return _ok(improve(text, scope, str(project.id)))
+			result = improve(text, scope, str(project.id))
 		except NoSafeSuggestion:
 			return _err("no_safe_suggestion", "No safe rewrite was found; edit the text yourself", 422)
+		charge(project, "instruction_improve", key=f"instruction_improve:{uuid.uuid4()}")
+		return _ok(result)
 
 
 ORDER_STATUSES = [status_value for status_value, _ in Order.STATUS_CHOICES]

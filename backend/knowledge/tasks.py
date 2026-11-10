@@ -20,6 +20,7 @@ from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType
 from agents.vector_store import add_texts_to_collection
 from agents.image_search import NotAnImage, delete_images, embed_image, load_image, make_variants, upsert_image
 from usage.utils import record_image_usage
+from billing.service import charge
 
 logger = logging.getLogger(__name__)
 
@@ -802,6 +803,7 @@ def embed_product_image(image_id: str) -> None:
         delete_images(kb.image_collection, [image_id])
         return
     record_image_usage(str(kb.project_id), "index", image_id=image_id)
+    charge(kb.project, "photo_index", key=f"photo_index:{image_id}")  # never blocked, may go below zero
 
 
 @shared_task
