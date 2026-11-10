@@ -42,7 +42,7 @@ class FactUpdate(BaseModel):
 	facts: list[Fact] = Field(default_factory=list, max_length=MAX_FACTS)
 
 
-def ask_llm(project_id: str, system: str, user: str, schema):
+def ask_llm(project_id: str, system: str, user: str, schema, conversation_id=None):
 	"""One structured call to the memory model; tokens are billed to the project like replies."""
 	from agents.llm import get_llm
 	from usage.utils import llm_costs, track_token_usage
@@ -54,8 +54,8 @@ def ask_llm(project_id: str, system: str, user: str, schema):
 	)
 	usage = getattr(out.get("raw"), "usage_metadata", None) or {}
 	cost_in, cost_out = llm_costs([out.get("raw")])
-	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), {"source": "memory"}, cost_usd=cost_in)
-	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), {"source": "memory"}, cost_usd=cost_out)
+	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), {"source": "memory"}, cost_usd=cost_in, conversation_id=conversation_id)
+	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), {"source": "memory"}, cost_usd=cost_out, conversation_id=conversation_id)
 	if out.get("parsed") is None:
 		raise ValueError(f"memory model returned no {schema.__name__}: {out.get('parsing_error')}")
 	return out["parsed"]
@@ -191,7 +191,7 @@ def summarize_episode(conversation) -> None:
 	msgs = list(qs.order_by("created_at")[:EPISODE_MAX_MESSAGES])  # longer stretches continue on the next run
 	if not msgs:
 		return
-	result = ask_llm(str(conversation.project_id), EPISODE_SYSTEM, transcript(msgs), EpisodeSummary)
+	result = ask_llm(str(conversation.project_id), EPISODE_SYSTEM, transcript(msgs), EpisodeSummary, conversation.id)
 	ConversationEpisode.objects.create(
 		conversation=conversation, started_at=msgs[0].created_at, ended_at=msgs[-1].created_at,
 		summary=result.summary.strip() or "(nothing to note)",
@@ -250,7 +250,7 @@ def draft_knowledge_suggestion(staff_message_id: str) -> None:
 	)[::-1]
 	if not any(m.direction == "in" for m in before):
 		return
-	draft = ask_llm(str(conversation.project_id), KNOWLEDGE_SYSTEM, transcript([*before, staff_msg]), KnowledgeDraft)
+	draft = ask_llm(str(conversation.project_id), KNOWLEDGE_SYSTEM, transcript([*before, staff_msg]), KnowledgeDraft, staff_msg.conversation_id)
 	if not (draft.useful and draft.question.strip() and draft.answer.strip()):
 		return
 	MemorySuggestion.objects.create(

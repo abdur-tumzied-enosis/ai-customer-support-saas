@@ -44,7 +44,7 @@ def _catalog_text(products, variants) -> str:
 	return "\n".join(lines)
 
 
-def _ask(project_id: str, transcript: str, catalog: str) -> Prefill:
+def _ask(project_id: str, transcript: str, catalog: str, conversation_id=None) -> Prefill:
 	"""One structured call, tracked under its own source."""
 	llm = get_llm(role="memory", max_tokens=FROM_CHAT_MAX_TOKENS)
 	out = llm.with_structured_output(Prefill, include_raw=True, method="function_calling").invoke(
@@ -52,8 +52,8 @@ def _ask(project_id: str, transcript: str, catalog: str) -> Prefill:
 	)
 	usage = getattr(out.get("raw"), "usage_metadata", None) or {}
 	cost_in, cost_out = llm_costs([out.get("raw")])
-	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), {"source": "order_from_chat"}, cost_usd=cost_in)
-	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), {"source": "order_from_chat"}, cost_usd=cost_out)
+	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), {"source": "order_from_chat"}, cost_usd=cost_in, conversation_id=conversation_id)
+	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), {"source": "order_from_chat"}, cost_usd=cost_out, conversation_id=conversation_id)
 	if out.get("parsed") is None:
 		raise ValueError(f"order prefill returned no result: {out.get('parsing_error')}")
 	return out["parsed"]
@@ -68,7 +68,7 @@ def prefill_from_conversation(conversation) -> dict:
 	variants = list(ProductVariant.objects.filter(product__in=products))
 	recent = list(conversation.messages.order_by("-created_at")[:MESSAGE_LIMIT])[::-1]
 	transcript = "\n".join(f"{'customer' if m.direction == 'in' else 'business'}: {m.text}" for m in recent if m.text)
-	result = _ask(str(conversation.project_id), transcript, _catalog_text(products, variants))
+	result = _ask(str(conversation.project_id), transcript, _catalog_text(products, variants), conversation.id)
 
 	items, needs_price = [], []
 	for item in result.items:

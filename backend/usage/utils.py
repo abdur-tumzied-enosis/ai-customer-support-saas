@@ -11,12 +11,26 @@ from .models import UsageEvent, UsageCounter
 logger = logging.getLogger(__name__)
 
 
+def _consistent_message_id(conversation_id, message_id):
+    """Drop message_id (warn) when that message belongs to another conversation."""
+    if conversation_id and message_id:
+        from channels_app.models import Message
+
+        owner = Message.objects.filter(id=message_id).values_list("conversation_id", flat=True).first()
+        if owner is not None and str(owner) != str(conversation_id):
+            logger.warning(f"Usage message {message_id} is not in conversation {conversation_id}; dropping message link")
+            return None
+    return message_id
+
+
 def track_token_usage(
     project_id: str,
     kind: str,
     tokens: int,
     metadata: Optional[dict] = None,
     cost_usd: Optional[Decimal] = None,
+    conversation_id: Optional[str] = None,
+    message_id: Optional[str] = None,
 ) -> None:
     """
     Track token usage for a project.
@@ -32,11 +46,14 @@ def track_token_usage(
         if tokens <= 0:
             return
 
+        message_id = _consistent_message_id(conversation_id, message_id)
         UsageEvent.objects.create(
             project_id=project_id,
             kind=kind,
             tokens=tokens,
             cost_usd=cost_usd,
+            conversation_id=conversation_id,
+            message_id=message_id,
             metadata=metadata or {}
         )
         logger.info(f"Tracked {tokens} tokens for project {project_id}, kind={kind}")
@@ -75,13 +92,16 @@ def llm_costs(messages) -> tuple[Optional[Decimal], Optional[Decimal]]:
         return None, None
 
 
-def record_image_usage(project_id: str, op: str, **metadata) -> None:
-    """Record one photo operation (op: "index" or "search"). Never raises."""
+def record_image_usage(
+    project_id: str, op: str, *, conversation_id: Optional[str] = None, message_id: Optional[str] = None, **metadata
+) -> None:
+    """Record one photo operation (op: "index" or "search"). Self-hosted, so cost is $0. Never raises."""
     try:
         # atomic: a failed insert must not poison a caller's open transaction
         with transaction.atomic():
             UsageEvent.objects.create(
-                project_id=project_id, kind="image", tokens=0, metadata={"op": op, **metadata}
+                project_id=project_id, kind="image", tokens=0, cost_usd=Decimal(0), metadata={"op": op, **metadata},
+                conversation_id=conversation_id, message_id=_consistent_message_id(conversation_id, message_id),
             )
     except Exception as e:
         logger.error(f"Failed to record image usage: {e}", exc_info=True)

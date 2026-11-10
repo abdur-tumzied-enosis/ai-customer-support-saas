@@ -131,6 +131,8 @@ def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: 
 	history = build_history(msg, since=memory.history_start(msg.conversation) if msg.conversation_id else None)
 	current_message_text = question or format_message_with_context(msg)
 	context, deps = build_reply_context(project, knowledge_base, msg.conversation if msg.conversation_id else None)
+	context.conversation_id = str(msg.conversation_id) if msg.conversation_id else None
+	context.message_id = str(msg.id)
 
 	logger.info(f"Generating reply for message {msg.id} with text: {current_message_text}")
 	logger.info(f"History ({len(history)} msgs): {history[-3:]}")

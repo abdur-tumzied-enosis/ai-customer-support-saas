@@ -101,7 +101,8 @@ class ImageReplyTest(PipelineBase):
 		assert "[Message includes attachments" not in question
 		self.search.assert_called_once_with(self.kb.image_collection, [1, 0, 0, 0])
 		event = self.searches().get()
-		assert event.metadata == {"op": "search", "message_id": str(msg.id), "matched": True}
+		assert event.metadata == {"op": "search", "matched": True}
+		assert (event.message_id, event.conversation_id) == (msg.id, msg.conversation_id)
 		msg.refresh_from_db()
 		assert msg.status == "completed" and "Red Kurta" in msg.meta["photo_matches"]
 		assert len(self.outbound()) == 1

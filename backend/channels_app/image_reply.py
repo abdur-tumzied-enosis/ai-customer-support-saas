@@ -35,7 +35,9 @@ def _photo_note(conversation, msg, att) -> str:
 		# Type only: the message can carry a signed CDN url (requests' HTTPError)
 		logger.warning(f"Photo on message {msg.id} could not be checked against the catalog: {type(e).__name__}")
 		return UNCHECKED_NOTE
-	record_image_usage(str(conversation.project_id), "search", message_id=str(msg.id), matched=bool(matches))
+	record_image_usage(
+		str(conversation.project_id), "search", conversation_id=str(conversation.id), message_id=str(msg.id), matched=bool(matches)
+	)
 	if not matches:
 		return NO_MATCH_NOTE
 	listed = "; ".join(f'"{p.name}" (similarity {score:.2f}): {p.description[:300]}' for p, score in matches)

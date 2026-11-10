@@ -15,7 +15,7 @@ class ImageSearchCatalogTests(TestCase):
 		kb = KnowledgeBase.objects.create(project=project, name="default", is_default=True)
 		rows = {s: Product.objects.create(kb=kb, name=s, status=s, price=100) for s in ("active", "hidden", "needs_info")}
 		hits = [(str(p.id), 0.9) for p in rows.values()]
-		conv = SimpleNamespace(knowledge_base=kb, project_id=project.id)
+		conv = SimpleNamespace(id="c1", knowledge_base=kb, project_id=project.id)
 		msg = SimpleNamespace(id="m1")
 		with mock.patch.object(image_reply, "search_products", return_value=hits), \
 			mock.patch.object(image_reply, "embed_image"), mock.patch.object(image_reply, "load_image"), \

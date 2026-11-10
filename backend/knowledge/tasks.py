@@ -3,6 +3,7 @@ import uuid
 import asyncio
 import logging
 from datetime import timedelta
+from decimal import Decimal
 from typing import List
 from io import BytesIO
 from urllib.parse import urlparse, urljoin, urldefrag
@@ -302,7 +303,8 @@ def run_ingestion_job(job_id: str) -> None:
                         "document_id": str(document.id),
                         "document_filename": document.filename,
                         "num_chunks": len(text_chunks)
-                    }
+                    },
+                    cost_usd=Decimal(0),  # self-hosted embeddings
                 )
                 logger.debug(f"Job {job_id}: Tracked {total_embedding_tokens} embedding tokens")
             except Exception as e:

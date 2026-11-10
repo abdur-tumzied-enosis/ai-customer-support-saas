@@ -21,6 +21,8 @@ class Context:
 	trace: Dict[str, Any] = field(default_factory=dict)  # model/ms/tokens/tool_calls/sources, stored on the reply message
 	order_tools: List[Callable[..., str]] = field(default_factory=list)  # set when ordering is on (orders.tools)
 	order_submitted: bool = False  # set by submit_order during this reply
+	conversation_id: Optional[str] = None  # usage attribution, set by channels_app.tasks.generate_agent_reply
+	message_id: Optional[str] = None
 
 
 @dataclass
@@ -201,23 +203,25 @@ def _track_token_usage(
 	input_tokens: int,
 	output_tokens: int,
 	new_messages: Sequence = (),
+	context: Optional[Context] = None,
 ) -> None:
 	"""Track token usage in the database."""
 	try:
 		from usage.utils import llm_costs, track_token_usage
 
 		cost_in, cost_out = llm_costs([m for m in new_messages if isinstance(m, AIMessage)])
+		attribution = {"conversation_id": context.conversation_id, "message_id": context.message_id} if context else {}
 		if input_tokens > 0:
 			track_token_usage(project_id, "chat_in", input_tokens, {
 				"question_length": len(question),
 				"source": "langchain_usage_metadata"
-			}, cost_usd=cost_in)
+			}, cost_usd=cost_in, **attribution)
 
 		if output_tokens > 0:
 			track_token_usage(project_id, "chat_out", output_tokens, {
 				"response_length": len(reply_text),
 				"source": "langchain_usage_metadata"
-			}, cost_usd=cost_out)
+			}, cost_usd=cost_out, **attribution)
 	except Exception as e:
 		logger.warning(f"Failed to track token usage: {e}")
 
@@ -273,6 +277,6 @@ def generate_reply(
 
 	# Track token usage if project_id provided
 	if project_id and reply_text and input_tokens > 0:
-		_track_token_usage(project_id, question, reply_text, input_tokens, output_tokens, result["messages"][len(messages):])
+		_track_token_usage(project_id, question, reply_text, input_tokens, output_tokens, result["messages"][len(messages):], context)
 
 	return reply_text

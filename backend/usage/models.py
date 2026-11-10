@@ -149,6 +149,12 @@ class UsageEvent(models.Model):
 	# USD; null when unknown (no reported cost and no AIModel prices). OpenRouter's charged total is booked on chat_out.
 	cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
 	metadata = models.JSONField(default=dict, blank=True)
+	conversation = models.ForeignKey(
+		"channels_app.Conversation", null=True, blank=True, on_delete=models.SET_NULL, related_name="usage_events", db_index=True
+	)
+	message = models.ForeignKey(
+		"channels_app.Message", null=True, blank=True, on_delete=models.SET_NULL, related_name="usage_events", db_index=True
+	)
 	created_at = models.DateTimeField(auto_now_add=True)
 
 

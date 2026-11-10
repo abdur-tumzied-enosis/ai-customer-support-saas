@@ -1,4 +1,6 @@
+import importlib
 import uuid
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -40,9 +42,23 @@ class ImageUsageTests(TestCase):
 		self.project = Project.objects.create(name="P", slug="p")
 
 	def test_record_image_usage(self):
-		record_image_usage(str(self.project.id), "search", message_id="m1")
+		record_image_usage(str(self.project.id), "search", matched=True)
 		e = UsageEvent.objects.get()
-		self.assertEqual((e.kind, e.tokens, e.metadata), ("image", 0, {"op": "search", "message_id": "m1"}))
+		self.assertEqual((e.kind, e.tokens, e.metadata), ("image", 0, {"op": "search", "matched": True}))
+
+	def test_image_usage_cost_zero(self):
+		record_image_usage(str(self.project.id), "index")
+		self.assertEqual(UsageEvent.objects.get().cost_usd, Decimal(0))
+
+	def test_embed_cost_zero_backfill(self):
+		from django.apps import apps
+
+		e = UsageEvent.objects.create(project=self.project, kind="embed", tokens=5, cost_usd=None)
+		chat = UsageEvent.objects.create(project=self.project, kind="chat_in", tokens=5, cost_usd=None)
+		importlib.import_module("usage.migrations.0005_self_hosted_cost_zero").backfill(apps, None)
+		e.refresh_from_db()
+		chat.refresh_from_db()
+		self.assertEqual((e.cost_usd, chat.cost_usd), (Decimal(0), None))
 
 
 	def test_analytics_counts_photos_without_changing_tokens(self):
