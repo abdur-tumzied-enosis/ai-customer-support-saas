@@ -82,6 +82,7 @@ class KnowledgeBase(models.Model):
 	vector_collection = models.CharField(max_length=255, unique=True)
 	# Fallback for uploads, crawls and test chats that name no KB. A flag, not the name "default", so it survives a rename.
 	is_default = models.BooleanField(default=False)
+	last_extraction = models.JSONField(default=dict, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
 
 	class Meta:

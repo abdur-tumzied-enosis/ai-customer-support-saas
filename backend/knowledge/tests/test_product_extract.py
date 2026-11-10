@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from django.test import TestCase
 
 from accounts.models import Project
+from billing import service
 from knowledge.models import Document, IgnoredProductPage, KnowledgeBase, Product, ProductCandidate
 from knowledge.product_extract import ExtractedProduct, ExtractionResult
 from knowledge.tasks import extract_product_candidates
@@ -23,6 +24,7 @@ class ProductExtractTest(TestCase):
 	def setUp(self):
 		self.project = Project.objects.create(name="P", slug="0123456789abcdef0123456789abce")
 		self.kb = KnowledgeBase.objects.create(project=self.project, name="default", vector_collection="vc-a8")
+		service.grant(self.project, Decimal("1000"), "adjust", key="seed")
 		self.doc = Document.objects.create(
 			kb=self.kb, source_type="url", page_url="https://shop.test/p1", markdown_content="# Shirt\nPrice 500 Tk",
 			images_metadata=[{"src": "https://shop.test/a.jpg"}, {"src": "https://shop.test/b.jpg"}],

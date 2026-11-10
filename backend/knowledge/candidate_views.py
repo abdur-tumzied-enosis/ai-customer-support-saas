@@ -5,6 +5,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from billing.service import can_afford, insufficient_credits_response, price_of
+
 from .catalog import compute_status, match_product, save_variants
 from .models import IgnoredProductPage, Product, ProductCandidate
 from .price import parse_price
@@ -48,7 +50,7 @@ def candidate_list(request):
 		page = pages.setdefault(c.page_url, {"page_url": c.page_url, "page_title": c.document.page_title if c.document else "", "candidates": []})
 		page["candidates"].append(_candidate_dict(c))
 	ignored = list(kb.ignored_product_pages.order_by("url").values_list("url", flat=True))
-	return Response({"success": True, "data": {"pages": list(pages.values()), "ignored_pages": ignored}})
+	return Response({"success": True, "data": {"pages": list(pages.values()), "ignored_pages": ignored, "last_extraction": kb.last_extraction}})
 
 
 @api_view(["POST"])
@@ -76,6 +78,9 @@ def product_extract(request):
 	kb, err = _kb_for(request, request.data, admin=True)
 	if err:
 		return err
+	price = price_of("product_import")
+	if price and not can_afford(kb.project, price):
+		return insufficient_credits_response(price)
 	from .tasks import extract_product_candidates
 
 	extract_product_candidates.delay(str(kb.id))

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
 from unittest import mock
@@ -8,6 +9,7 @@ from django.test import TestCase
 from PIL import Image
 
 from accounts.models import Project
+from billing import service
 from core.tests.utils import fresh_storage
 from knowledge.models import Document, KnowledgeBase, Product, ProductImage, product_image_path
 from knowledge.product_extract import ExtractedProduct, ExtractionResult
@@ -20,6 +22,7 @@ class CatalogUsageTest(TestCase):
 	def setUp(self):
 		self.project = Project.objects.create(name="P", slug="0123456789abcdef0123456789abd5")
 		self.kb = KnowledgeBase.objects.create(project=self.project, name="default", vector_collection="vc-a15")
+		service.grant(self.project, Decimal("1000"), "adjust", key="seed")
 		self.addCleanup(mock.patch.stopall)
 
 	def test_extraction_tracks_chat_in_and_out(self):

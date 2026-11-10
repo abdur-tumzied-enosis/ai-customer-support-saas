@@ -1,9 +1,11 @@
 import logging
 from decimal import Decimal
 
+from django.utils import timezone
 from pydantic import BaseModel, Field
 
 from agents.llm import get_llm
+from billing.service import can_afford, charge_affordable, price_of
 from usage.utils import llm_costs, track_token_usage
 
 from .catalog import match_product
@@ -128,11 +130,16 @@ def extract_candidates(kb: KnowledgeBase, document_ids: list[str] | None = None,
 		docs = docs.filter(id__in=document_ids)
 	if ignored:
 		docs = docs.exclude(page_url__in=ignored).exclude(page_url="", uri__in=ignored)
-	created = attempted = failed = 0
+	created = attempted = failed = found = skipped = 0
+	stopped = False
 	for doc in docs[:MAX_PAGES_PER_RUN]:
 		url = doc.page_url or doc.uri
 		if url in ignored or not doc.markdown_content.strip():
 			continue
+		price = price_of("product_import")
+		if price > 0 and not can_afford(kb.project, price):
+			stopped = True
+			break
 		attempted += 1
 		if on_page:
 			on_page(attempted)
@@ -141,13 +148,23 @@ def extract_candidates(kb: KnowledgeBase, document_ids: list[str] | None = None,
 			user = f"URL: {url}\nTitle: {doc.page_title}\n\nImages:\n{images}\n\nContent:\n{doc.markdown_content[:MAX_CHARS_PER_PAGE]}"
 			result = _ask(kb, doc, user)
 			rows = [c for c in (_candidate(kb, doc, url, p) for p in result.products[:MAX_CANDIDATES_PER_PAGE]) if c]
-			ProductCandidate.objects.bulk_create(rows)
+			saved = charge_affordable(kb.project, "product_import", rows, ProductCandidate.objects.bulk_create)
 		except Exception:
 			failed += 1
 			logger.exception(f"Product extraction failed for {url!r}")
 			continue
-		created += len(rows)
+		created += saved
+		found += len(rows)
+		skipped += len(rows) - saved
+		if saved < len(rows):
+			stopped = True
+			break
 	if attempted and failed == attempted:
 		raise RuntimeError(f"product extraction: all {attempted} pages failed")
+	kb.last_extraction = {
+		"status": "stopped: out of credits" if stopped else "completed", "pages": attempted, "found": found,
+		"saved": created, "skipped": skipped, "finished_at": timezone.now().isoformat(),
+	}
+	kb.save(update_fields=["last_extraction"])
 	logger.info(f"Product extraction: attempted={attempted} failed={failed} candidates={created}")
 	return created

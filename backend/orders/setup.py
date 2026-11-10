@@ -182,7 +182,11 @@ def _content(project_id: str, kb_id: str, beat) -> tuple[str, str, str]:
 def _products(project_id: str, kb_id: str, beat) -> tuple[str, str, str]:
 	ProductCandidate.objects.filter(kb_id=kb_id, status="pending").delete()  # a retry must not double them
 	count = extract_candidates(KnowledgeBase.objects.get(pk=kb_id), on_page=lambda n: beat(f"Reading page {n}"))
-	return "done", f"Found {count} products to review", ""
+	kb = KnowledgeBase.objects.get(pk=kb_id)
+	message = f"Found {count} products to review"
+	if kb.last_extraction.get("status", "").startswith("stopped"):
+		message += f", {kb.last_extraction['skipped']} skipped: out of credits"
+	return "done", message, ""
 
 
 def _delivery(project_id: str, kb_id: str, beat) -> tuple[str, str, str]:

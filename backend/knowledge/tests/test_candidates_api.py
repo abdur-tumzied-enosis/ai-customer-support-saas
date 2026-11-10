@@ -6,6 +6,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
+from billing import service
 from knowledge.models import Document, IgnoredProductPage, KnowledgeBase, Product, ProductCandidate
 
 User = get_user_model()
@@ -18,6 +19,7 @@ class CandidatesApiTests(TestCase):
 		self.project = Project.objects.create(name="P", slug="p-cand")
 		self.pu = ProjectUser.objects.create(project=self.project, user=self.user, role="admin")
 		self.kb = KnowledgeBase.objects.create(project=self.project, name="default", is_default=True)
+		service.grant(self.project, Decimal("1000"), "adjust", key="seed")
 		self.client = APIClient()
 		self.client.force_authenticate(user=self.user)
 		self.base = {"project_id": str(self.project.id), "kb_id": str(self.kb.id)}

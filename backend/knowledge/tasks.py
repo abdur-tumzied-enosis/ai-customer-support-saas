@@ -828,6 +828,7 @@ def extract_product_candidates(kb_id: str, document_ids: list[str] | None = None
     """Read a KB's pages and write review candidates (never products). Returns how many were created."""
     from .product_extract import extract_candidates
 
+    # no retries: a retried page would make new candidate ids and charge again (spec 8.4)
     kb = KnowledgeBase.objects.select_related("project").get(id=kb_id)
     return extract_candidates(kb, document_ids)
 
