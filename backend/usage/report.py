@@ -42,26 +42,31 @@ def ai_cost_report(start, end, project_id=None) -> dict:
 	for r in rows:
 		unknown_events += r["unknown_n"]
 		unknown_tokens += r["unknown_tokens"] or 0
-		if r["cost_source"] == "":  # legacy: written before snapshots; shown in its own total, not as a model row
+		# Legacy (blank cost_source, written before snapshots): its stored cost is a separate total, never per-model known cost.
+		# Only its unpriced part goes in the model table, under a "legacy" row.
+		legacy = r["cost_source"] == ""
+		if legacy:
 			legacy_events += r["n"] - r["unknown_n"]
 			legacy_usd += r["usd"] or Decimal(0)
-			continue
-		key = (r["provider"], r["model_name"])
+			if not r["unknown_n"]:
+				continue
+		key = ("legacy", "") if legacy else (r["provider"], r["model_name"])
 		m = models.setdefault(key, {
-			"provider": r["provider"], "model_name": r["model_name"], "events": 0, "input_tokens": 0, "output_tokens": 0,
-			"known_usd": Decimal(0), "unknown_events": 0, "unknown_tokens": 0,
+			"provider": "legacy" if legacy else r["provider"], "model_name": "" if legacy else r["model_name"],
+			"events": 0, "input_tokens": 0, "output_tokens": 0, "known_usd": Decimal(0), "unknown_events": 0, "unknown_tokens": 0,
 		})
-		m["events"] += r["n"]
+		m["events"] += r["unknown_n"] if legacy else r["n"]
+		tok = r["unknown_tokens"] if legacy else r["tok"]
 		if r["kind"] == "chat_in":
-			m["input_tokens"] += r["tok"] or 0
+			m["input_tokens"] += tok or 0
 		elif r["kind"] == "chat_out":
-			m["output_tokens"] += r["tok"] or 0
-		if r["cost_source"] in KNOWN_SOURCES and r["usd"] is not None:
+			m["output_tokens"] += tok or 0
+		if not legacy and r["cost_source"] in KNOWN_SOURCES and r["usd"] is not None:
 			known_by_source[r["cost_source"]] += r["usd"]
 			m["known_usd"] += r["usd"]
 		m["unknown_events"] += r["unknown_n"]
 		m["unknown_tokens"] += r["unknown_tokens"] or 0
-		if r["unknown_n"] and r["model_name"]:
+		if r["unknown_n"] and r["model_name"] and not legacy:
 			unmatched.add(r["model_name"])
 
 	credits = -(txns.aggregate(s=Sum("amount"))["s"] or Decimal(0))

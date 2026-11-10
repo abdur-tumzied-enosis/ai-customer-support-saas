@@ -52,6 +52,14 @@ class AiCostReportTests(TestCase):
 		self.assertEqual(r["known_by_source"]["provider_reported"], Decimal(0))
 		self.assertFalse(any(m["provider"] == "" for m in r["models"]))  # legacy is not a model row with $0 known cost
 
+	def test_unpriced_legacy_rows_still_show_in_models_table(self):
+		self.event(cost_usd=None, kind="chat_in", tokens=700)  # legacy and unpriced: counted as unknown, must not vanish
+		r = self.report()
+		self.assertEqual(r["unknown_events"], 1)
+		self.assertTrue(r["models"], "unpriced legacy usage must appear in the model table")
+		m = r["models"][0]
+		self.assertEqual((m["unknown_events"], m["unknown_tokens"], m["known_usd"]), (1, 700, Decimal(0)))
+
 	def test_models_table_tokens(self):
 		self.event(kind="chat_in", tokens=1000, cost_usd=Decimal("0.003"), cost_source="token_calculated", provider="google", model_name="g")
 		self.event(kind="chat_out", tokens=300, cost_usd=Decimal("0.0015"), cost_source="token_calculated", provider="google", model_name="g")
