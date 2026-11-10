@@ -16,6 +16,7 @@ import { conversationApi, knowledgeBaseApi, ApiError, type ConversationListItem,
 import { getStoredKbId, kbOptionLabel, pickKb } from "@/lib/knowledgeBase";
 import { formatError } from "@/lib/errors";
 import { timeAgo } from "@/lib/utils";
+import { formatCredits } from "@/lib/billing-api";
 
 const CHANNEL_LABELS: Record<string, string> = { self: "Test", facebook: "Facebook", instagram: "Instagram", whatsapp: "WhatsApp", widget: "Website" };
 
@@ -185,6 +186,9 @@ export default function ConversationsPage() {
 											{conv.message_count} messages
 											{conv.last_message && (
 												<> • {new Date(conv.last_message.created_at).toLocaleDateString()}</>
+											)}
+											{conv.channel !== "self" && Number(conv.credits_used) > 0 && (
+												<>, {formatCredits(conv.credits_used)} {Number(conv.credits_used) === 1 ? "credit" : "credits"}</>
 											)}
 										</div>
 									</div>

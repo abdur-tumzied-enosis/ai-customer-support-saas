@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { User, Bot, Headphones } from "lucide-react";
+import { formatCredits } from "@/lib/billing-api";
 
 export type ChatMessage = {
 	id: string;
@@ -9,6 +10,7 @@ export type ChatMessage = {
 	sender?: "customer" | "bot" | "staff";
 	hasPhoto?: boolean;
 	photoMatches?: string;
+	credits?: { label: string; credits: string }[];
 };
 
 type MessageListProps = {
@@ -69,6 +71,11 @@ export default function MessageList({ messages }: MessageListProps) {
 								{m.content}
 							</div>
 							{m.photoMatches && <span className="text-xs text-muted-foreground">{m.photoMatches}</span>}
+							{m.credits?.map((c, i) => (
+								<span key={i} className="text-xs text-muted-foreground">
+									{formatCredits(c.credits)} {Number(c.credits) === 1 ? "credit" : "credits"}, {c.label}
+								</span>
+							))}
 						</div>
 					</div>
 				);

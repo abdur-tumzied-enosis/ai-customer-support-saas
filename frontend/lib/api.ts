@@ -644,10 +644,12 @@ export type Conversation = {
 	resumes_at: string | null;
 	created_at: string;
 	updated_at: string;
+	credits_used?: string; // detail endpoint only
 };
 
 export type ConversationListItem = Conversation & {
 	message_count: number;
+	credits_used: string;
 	last_message: { id: string; text: string; created_at: string } | null;
 };
 
@@ -661,6 +663,7 @@ export type ConversationMessage = {
 	agent_reply_id: string | null;
 	has_photo?: boolean;
 	photo_matches?: string;
+	credits?: { action: string; label: string; credits: string }[];
 };
 // Conversation API functions
 export const conversationApi = {

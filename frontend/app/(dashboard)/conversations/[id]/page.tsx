@@ -15,6 +15,7 @@ import { formatError } from "@/lib/errors";
 import { ArrowLeft, Loader2, Bot } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { formatCredits } from "@/lib/billing-api";
 
 export default function ConversationThreadPage() {
 	const params = useParams<{ id: string }>();
@@ -101,6 +102,7 @@ export default function ConversationThreadPage() {
 			sender: msg.sender,
 			hasPhoto: msg.has_photo,
 			photoMatches: msg.photo_matches,
+			credits: msg.credits,
 		};
 	}
 
@@ -272,13 +274,18 @@ export default function ConversationThreadPage() {
 		}
 	}
 
-	// The photo-match note is written while the reply is processed, so pick it up once the reply has landed
+	// The photo-match note and credit charges are written while the reply is processed, so pick them up once the reply has landed
 	async function refreshPhotoMatches(messageId: string) {
 		try {
 			const res = await conversationApi.getMessages(conversationId, 20);
-			const fresh = res.data.messages.find((m) => m.id === messageId);
-			if (!fresh?.photo_matches) return;
-			setMessages((prev) => prev.map((m) => (m.id === messageId ? { ...m, photoMatches: fresh.photo_matches } : m)));
+			const byId = new Map(res.data.messages.map((m) => [m.id, m]));
+			setMessages((prev) =>
+				prev.map((m) => {
+					const f = byId.get(m.id);
+					if (!f) return m;
+					return { ...m, credits: f.credits, photoMatches: m.id === messageId && f.photo_matches ? f.photo_matches : m.photoMatches };
+				})
+			);
 		} catch {
 			// the note is optional: leave the message as it is
 		}
@@ -345,6 +352,9 @@ export default function ConversationThreadPage() {
 										{conversation?.channel === "facebook" ? "Facebook" : "Test chat"}
 										{conversation?.is_paused ? " · bot paused" : ""}
 									</span>
+									{conversation && conversation.channel !== "self" && Number(conversation.credits_used) > 0 && (
+										<span>{formatCredits(conversation.credits_used!)} {Number(conversation.credits_used) === 1 ? "credit" : "credits"}</span>
+									)}
 									{conversation?.knowledge_base_name && (
 										<Badge variant="secondary" className="text-xs">{conversation.knowledge_base_name}</Badge>
 									)}
