@@ -1,0 +1,33 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<form method="get">
+	<label>From <input type="date" name="start" value="{{ start|date:'Y-m-d' }}"></label>
+	<label>To <input type="date" name="end" value="{{ end|date:'Y-m-d' }}"></label>
+	<input type="submit" value="Show">
+</form>
+{% if mismatched %}
+<div class="module" style="margin:1em 0">
+	<h2>Wallets whose balance does not match their ledger</h2>
+	<ul>{% for w in mismatched %}<li>{{ w.project_name }}: stored {{ w.balance }}, ledger {{ w.ledger }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+<p>Estimate only: credits charged at {{ usd_per_credit }} USD per credit, compared with known provider cost. Target ratio {{ target }}.</p>
+{% if any_unpriced %}<p><strong>Some usage has no known cost; figures are incomplete.</strong></p>{% endif %}
+<table>
+	<thead><tr>
+		<th>Project</th><th>Credits charged</th><th>Estimated credit value (USD)</th><th>Known cost (USD)</th>
+		<th>Unpriced events</th><th>Ratio</th><th>By action</th>
+	</tr></thead>
+	<tbody>
+	{% for r in rows %}
+		<tr{% if r.below_target %} style="background:#fdd"{% endif %}>
+			<td>{{ r.project_name }}</td><td>{{ r.credits_charged }}</td><td>{{ r.estimated_value_usd|floatformat:4 }}</td>
+			<td>{{ r.known_cost_usd|floatformat:4 }}</td><td>{{ r.unpriced_events }}</td>
+			<td>{% if r.ratio is None %}-{% else %}{{ r.ratio|floatformat:2 }}{% endif %}</td>
+			<td>{% for a, c in r.by_action.items %}{{ a }}: {{ c }}{% if not forloop.last %}, {% endif %}{% endfor %}</td>
+		</tr>
+	{% empty %}<tr><td colspan="7">No activity in this range.</td></tr>
+	{% endfor %}
+	</tbody>
+</table>
+{% endblock %}

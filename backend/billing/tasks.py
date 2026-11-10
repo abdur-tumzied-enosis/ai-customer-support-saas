@@ -2,7 +2,7 @@ import logging
 from datetime import timedelta
 
 from celery import shared_task
-from django.db.models import DecimalField, Q, Sum, Value
+from django.db.models import DecimalField, F, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -35,7 +35,7 @@ def charge_missed_replies() -> int:
 def check_balances() -> list:
 	"""Report wallets whose stored balance differs from their ledger sum; never corrects them."""
 	ledger = Coalesce(Sum("transactions__amount"), Value(0), output_field=DecimalField(max_digits=14, decimal_places=2))
-	bad = list(CreditWallet.objects.annotate(ledger=ledger).exclude(balance=ledger))
+	bad = list(CreditWallet.objects.annotate(ledger=ledger).exclude(balance=F("ledger")))
 	for w in bad:
 		logger.error("Wallet %s balance %s does not match ledger sum %s", w.pk, w.balance, w.ledger)
 	return bad
