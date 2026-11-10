@@ -1,0 +1,42 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<form method="get">
+	<label>From <input type="date" name="start" value="{{ start|date:'Y-m-d' }}"></label>
+	<label>To <input type="date" name="end" value="{{ end|date:'Y-m-d' }}"></label>
+	<label>Project ID <input type="text" name="project" value="{{ project|default:'' }}"></label>
+	<input type="submit" value="Show">
+</form>
+<p>Internal only. Known cost is USD from provider charges or token-rate calculation. Credits are the customer-facing usage unit.</p>
+{% if has_unknown %}
+<p><strong>Unpriced usage in this range: {{ unknown_events }} events, {{ unknown_tokens }} tokens. Totals are incomplete.</strong></p>
+{% endif %}
+<h2>Overview</h2>
+<table>
+	<tr><th>Provider reported (USD)</th><td>{{ known_by_source.provider_reported|floatformat:6 }}</td></tr>
+	<tr><th>Token calculated (USD)</th><td>{{ known_by_source.token_calculated|floatformat:6 }}</td></tr>
+	<tr><th>System default (USD)</th><td>{{ known_by_source.system_default|floatformat:6 }}</td></tr>
+	<tr><th>Credits charged</th><td>{{ credits_charged }}</td></tr>
+	<tr><th>Legacy events (written before price snapshots)</th><td>{{ legacy_events }}</td></tr>
+</table>
+<h2>By model</h2>
+<table>
+	<thead><tr>
+		<th>Provider</th><th>Model</th><th>Events</th><th>Input tokens</th><th>Output tokens</th>
+		<th>Known cost (USD)</th><th>Unpriced events</th><th>Unpriced tokens</th>
+	</tr></thead>
+	<tbody>
+	{% for m in models %}
+		<tr>
+			<td>{{ m.provider }}</td><td>{{ m.model_name }}</td><td>{{ m.events }}</td>
+			<td>{{ m.input_tokens }}</td><td>{{ m.output_tokens }}</td><td>{{ m.known_usd|floatformat:6 }}</td>
+			<td>{{ m.unknown_events }}</td><td>{{ m.unknown_tokens }}</td>
+		</tr>
+	{% empty %}<tr><td colspan="8">No usage in this range.</td></tr>
+	{% endfor %}
+	</tbody>
+</table>
+{% if unmatched_models %}
+<h2>Models with unpriced usage</h2>
+<p>Check that each name matches an AI model's name exactly: {{ unmatched_models|join:", " }}</p>
+{% endif %}
+{% endblock %}
