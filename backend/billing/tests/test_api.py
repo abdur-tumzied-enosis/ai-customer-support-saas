@@ -104,7 +104,7 @@ class PricingTest(TestCase):
 		text = json.dumps(res.json()).lower()
 		for word in FORBIDDEN:
 			self.assertNotIn(word, text)
-		data = res.json()
+		data = res.json()["data"]
 		self.assertEqual([p["name"] for p in data["packages"]], ["Starter"])
 		self.assertEqual(set(data["packages"][0]), {"name", "credits", "bonus_credits", "price", "currency", "features", "highlighted"})
 		self.assertEqual([a["action"] for a in data["actions"]], ["reply", "photo_search", "product_import", "order_setup"])

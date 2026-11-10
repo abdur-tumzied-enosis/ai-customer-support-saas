@@ -1,5 +1,4 @@
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from orders.api import _ok, _scoped
@@ -57,7 +56,7 @@ class PricingView(APIView):
 
 	def get(self, request):
 		actions = [(a, price_of(a)) for a in ACTIONS]
-		return Response({
+		return _ok({
 			"packages": [{
 				"name": p.name, "credits": p.credits, "bonus_credits": p.bonus_credits, "price": money(p.price),
 				"currency": p.currency, "features": p.features, "highlighted": p.highlighted,
