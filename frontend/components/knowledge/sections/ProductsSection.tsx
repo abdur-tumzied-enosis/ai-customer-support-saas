@@ -78,6 +78,7 @@ export default function ProductsSection() {
 		setLoadFailed(false);
 		setEditor(null);
 		setPages([]);
+		setLastExtraction({});
 		load();
 		loadCandidates();
 	}, [load, loadCandidates]);
