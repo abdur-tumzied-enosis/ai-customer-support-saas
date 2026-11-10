@@ -2,11 +2,17 @@ from decimal import Decimal
 from unittest import mock
 
 import requests
+from django.conf import settings
+from django.contrib import messages
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.core.cache import cache
 from django.test import TestCase, override_settings
+from django.urls import reverse
 
-from agents.models import AIModel, ModelConfig
+from agents.models import AIModel
 from agents.pricing import sync_openrouter_prices
+from agents.tasks import sync_openrouter_prices as sync_task
 
 LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "pricing-sync-tests"}}
 
@@ -22,11 +28,10 @@ class SyncOpenRouterPricesTest(TestCase):
 	def setUp(self):
 		cache.clear()
 		AIModel.objects.all().delete()  # drop the migration's seeded catalog rows so not_found is exact
-		self.cheap =AIModel.objects.create(provider="openrouter", name="vendor/cheap", input_price_per_mtok=Decimal("9"), output_price_per_mtok=Decimal("9"))
+		self.cheap = AIModel.objects.create(provider="openrouter", name="vendor/cheap", input_price_per_mtok=Decimal("9"), output_price_per_mtok=Decimal("9"))
 		self.dynamic = AIModel.objects.create(provider="openrouter", name="vendor/router", input_price_per_mtok=Decimal("1"), output_price_per_mtok=Decimal("1"))
 		self.missing = AIModel.objects.create(provider="openrouter", name="vendor/gone", input_price_per_mtok=Decimal("5"), output_price_per_mtok=Decimal("6"))
 		self.google = AIModel.objects.create(provider="google", name="gemini-y", input_price_per_mtok=Decimal("2"), output_price_per_mtok=Decimal("3"))
-		ModelConfig.objects.create(reply_model=self.cheap)  # warms the cache key the sync must clear
 
 	@mock.patch("agents.pricing.requests.get")
 	def test_updates_prices_per_million_and_reports(self, get):
@@ -62,18 +67,33 @@ class SyncOpenRouterPricesTest(TestCase):
 		assert self.dynamic.input_price_per_mtok is None
 
 	@mock.patch("agents.pricing.requests.get")
+	def test_entry_without_pricing_object_is_none_not_a_crash(self, get):
+		get.return_value = fake_response([{"id": "vendor/router"}])  # no "pricing" key at all
+		result = sync_openrouter_prices()
+		self.dynamic.refresh_from_db()
+		assert self.dynamic.input_price_per_mtok is None and self.dynamic.output_price_per_mtok is None
+		assert result["updated"] == 1
+
+	@mock.patch("agents.pricing.requests.get")
+	def test_nan_and_out_of_range_prices_are_none_not_a_crash(self, get):
+		# NaN parses as a Decimal; 1 USD/token = 1,000,000 per MTok overflows max_digits=12, decimal_places=6
+		get.return_value = fake_response([
+			{"id": "vendor/cheap", "pricing": {"prompt": "NaN", "completion": "1"}},
+			{"id": "vendor/router", "pricing": {"prompt": "0.000002", "completion": "Infinity"}},
+		])
+		sync_openrouter_prices()
+		self.cheap.refresh_from_db()
+		self.dynamic.refresh_from_db()
+		assert self.cheap.input_price_per_mtok is None and self.cheap.output_price_per_mtok is None
+		assert self.dynamic.input_price_per_mtok == Decimal("2.000000") and self.dynamic.output_price_per_mtok is None
+
+	@mock.patch("agents.pricing.requests.get")
 	def test_http_error_writes_nothing(self, get):
 		get.side_effect = requests.ConnectionError("down")
 		with self.assertRaises(requests.ConnectionError):
 			sync_openrouter_prices()
 		self.cheap.refresh_from_db()
 		assert self.cheap.input_price_per_mtok == Decimal("9")
-		assert ModelConfig.objects.get().reply_model_id == self.cheap.pk
-
-
-from django.conf import settings
-
-from agents.tasks import sync_openrouter_prices as sync_task
 
 
 class SyncTaskTest(TestCase):
@@ -88,11 +108,6 @@ class SyncTaskTest(TestCase):
 		AIModel.objects.all().delete()  # drop seeded catalog rows so not_found is empty
 		get.return_value = fake_response([])
 		assert sync_task() == {"updated": 0, "unchanged": 0, "not_found": []}
-
-
-from django.contrib import messages
-from django.contrib.auth import get_user_model
-from django.urls import reverse
 
 
 @override_settings(CACHES=LOCMEM, OPENROUTER_API_KEY="test-key")
@@ -126,3 +141,22 @@ class SyncButtonTest(TestCase):
 		resp = self.client.post(self.url, follow=True)
 		assert resp.status_code == 200
 		assert any(m.level == messages.ERROR and "failed" in str(m) for m in resp.context["messages"])
+
+	@mock.patch("agents.pricing.requests.get")
+	def test_staff_without_change_permission_is_refused_and_writes_nothing(self, get):
+		viewer = get_user_model().objects.create_user(username="viewer", email="viewer@test.local", password="pw", is_staff=True)
+		viewer.user_permissions.add(Permission.objects.get(codename="view_aimodel", content_type__app_label="agents"))
+		self.client.force_login(viewer)
+		get.return_value = fake_response([{"id": "vendor/cheap", "pricing": {"prompt": "0.000001", "completion": "0.000002"}}])
+		resp = self.client.post(self.url)
+		self.assertEqual(resp.status_code, 403)
+		assert not get.called
+		self.row.refresh_from_db()
+		assert self.row.input_price_per_mtok is None
+
+	def test_changelist_hides_button_without_change_permission(self):
+		viewer = get_user_model().objects.create_user(username="viewer", email="viewer@test.local", password="pw", is_staff=True)
+		viewer.user_permissions.add(Permission.objects.get(codename="view_aimodel", content_type__app_label="agents"))
+		self.client.force_login(viewer)
+		resp = self.client.get(reverse("admin:agents_aimodel_changelist"))
+		assert b"Sync prices from OpenRouter" not in resp.content

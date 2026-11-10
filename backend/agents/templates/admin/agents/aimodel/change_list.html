@@ -1,10 +1,12 @@
 {% extends "admin/change_list.html" %}
 {% block object-tools-items %}
+{% if can_sync_prices %}
 <li>
   <form method="post" action="{% url 'admin:agents_aimodel_sync_prices' %}">
     {% csrf_token %}
     <button type="submit" class="button">Sync prices from OpenRouter</button>
   </form>
 </li>
+{% endif %}
 {{ block.super }}
 {% endblock %}
