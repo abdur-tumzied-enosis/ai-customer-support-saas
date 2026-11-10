@@ -162,6 +162,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'channels_app.memory.propose_instructions',
         'schedule': 86400,  # daily
     },
+    'sync-openrouter-prices': {
+        'task': 'agents.tasks.sync_openrouter_prices',
+        'schedule': 86400,  # daily
+    },
 }
 
 # Qdrant

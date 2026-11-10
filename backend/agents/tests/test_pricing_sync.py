@@ -69,3 +69,22 @@ class SyncOpenRouterPricesTest(TestCase):
 		self.cheap.refresh_from_db()
 		assert self.cheap.input_price_per_mtok == Decimal("9")
 		assert ModelConfig.objects.get().reply_model_id == self.cheap.pk
+
+
+from django.conf import settings
+
+from agents.tasks import sync_openrouter_prices as sync_task
+
+
+class SyncTaskTest(TestCase):
+	def test_beat_runs_the_task_daily(self):
+		entry = settings.CELERY_BEAT_SCHEDULE["sync-openrouter-prices"]
+		assert entry["task"] == "agents.tasks.sync_openrouter_prices"
+		assert entry["schedule"] == 86400
+
+	@mock.patch("agents.pricing.requests.get")
+	@override_settings(OPENROUTER_API_KEY="test-key")
+	def test_task_returns_the_sync_summary(self, get):
+		AIModel.objects.all().delete()  # drop seeded catalog rows so not_found is empty
+		get.return_value = fake_response([])
+		assert sync_task() == {"updated": 0, "unchanged": 0, "not_found": []}
