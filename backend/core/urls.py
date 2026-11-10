@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib import admin
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.http import HttpResponse
 from django.urls import path, include
 
@@ -18,3 +19,5 @@ urlpatterns = [
 	path("api/analytics/", include("analytics.urls")),
 	path("", include("channels_app.urls_widget")),  # public widget endpoints
 ]
+# DEBUG only (no-op otherwise): gunicorn serves no static files locally; prod nginx serves /static/ itself
+urlpatterns += staticfiles_urlpatterns()

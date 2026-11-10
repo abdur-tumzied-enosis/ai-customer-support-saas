@@ -38,6 +38,14 @@ server {
         access_log off;
     }
 
+    # Dozzle log viewer (own login). Logs stream as server-sent events: no buffering, long-lived connection.
+    location /logs/ {
+        proxy_pass http://dozzle:8080;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+    }
+
     location / {
         proxy_pass http://django:8000;
     }

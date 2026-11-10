@@ -6,7 +6,6 @@
       "Bash(python manage.py makemigrations knowledge --name document_search_query)"
     ],
     "deny": [
-      "ReadFile(.env)",
       "ReadFile(.env.prod)"
     ]
   },
