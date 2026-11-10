@@ -155,7 +155,7 @@ class UsageEvent(models.Model):
 		("unknown", "Unknown"),
 		("system_default", "System default"),
 	]
-	provider = models.CharField(max_length=16, blank=True, default="")
+	provider = models.CharField(max_length=40, blank=True, default="")  # 40: a mixed call stores "google,openrouter"
 	model_name = models.CharField(max_length=200, blank=True, default="")
 	price_in_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
 	price_out_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)

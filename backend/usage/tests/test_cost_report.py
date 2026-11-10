@@ -48,7 +48,9 @@ class AiCostReportTests(TestCase):
 		self.event(cost_usd=Decimal("0.2"))  # blank cost_source: written before snapshots existed
 		r = self.report()
 		self.assertEqual(r["legacy_events"], 1)
+		self.assertEqual(r["legacy_usd"], Decimal("0.2"))
 		self.assertEqual(r["known_by_source"]["provider_reported"], Decimal(0))
+		self.assertFalse(any(m["provider"] == "" for m in r["models"]))  # legacy is not a model row with $0 known cost
 
 	def test_models_table_tokens(self):
 		self.event(kind="chat_in", tokens=1000, cost_usd=Decimal("0.003"), cost_source="token_calculated", provider="google", model_name="g")

@@ -37,8 +37,15 @@ def ai_cost_report(start, end, project_id=None) -> dict:
 	)
 
 	known_by_source = {s: Decimal(0) for s in KNOWN_SOURCES}
-	models, unknown_events, unknown_tokens, legacy_events, unmatched = {}, 0, 0, 0, set()
+	models, unknown_events, unknown_tokens, unmatched = {}, 0, 0, set()
+	legacy_events, legacy_usd = 0, Decimal(0)
 	for r in rows:
+		unknown_events += r["unknown_n"]
+		unknown_tokens += r["unknown_tokens"] or 0
+		if r["cost_source"] == "":  # legacy: written before snapshots; shown in its own total, not as a model row
+			legacy_events += r["n"] - r["unknown_n"]
+			legacy_usd += r["usd"] or Decimal(0)
+			continue
 		key = (r["provider"], r["model_name"])
 		m = models.setdefault(key, {
 			"provider": r["provider"], "model_name": r["model_name"], "events": 0, "input_tokens": 0, "output_tokens": 0,
@@ -52,12 +59,8 @@ def ai_cost_report(start, end, project_id=None) -> dict:
 		if r["cost_source"] in KNOWN_SOURCES and r["usd"] is not None:
 			known_by_source[r["cost_source"]] += r["usd"]
 			m["known_usd"] += r["usd"]
-		elif r["cost_source"] == "" and r["usd"] is not None:
-			legacy_events += r["n"]
 		m["unknown_events"] += r["unknown_n"]
 		m["unknown_tokens"] += r["unknown_tokens"] or 0
-		unknown_events += r["unknown_n"]
-		unknown_tokens += r["unknown_tokens"] or 0
 		if r["unknown_n"] and r["model_name"]:
 			unmatched.add(r["model_name"])
 
@@ -67,6 +70,7 @@ def ai_cost_report(start, end, project_id=None) -> dict:
 		"unknown_events": unknown_events,
 		"unknown_tokens": unknown_tokens,
 		"legacy_events": legacy_events,
+		"legacy_usd": legacy_usd,
 		"credits_charged": credits,
 		"models": sorted(models.values(), key=lambda m: m["known_usd"], reverse=True),
 		"unmatched_models": sorted(unmatched),

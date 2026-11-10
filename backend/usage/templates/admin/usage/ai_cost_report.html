@@ -17,6 +17,7 @@
 	<tr><th>System default (USD)</th><td>{{ known_by_source.system_default|floatformat:6 }}</td></tr>
 	<tr><th>Credits charged</th><td>{{ credits_charged }}</td></tr>
 	<tr><th>Legacy events (written before price snapshots)</th><td>{{ legacy_events }}</td></tr>
+	<tr><th>Legacy known cost (USD, as stored)</th><td>{{ legacy_usd|floatformat:6 }}</td></tr>
 </table>
 <h2>By model</h2>
 <table>

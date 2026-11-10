@@ -74,6 +74,15 @@ class LlmPricingTest(TestCase):
 		e = UsageEvent.objects.get()
 		self.assertEqual((e.cost_usd, e.price_out_per_mtok), (Decimal("0.005"), Decimal("2.5")))
 
+	def test_mixed_provider_call_is_still_recorded(self):
+		# Reply on Gemini, fallback on OpenRouter in one call: the event must still be written, not dropped by a DB error.
+		or_msg = AIMessage(content="ok", response_metadata={"model_name": "deepseek/x", "cost": 0.001},
+			usage_metadata={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
+		p = llm_pricing([_google("gemini-3.8-flash", 10000, 2000), or_msg])
+		track_token_usage(str(self.project.id), "chat_out", 2000, pricing=p["chat_out"])
+		e = UsageEvent.objects.get()
+		self.assertEqual(e.cost_usd, Decimal("0.006"))
+
 
 class PricingSnapshotFieldsTest(TestCase):
 	def setUp(self):
