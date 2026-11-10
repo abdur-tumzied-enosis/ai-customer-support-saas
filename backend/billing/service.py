@@ -141,3 +141,13 @@ def grant(project, amount: Decimal, kind: str, *, key: str = "", created_by=None
 		if key and CreditTransaction.objects.filter(idempotency_key=key).exists():
 			return None
 		return _post(wallet, amount, kind=kind, idempotency_key=key, created_by=created_by, note=note)
+
+
+def grant_signup_bonus(user):
+	"""One-off bonus to the user's earliest created project; the per-user key makes later calls no-ops."""
+	from accounts.models import Project
+	amount = PricingSettings.get().signup_credits
+	project = Project.objects.filter(created_by=user).order_by("created_at").first()
+	if not amount or not project:
+		return None
+	return grant(project, amount, "signup_bonus", key=f"signup:{user.pk}")

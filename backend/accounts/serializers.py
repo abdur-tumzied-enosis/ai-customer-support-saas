@@ -55,7 +55,7 @@ class SignUpSerializer(serializers.Serializer):
 		# Always create a default project named "my_project"
 		project_slug = uuid4().hex[:30]
 		
-		project = Project.objects.create(name="Default Project", slug=project_slug)
+		project = Project.objects.create(name="Default Project", slug=project_slug, created_by=user)
 		# Create ProjectUser relationship
 		ProjectUser.objects.create(project=project, user=user, role="admin")
 

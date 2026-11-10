@@ -22,6 +22,7 @@ from django.utils.decorators import method_decorator
 from .serializers import SignUpSerializer, LoginSerializer, UserSerializer, ProjectSettingsSerializer
 from .models import Project, ProjectUser
 from .tasks import queue_email
+from billing.service import grant_signup_bonus
 import hmac
 import logging
 import secrets
@@ -117,6 +118,7 @@ class VerifyEmailView(APIView):
 			raise ValidationError({"code": "Invalid or expired code"})
 		user.email_verified = True
 		user.save(update_fields=["email_verified"])
+		grant_signup_bonus(user)
 		return _signed_in(request, user, "Email verified")
 
 
@@ -170,8 +172,11 @@ class PasswordResetConfirmView(APIView):
 		except DjangoValidationError as e:
 			raise ValidationError({"new_password": e.messages})
 		user.set_password(new_password)
+		flipped = not user.email_verified
 		user.email_verified = True  # the link reached their inbox
 		user.save(update_fields=["password", "email_verified"])
+		if flipped:
+			grant_signup_bonus(user)
 		return Response({"success": True, "message": "Password reset. You can sign in now."})
 
 

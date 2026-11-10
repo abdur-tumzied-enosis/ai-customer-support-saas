@@ -30,6 +30,8 @@ class Project(models.Model):
 	image_search_enabled = models.BooleanField(default=True)
 	# ISO 4217 code shown with prices (symbols live in the frontend)
 	currency = models.CharField(max_length=3, default="BDT")
+	# Whoever signed up and made this project; the signup bonus goes to their earliest one
+	created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="created_projects")
 
 	@property
 	def image_search_available(self) -> bool:
