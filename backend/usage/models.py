@@ -148,6 +148,18 @@ class UsageEvent(models.Model):
 	tokens = models.PositiveIntegerField(default=0)
 	# USD; null when unknown (no reported cost and no AIModel prices). OpenRouter's charged total is booked on chat_out.
 	cost_usd = models.DecimalField(max_digits=14, decimal_places=8, null=True, blank=True)
+	# Snapshot taken when the event is written; never updated. Blank cost_source = legacy row, written before snapshots.
+	COST_SOURCE_CHOICES = [
+		("provider_reported", "Provider reported"),
+		("token_calculated", "Token calculated"),
+		("unknown", "Unknown"),
+		("system_default", "System default"),
+	]
+	provider = models.CharField(max_length=16, blank=True, default="")
+	model_name = models.CharField(max_length=200, blank=True, default="")
+	price_in_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+	price_out_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True)
+	cost_source = models.CharField(max_length=20, choices=COST_SOURCE_CHOICES, blank=True, default="")
 	metadata = models.JSONField(default=dict, blank=True)
 	conversation = models.ForeignKey(
 		"channels_app.Conversation", null=True, blank=True, on_delete=models.SET_NULL, related_name="usage_events", db_index=True
