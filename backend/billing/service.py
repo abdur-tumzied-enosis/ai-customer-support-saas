@@ -143,6 +143,22 @@ def grant(project, amount: Decimal, kind: str, *, key: str = "", created_by=None
 		return _post(wallet, amount, kind=kind, idempotency_key=key, created_by=created_by, note=note)
 
 
+def charge_delivered_reply(out_msg):
+	"""Charge the reply once it has reached the shopper; never raises (the reconciler recovers misses)."""
+	meta = out_msg.meta or {}
+	if meta.get("billable") != "reply":
+		return None
+	try:
+		from channels_app.models import Message
+		return charge(
+			out_msg.project, "reply", key=f"reply:{out_msg.id}", conversation=out_msg.conversation,
+			trigger_message=Message.objects.filter(id=meta.get("trigger_id")).first(), result_message=out_msg,
+		)
+	except Exception:
+		logger.exception("Could not charge delivered reply %s", out_msg.id)
+		return None
+
+
 def grant_signup_bonus(user):
 	"""One-off bonus to the user's earliest created project; the per-user key makes later calls no-ops."""
 	from accounts.models import Project

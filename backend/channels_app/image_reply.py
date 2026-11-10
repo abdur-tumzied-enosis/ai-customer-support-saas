@@ -4,6 +4,7 @@ import logging
 from celery.exceptions import SoftTimeLimitExceeded
 
 from agents.image_search import embed_image, load_image, search_products
+from billing.service import charge
 from knowledge.models import Product
 from usage.utils import record_image_usage
 
@@ -38,6 +39,11 @@ def _photo_note(conversation, msg, att) -> str:
 	record_image_usage(
 		str(conversation.project_id), "search", conversation_id=str(conversation.id), message_id=str(msg.id), matched=bool(matches)
 	)
+	if conversation.channel != "self":
+		try:
+			charge(conversation.project, "photo_search", key=f"photo_search:{msg.id}", conversation=conversation, trigger_message=msg)
+		except Exception:
+			logger.exception("Could not charge photo search for message %s", msg.id)
 	if not matches:
 		return NO_MATCH_NOTE
 	listed = "; ".join(f'"{p.name}" (similarity {score:.2f}): {p.description[:300]}' for p, score in matches)

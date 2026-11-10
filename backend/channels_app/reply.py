@@ -17,6 +17,8 @@ from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from billing.service import charge_delivered_reply, price_of, shopper_blocked
+
 from . import image_reply, memory, tasks
 from .facebook_client import INSTAGRAM_MAX_TEXT_BYTES, WHATSAPP_MAX_TEXT_CHARS, split_text
 from .handoff import start_handoff, wants_human
@@ -167,8 +169,14 @@ def _reply(task, conversation, msg: Message) -> None:
 		_complete(turn)  # staff answer these
 		return
 
+	out_of_credits = False
+	if conversation.channel != "self":
+		cost = price_of("reply") + (price_of("photo_search") if any((m.meta or {}).get("photo_reply") for m in turn) else 0)
+		out_of_credits = shopper_blocked(conversation.project, cost)
+
 	try:
-		image_reply.annotate_turn(conversation, turn)
+		if not out_of_credits:
+			image_reply.annotate_turn(conversation, turn)
 		photos_timed_out = False
 	except SoftTimeLimitExceeded:
 		# Too little time left for the agent before the hard kill: send the fallback now
@@ -179,7 +187,12 @@ def _reply(task, conversation, msg: Message) -> None:
 	api_calls: list = []
 	trace: dict = {}
 	handoff_reason = None
-	if any(wants_human(m.text) for m in turn):  # raw text only: quoted bot messages must not trigger it
+	agent_replied = False
+	if out_of_credits:
+		logger.info(f"process_reply: conversation={conversation.id} project out of credits, handing off without the agent")
+		reply_text = ""
+		handoff_reason = "out of credits"
+	elif any(wants_human(m.text) for m in turn):  # raw text only: quoted bot messages must not trigger it
 		logger.info(f"process_reply: conversation={conversation.id} customer asked for a person, handing off without the agent")
 		reply_text = ""
 		handoff_reason = "customer asked for a person"
@@ -191,6 +204,7 @@ def _reply(task, conversation, msg: Message) -> None:
 		try:
 			reply_text, ctx = tasks.generate_agent_reply(turn[0], conversation.knowledge_base, question=question)
 			api_calls, handoff_reason, trace = ctx.api_call_log, ctx.handoff_reason, ctx.trace
+			agent_replied = bool(reply_text)
 			logger.info(
 				f"process_reply: conversation={conversation.id} agent answered: reply chars={len(reply_text or '')}, "
 				f"api_calls={len(api_calls)}, handoff={handoff_reason!r}"
@@ -236,6 +250,7 @@ def _reply(task, conversation, msg: Message) -> None:
 	reply_text = reply_text or (tasks.FALLBACK_REPLY_BN if bengali else tasks.FALLBACK_REPLY)
 
 	newest = turn[-1]
+	billable = agent_replied and not handoff_reason and conversation.channel != "self"
 	with transaction.atomic():
 		out_msg = create_outbound_message(
 			project=conversation.project,
@@ -245,6 +260,7 @@ def _reply(task, conversation, msg: Message) -> None:
 				**answered_marker(newest),
 				**({"api_calls": api_calls} if api_calls else {}),
 				**({"trace": trace} if trace else {}),
+				**({"billable": "reply", "trigger_id": str(newest.id)} if billable else {}),
 			},
 			conversation=conversation,
 			id=newest.agent_reply_id or None,
@@ -259,6 +275,7 @@ def _reply(task, conversation, msg: Message) -> None:
 		transaction.on_commit(lambda: redeliver.apply_async(args=[out_id], countdown=10))
 	else:
 		logger.info(f"process_reply: conversation={conversation.id} reply {out_msg.id} delivered ({conversation.channel})")
+		charge_delivered_reply(out_msg)
 	schedule_memory_update(conversation)
 
 
@@ -278,6 +295,7 @@ def redeliver(self, message_id: str) -> None:
 	if deliver(conversation, out_msg, newest_in):
 		out_msg.status = "completed"
 		out_msg.save(update_fields=["status"])
+		charge_delivered_reply(out_msg)
 		return
 	raise self.retry(exc=RuntimeError(f"Delivery of message {message_id} failed"))
 
