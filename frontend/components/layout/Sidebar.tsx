@@ -16,6 +16,7 @@ import {
 	MessagesSquare,
 	BarChart3,
 	ShoppingBag,
+	Coins,
 	ChevronLeft,
 	ChevronRight,
 } from "lucide-react";
@@ -29,6 +30,8 @@ const links = [
 	{ href: "/widgets", label: "Website widget", icon: MessagesSquare },
 	{ href: "/analytics", label: "Analytics", icon: BarChart3 },
 ] as const;
+
+const creditsLink = { href: "/credits", label: "Credits", icon: Coins } as const;
 
 const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed";
 
@@ -117,7 +120,7 @@ export default function Sidebar() {
 			{/* Navigation */}
 			<nav className="flex-1 p-2">
 				<ul className="space-y-1">
-					{links.map((l) => {
+					{(projects?.[0]?.role === "admin" ? [...links, creditsLink] : links).map((l) => {
 						const active = pathname.startsWith(l.href);
 						const Icon = l.icon;
 

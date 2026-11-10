@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { useRequireAuth } from "@/hooks/useAuth";
+import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useAuth, useRequireAuth } from "@/hooks/useAuth";
+import CreditBalance from "@/components/billing/CreditBalance";
+import CreditBanner from "@/components/billing/CreditBanner";
+import { billingApi, type Wallet } from "@/lib/billing-api";
 import Sidebar from "@/components/layout/Sidebar";
 import MobileSidebar from "@/components/layout/MobileSidebar";
 import Logo from "@/components/layout/Logo";
@@ -24,6 +28,16 @@ import { authApi } from "@/lib/api";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
 	const { user, loading } = useRequireAuth();
 	const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+	const { projects } = useAuth();
+	const pathname = usePathname();
+	const [wallet, setWallet] = useState<Wallet | null>(null);
+	const project = projects && projects.length > 0 ? projects[0] : null;
+	const projectId = project ? String(project.id) : "";
+
+	useEffect(() => {
+		if (!projectId) return;
+		billingApi.wallet(projectId).then(setWallet).catch(() => setWallet(null));
+	}, [projectId, pathname]);
 
 	async function handleLogout() {
 		try {
@@ -77,6 +91,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 								placeholder="Search"
 								className="hidden lg:block w-64"
 							/>
+							<CreditBalance wallet={wallet} isAdmin={project?.role === "admin"} />
 							<ThemeToggle />
 							<DropdownMenu>
 								<DropdownMenuTrigger asChild>
@@ -114,6 +129,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 						</div>
 					</div>
 				</header>
+				<CreditBanner wallet={wallet} />
 				<div className="max-w-6xl mx-auto p-6">{children}</div>
 			</main>
 		</div>

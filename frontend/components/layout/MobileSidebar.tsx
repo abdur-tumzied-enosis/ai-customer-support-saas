@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import Logo from "@/components/layout/Logo";
+import { useAuth } from "@/hooks/useAuth";
 import {
 	LayoutDashboard,
 	MessageSquare,
@@ -13,6 +14,7 @@ import {
 	MessagesSquare,
 	BarChart3,
 	ShoppingBag,
+	Coins,
 	X,
 } from "lucide-react";
 
@@ -26,6 +28,8 @@ const links = [
 	{ href: "/analytics", label: "Analytics", icon: BarChart3 },
 ] as const;
 
+const creditsLink = { href: "/credits", label: "Credits", icon: Coins } as const;
+
 interface MobileSidebarProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -33,6 +37,7 @@ interface MobileSidebarProps {
 
 export default function MobileSidebar({ open, onOpenChange }: MobileSidebarProps) {
 	const pathname = usePathname();
+	const { projects } = useAuth();
 
 	if (!open) return null;
 
@@ -70,7 +75,7 @@ export default function MobileSidebar({ open, onOpenChange }: MobileSidebarProps
 				{/* Navigation */}
 				<nav className="flex-1 p-3">
 					<ul className="space-y-1">
-						{links.map((l) => {
+						{(projects?.[0]?.role === "admin" ? [...links, creditsLink] : links).map((l) => {
 							const active = pathname.startsWith(l.href);
 							const Icon = l.icon;
 
