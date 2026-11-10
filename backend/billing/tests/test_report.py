@@ -85,6 +85,14 @@ class ReportTest(TestCase):
 		self.event(self.a, None, 10, conv=self.conv)
 		self.assertEqual(report.conversation_totals(self.conv), (Decimal("3"), Decimal("0.25")))
 
+	def test_hidden_work_adds_usd_not_credits(self):
+		self.charge(self.a, 3, 10, "h1", conv=self.conv)
+		before = report.conversation_totals(self.conv)
+		self.event(self.a, Decimal("0.4"), 10, conv=self.conv)
+		after = report.conversation_totals(self.conv)
+		self.assertEqual(after[0], before[0])
+		self.assertEqual(after[1], before[1] + Decimal("0.4"))
+
 
 class AdminTest(TestCase):
 	def setUp(self):
@@ -100,6 +108,14 @@ class AdminTest(TestCase):
 			self.assertEqual(self.client.get(url).status_code, 200, url)
 		self.assertEqual(self.client.get(reverse("admin:billing_creditwallet_coverage")).status_code, 200)
 		self.assertEqual(self.client.get(reverse("admin:billing_creditwallet_coverage") + "?start=2026-01-01&end=2026-01-31").status_code, 200)
+
+	def test_coverage_page_flags_unpriced_and_says_estimate(self):
+		UsageEvent.objects.create(project=self.project, kind="chat_out", cost_usd=None)
+		service.grant(self.project, Decimal("5"), "grant")
+		html = self.client.get(reverse("admin:billing_creditwallet_coverage")).content.decode().lower()
+		self.assertIn("incomplete", html)
+		self.assertIn("estimate", html)
+		self.assertNotIn("revenue", html)
 
 	def test_add_transaction_goes_through_grant(self):
 		wallet = service.wallet_for(self.project)

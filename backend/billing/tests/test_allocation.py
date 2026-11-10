@@ -1,10 +1,12 @@
 import importlib
+import threading
 from decimal import Decimal
 from unittest import mock
 
 import django.apps
 from django.core.cache import cache
-from django.test import TestCase
+from django.db import connection
+from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser, User
@@ -108,3 +110,23 @@ class AllocationTests(TestCase):
 		txn.refresh_from_db()
 		self.assertIsNone(txn.conversation)
 		self.assertIsNone(txn.trigger_message)
+
+
+class ConcurrentSignupBonusTest(TransactionTestCase):
+	def test_simultaneous_claims_grant_one_bonus(self):
+		user = User.objects.create_user("c", "c@example.com", "pw")
+		project = Project.objects.create(name="own", slug="own-conc", created_by=user)
+
+		def work():
+			try:
+				service.grant_signup_bonus(user)
+			finally:
+				connection.close()
+
+		threads = [threading.Thread(target=work) for _ in range(4)]
+		for t in threads:
+			t.start()
+		for t in threads:
+			t.join()
+		self.assertEqual(CreditTransaction.objects.filter(kind="signup_bonus").count(), 1)
+		self.assertEqual(service.balance_of(project), Decimal("100.00"))

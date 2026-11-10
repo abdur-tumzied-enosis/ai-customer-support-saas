@@ -48,6 +48,18 @@ class WalletTest(BillingApiBase):
 		service.grant(self.project, Decimal("100"), "adjust", key="b")
 		self.assertEqual(self.wallet(), {"balance": "150.00", "low": False, "empty": False})
 
+	def test_two_projects_two_balances_membership_untouched(self):
+		other = Project.objects.create(name="Q", slug="q-bapi")
+		ProjectUser.objects.create(project=other, user=self.admin, role="member")
+		service.grant(self.project, Decimal("10"), "adjust", key="a")
+		service.grant(other, Decimal("70"), "adjust", key="b")
+		self.client.force_login(self.admin)
+		balance = lambda p: self.client.get("/api/billing/wallet/", {"project_id": str(p.id)}).json()["data"]["balance"]
+		self.assertEqual((balance(self.project), balance(other)), ("10.00", "70.00"))
+		ProjectUser.objects.filter(project=self.project, user=self.admin).delete()
+		self.assertEqual(service.balance_of(self.project), Decimal("10"))
+		self.assertEqual(CreditTransaction.objects.filter(wallet__project=self.project).count(), 1)
+
 	def test_non_member_404(self):
 		self.assertEqual(self.get(self.stranger, "/api/billing/wallet/").status_code, 404)
 
