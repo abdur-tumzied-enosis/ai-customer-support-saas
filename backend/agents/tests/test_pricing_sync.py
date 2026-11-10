@@ -88,3 +88,41 @@ class SyncTaskTest(TestCase):
 		AIModel.objects.all().delete()  # drop seeded catalog rows so not_found is empty
 		get.return_value = fake_response([])
 		assert sync_task() == {"updated": 0, "unchanged": 0, "not_found": []}
+
+
+from django.contrib import messages
+from django.contrib.auth import get_user_model
+from django.urls import reverse
+
+
+@override_settings(CACHES=LOCMEM, OPENROUTER_API_KEY="test-key")
+class SyncButtonTest(TestCase):
+	def setUp(self):
+		cache.clear()
+		AIModel.objects.all().delete()  # drop seeded catalog rows so the summary is exact
+		self.row = AIModel.objects.create(provider="openrouter", name="vendor/cheap")
+		self.url = reverse("admin:agents_aimodel_sync_prices")
+		admin_user = get_user_model().objects.create_superuser(username="admin", email="admin@test.local", password="pw")
+		self.client.force_login(admin_user)
+
+	def test_changelist_shows_button(self):
+		resp = self.client.get(reverse("admin:agents_aimodel_changelist"))
+		assert b"Sync prices from OpenRouter" in resp.content
+
+	def test_get_is_not_allowed(self):
+		assert self.client.get(self.url).status_code == 405
+
+	@mock.patch("agents.pricing.requests.get")
+	def test_post_syncs_and_redirects_with_summary(self, get):
+		get.return_value = fake_response([{"id": "vendor/cheap", "pricing": {"prompt": "0.000001", "completion": "0.000002"}}])
+		resp = self.client.post(self.url, follow=True)
+		self.row.refresh_from_db()
+		assert self.row.input_price_per_mtok == Decimal("1.000000")
+		assert any("1 updated" in str(m) for m in resp.context["messages"])
+
+	@mock.patch("agents.pricing.requests.get")
+	def test_post_shows_error_instead_of_500(self, get):
+		get.side_effect = requests.ConnectionError("down")
+		resp = self.client.post(self.url, follow=True)
+		assert resp.status_code == 200
+		assert any(m.level == messages.ERROR and "failed" in str(m) for m in resp.context["messages"])
