@@ -110,6 +110,17 @@ class AdminTest(TestCase):
 		txn = CreditTransaction.objects.get(wallet=wallet)
 		self.assertEqual((txn.created_by, txn.balance_after, txn.note), (self.user, Decimal("25"), "promo"))
 
+	def test_grant_amount_validation(self):
+		wallet = service.wallet_for(self.project)
+		url = reverse("admin:billing_credittransaction_add")
+		for kind, amount in [("grant", "0"), ("grant", "-5"), ("adjust", "0")]:
+			r = self.client.post(url, {"wallet": wallet.pk, "kind": kind, "amount": amount, "note": "n"})
+			self.assertEqual(r.status_code, 200, (kind, amount))
+		self.assertFalse(CreditTransaction.objects.exists())
+		r = self.client.post(url, {"wallet": wallet.pk, "kind": "adjust", "amount": "-5", "note": "n"})
+		self.assertEqual(r.status_code, 302)
+		self.assertEqual(CreditTransaction.objects.get().amount, Decimal("-5"))
+
 	def test_transaction_not_editable(self):
 		wallet = service.wallet_for(self.project)
 		txn = service.grant(self.project, Decimal("5"), "grant")

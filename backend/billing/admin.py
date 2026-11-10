@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from django import forms
 from django.contrib import admin
 from django.template.response import TemplateResponse
+from django.utils import timezone
 from django.urls import path
 
 from . import report, service
@@ -76,7 +77,7 @@ class CreditWalletAdmin(admin.ModelAdmin):
 				return date.fromisoformat(request.GET.get(key, ""))
 			except ValueError:
 				return default
-		end = parse("end", date.today())
+		end = parse("end", timezone.localdate())
 		start = parse("start", end - timedelta(days=30))
 		data = report.coverage(start, end)
 		ctx = {
@@ -100,6 +101,13 @@ class GrantForm(forms.ModelForm):
 			raise forms.ValidationError("This wallet's project was deleted.")
 		return wallet
 
+	def clean(self):
+		data = super().clean()
+		amount, kind = data.get("amount"), data.get("kind")
+		if amount is not None and (amount == 0 or (kind == "grant" and amount < 0)):
+			raise forms.ValidationError("Amount must be non-zero, and positive for a grant.")
+		return data
+
 
 @admin.register(CreditTransaction)
 class CreditTransactionAdmin(admin.ModelAdmin):
@@ -117,4 +125,6 @@ class CreditTransactionAdmin(admin.ModelAdmin):
 
 	def save_model(self, request, obj, form, change):
 		# The ledger is written only by the service so the balance moves with the row.
-		service.grant(obj.wallet.project, obj.amount, obj.kind, created_by=request.user, note=obj.note)
+		txn = service.grant(obj.wallet.project, obj.amount, obj.kind, created_by=request.user, note=obj.note)
+		# point the admin log entry and "added" link at the real ledger row
+		obj.pk, obj.balance_after, obj.created_at = txn.pk, txn.balance_after, txn.created_at
