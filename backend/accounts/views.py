@@ -10,6 +10,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core import serializers
 from django.core.cache import cache
+from django.db import transaction
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -116,9 +117,10 @@ class VerifyEmailView(APIView):
 		user = _unverified_user(request.data.get("email"))
 		if not user or not check_verification_code(user, str(request.data.get("code") or "").strip()):
 			raise ValidationError({"code": "Invalid or expired code"})
-		user.email_verified = True
-		user.save(update_fields=["email_verified"])
-		grant_signup_bonus(user)
+		with transaction.atomic():
+			user.email_verified = True
+			user.save(update_fields=["email_verified"])
+			grant_signup_bonus(user)
 		return _signed_in(request, user, "Email verified")
 
 

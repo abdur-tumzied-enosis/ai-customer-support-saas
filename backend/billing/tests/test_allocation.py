@@ -52,6 +52,16 @@ class AllocationTests(TestCase):
 		service.grant_signup_bonus(user)
 		self.assertEqual(CreditTransaction.objects.filter(wallet__project=project).count(), 1)
 
+	def test_unverified_existing_user_no_second_allocation(self):
+		user = User.objects.create_user("u", "u@example.com", "pw", email_verified=False)
+		project = Project.objects.create(name="own", slug="own", created_by=user)
+		importlib.import_module("billing.migrations.0003_initial_allocation").allocate_initial(django.apps.apps, None)
+		with mock.patch("accounts.views.check_verification_code", return_value=True):
+			r = self.client.post("/api/auth/verify-email/", {"email": user.email, "code": "123456"}, format="json")
+		self.assertEqual(r.status_code, 200, r.content)
+		self.assertFalse(CreditTransaction.objects.filter(kind="signup_bonus").exists())
+		self.assertEqual(service.balance_of(project), Decimal("100.00"))
+
 	def test_invited_member_still_gets_bonus(self):
 		user = User.objects.create_user("u", "u@example.com", "pw")
 		other = Project.objects.create(name="other", slug="other")

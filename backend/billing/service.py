@@ -150,4 +150,7 @@ def grant_signup_bonus(user):
 	project = Project.objects.filter(created_by=user).order_by("created_at").first()
 	if not amount or not project:
 		return None
+	# Existing projects can't get both allocations
+	if CreditTransaction.objects.filter(wallet__project=project, kind="initial_allocation").exists():
+		return None
 	return grant(project, amount, "signup_bonus", key=f"signup:{user.pk}")
