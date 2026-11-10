@@ -43,8 +43,8 @@ def fake_llm(router):
 	stack = ExitStack()
 	for target in ("orders.guard.get_llm", "orders.improve.get_llm"):
 		stack.enter_context(patch(target, router))
-	for target in ("orders.guard.llm_costs", "orders.improve.llm_costs"):
-		stack.enter_context(patch(target, return_value=(None, None)))
+	for target in ("orders.guard.llm_pricing", "orders.improve.llm_pricing"):
+		stack.enter_context(patch(target, return_value={"chat_in": {"cost_usd": None}, "chat_out": {"cost_usd": None}}))
 	for target in ("orders.guard.track_token_usage", "orders.improve.track_token_usage"):
 		stack.enter_context(patch(target))
 	return stack

@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from agents.llm import get_llm
 from billing.service import can_afford, charge_affordable, price_of
-from usage.utils import llm_costs, track_token_usage
+from usage.utils import llm_pricing, track_token_usage
 
 from .catalog import match_product
 from .models import Document, IgnoredProductPage, KnowledgeBase, ProductCandidate
@@ -65,10 +65,10 @@ def _ask(kb, doc, user: str) -> ExtractionResult:
 	usage = getattr(raw, "usage_metadata", None) or {}
 	meta = {"source": "product_extract", "kb_id": str(kb.id), "document_id": str(doc.id),
 		"model": (getattr(raw, "response_metadata", None) or {}).get("model_name", "")}
-	cost_in, cost_out = llm_costs([raw])
+	pricing = llm_pricing([raw])
 	project_id = str(kb.project_id)
-	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), meta, cost_usd=cost_in)
-	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), meta, cost_usd=cost_out)
+	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), meta, pricing=pricing["chat_in"])
+	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), meta, pricing=pricing["chat_out"])
 	if out.get("parsed") is None:
 		raise ValueError(f"model returned no product list: {out.get('parsing_error')}")
 	return out["parsed"]

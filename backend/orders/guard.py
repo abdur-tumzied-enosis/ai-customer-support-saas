@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, Field
 
 from agents.llm import get_llm
-from usage.utils import llm_costs, track_token_usage
+from usage.utils import llm_pricing, track_token_usage
 
 MAX_INSTRUCTION_CHARS = 2000
 CHECK_MAX_TOKENS = 512
@@ -59,9 +59,9 @@ def _llm_check(text: str, project_id: str) -> InstructionCheck:
 		[("system", CHECK_SYSTEM), ("human", text)]
 	)
 	usage = getattr(out.get("raw"), "usage_metadata", None) or {}
-	cost_in, cost_out = llm_costs([out.get("raw")])
-	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), {"source": "instruction_check"}, cost_usd=cost_in)
-	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), {"source": "instruction_check"}, cost_usd=cost_out)
+	pricing = llm_pricing([out.get("raw")])
+	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), {"source": "instruction_check"}, pricing=pricing["chat_in"])
+	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), {"source": "instruction_check"}, pricing=pricing["chat_out"])
 	if out.get("parsed") is None:
 		raise ValueError(f"instruction check returned no result: {out.get('parsing_error')}")
 	return out["parsed"]

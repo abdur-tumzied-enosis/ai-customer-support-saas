@@ -207,21 +207,21 @@ def _track_token_usage(
 ) -> None:
 	"""Track token usage in the database."""
 	try:
-		from usage.utils import llm_costs, track_token_usage
+		from usage.utils import llm_pricing, track_token_usage
 
-		cost_in, cost_out = llm_costs([m for m in new_messages if isinstance(m, AIMessage)])
+		pricing = llm_pricing([m for m in new_messages if isinstance(m, AIMessage)])
 		attribution = {"conversation_id": context.conversation_id, "message_id": context.message_id} if context else {}
 		if input_tokens > 0:
 			track_token_usage(project_id, "chat_in", input_tokens, {
 				"question_length": len(question),
 				"source": "langchain_usage_metadata"
-			}, cost_usd=cost_in, **attribution)
+			}, pricing=pricing["chat_in"], **attribution)
 
 		if output_tokens > 0:
 			track_token_usage(project_id, "chat_out", output_tokens, {
 				"response_length": len(reply_text),
 				"source": "langchain_usage_metadata"
-			}, cost_usd=cost_out, **attribution)
+			}, pricing=pricing["chat_out"], **attribution)
 	except Exception as e:
 		logger.warning(f"Failed to track token usage: {e}")
 

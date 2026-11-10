@@ -71,7 +71,7 @@ class SetupJobDoesNotConfirmTest(TestCase):
 		llm.with_structured_output.return_value = llm
 		raw = MagicMock(usage_metadata={"input_tokens": 1, "output_tokens": 1})
 		llm.invoke.return_value = {"raw": raw, "parsed": OrderSettingsExtract(zones=[ExtractedZone(name="Dhaka", charge="60")])}
-		with patch("orders.setup.get_llm", return_value=llm), patch("orders.setup.llm_costs", return_value=(None, None)), \
+		with patch("orders.setup.get_llm", return_value=llm), patch("orders.setup.llm_pricing", return_value={"chat_in": {"cost_usd": None}, "chat_out": {"cost_usd": None}}), \
 				patch("orders.setup.track_token_usage"):
 			extract_order_settings(str(project.id), str(kb.id))
 		self.assertIsNone(OrderSettings.objects.get(project=project).settings_confirmed_at)

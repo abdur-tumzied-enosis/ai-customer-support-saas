@@ -305,7 +305,7 @@ def run_ingestion_job(job_id: str) -> None:
                         "document_filename": document.filename,
                         "num_chunks": len(text_chunks)
                     },
-                    cost_usd=Decimal(0),  # self-hosted embeddings
+                    pricing={"cost_usd": Decimal(0), "cost_source": "system_default"},  # self-hosted embeddings
                 )
                 logger.debug(f"Job {job_id}: Tracked {total_embedding_tokens} embedding tokens")
             except Exception as e:

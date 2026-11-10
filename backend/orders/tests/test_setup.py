@@ -30,7 +30,7 @@ class SetupJobTest(TestCase):
 
 	def run_extract(self, parsed):
 		with patch("orders.setup.get_llm", return_value=FakeLLM(parsed)), \
-				patch("orders.setup.llm_costs", return_value=(None, None)), \
+				patch("orders.setup.llm_pricing", return_value={"chat_in": {"cost_usd": None}, "chat_out": {"cost_usd": None}}), \
 				patch("orders.setup.track_token_usage") as track:
 			extract_order_settings(str(self.project.id), str(self.kb.id))
 		return track

@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 from agents.llm import get_llm
-from usage.utils import llm_costs, track_token_usage
+from usage.utils import llm_pricing, track_token_usage
 
 from .product_sources import TARGETS
 
@@ -73,9 +73,9 @@ def column_profile(headers: list[str], sample: list[dict]) -> list[dict]:
 def _track(project_id: str, kb_id: str, raw) -> None:
 	usage = getattr(raw, "usage_metadata", None) or {}
 	meta = {"source": "product_mapping_suggest", "kb_id": kb_id}
-	cost_in, cost_out = llm_costs([raw])
-	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), meta, cost_usd=cost_in)
-	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), meta, cost_usd=cost_out)
+	pricing = llm_pricing([raw])
+	track_token_usage(project_id, "chat_in", usage.get("input_tokens", 0), meta, pricing=pricing["chat_in"])
+	track_token_usage(project_id, "chat_out", usage.get("output_tokens", 0), meta, pricing=pricing["chat_out"])
 
 
 def suggest_mapping(headers: list[str], sample: list[dict], project_id: str, kb_id: str) -> list[dict]:

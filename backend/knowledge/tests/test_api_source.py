@@ -244,6 +244,6 @@ class MappingSuggestionTests(TestCase):
 		llm = MagicMock()
 		llm.with_structured_output.return_value.invoke.return_value = {"parsed": parsed, "raw": MagicMock(usage_metadata={})}
 		with patch("knowledge.product_suggest.get_llm", return_value=llm), patch("knowledge.product_suggest.track_token_usage"), \
-				patch("knowledge.product_suggest.llm_costs", return_value=(None, None)):
+				patch("knowledge.product_suggest.llm_pricing", return_value={"chat_in": {"cost_usd": None}, "chat_out": {"cost_usd": None}}):
 			out = suggest_mapping(["Title", "Name", "Price"], [{"Title": "x", "Name": "Shoe", "Price": "1"}], "p", "k")
 		self.assertEqual([(s["target"], s["column"]) for s in out], [("name", "Title")])

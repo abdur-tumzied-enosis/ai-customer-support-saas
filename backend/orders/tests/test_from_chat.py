@@ -49,7 +49,7 @@ class FromChatTest(TestCase):
 	def prefill(self, parsed, track=None):
 		track = track or MagicMock()
 		with patch("orders.from_chat.get_llm", return_value=FakeLLM(parsed)), \
-				patch("orders.from_chat.llm_costs", return_value=(None, None)), \
+				patch("orders.from_chat.llm_pricing", return_value={"chat_in": {"cost_usd": None}, "chat_out": {"cost_usd": None}}), \
 				patch("orders.from_chat.track_token_usage", track):
 			return prefill_from_conversation(self.conv)
 

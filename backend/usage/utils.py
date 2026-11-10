@@ -159,7 +159,7 @@ def record_image_usage(
         # atomic: a failed insert must not poison a caller's open transaction
         with transaction.atomic():
             UsageEvent.objects.create(
-                project_id=project_id, kind="image", tokens=0, cost_usd=Decimal(0), metadata={"op": op, **metadata},
+                project_id=project_id, kind="image", tokens=0, cost_usd=Decimal(0), cost_source="system_default", metadata={"op": op, **metadata},
                 conversation_id=conversation_id, message_id=_consistent_message_id(conversation_id, message_id),
             )
     except Exception as e:
