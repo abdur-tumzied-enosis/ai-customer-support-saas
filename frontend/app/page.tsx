@@ -5,6 +5,7 @@ import { ArrowRight, Bot, FileText, MessageSquare, Zap, Shield, Users } from "lu
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import SiteFooter from "@/components/layout/SiteFooter";
 import Logo from "@/components/layout/Logo";
+import PricingSection from "@/components/billing/PricingSection";
 
 export default function LandingPage() {
 	return (
@@ -15,6 +16,9 @@ export default function LandingPage() {
 					<Logo className="h-7" />
 					<div className="flex items-center gap-4">
 						<ThemeToggle />
+						<Button variant="ghost" asChild className="hidden sm:inline-flex">
+							<a href="#pricing">Pricing</a>
+						</Button>
 						<Button variant="ghost" asChild>
 							<Link href="/sign-in">Sign in</Link>
 						</Button>
@@ -114,12 +118,14 @@ export default function LandingPage() {
 				</div>
 			</section>
 
+			<PricingSection />
+
 			{/* CTA Section */}
 			<section className="py-20 px-6">
 				<div className="container mx-auto max-w-4xl text-center space-y-6">
 					<h2 className="text-3xl font-bold">Ready to Get Started?</h2>
 					<p className="text-xl text-muted-foreground">
-						Free during the beta. Set up your assistant in minutes.
+						Start with free credits. Set up your assistant in minutes.
 					</p>
 					<Button size="lg" asChild>
 						<Link href="/sign-up">
