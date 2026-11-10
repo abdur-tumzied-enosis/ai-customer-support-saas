@@ -176,9 +176,10 @@ class PasswordResetConfirmView(APIView):
 		user.set_password(new_password)
 		flipped = not user.email_verified
 		user.email_verified = True  # the link reached their inbox
-		user.save(update_fields=["password", "email_verified"])
-		if flipped:
-			grant_signup_bonus(user)
+		with transaction.atomic():
+			user.save(update_fields=["password", "email_verified"])
+			if flipped:
+				grant_signup_bonus(user)
 		return Response({"success": True, "message": "Password reset. You can sign in now."})
 
 
