@@ -15,6 +15,8 @@ from datetime import timedelta
 import requests
 from django.conf import settings
 from django.db import transaction
+from django.db.models import OuterRef, Subquery, Sum
+from billing.models import ACTIONS, CreditTransaction
 from django.utils import timezone
 from . import memory
 from .handoff import conversation_event_data, end_handoff, note_staff_activity, start_handoff
@@ -215,7 +217,11 @@ def _conversation_dict(conv: Conversation) -> dict:
 	}
 
 
-def _message_dict(msg: Message) -> dict:
+def _credits_used(value) -> str:
+	return str(-(value or 0))
+
+
+def _message_dict(msg: Message, credits=()) -> dict:
 	return {
 		"id": str(msg.id),
 		"direction": msg.direction,
@@ -226,7 +232,19 @@ def _message_dict(msg: Message) -> dict:
 		"agent_reply_id": str(msg.agent_reply_id) if msg.agent_reply_id else None,
 		"has_photo": has_photo(msg),
 		"photo_matches": (msg.meta or {}).get("photo_matches", "") if msg.direction == "in" else "",
+		"credits": list(credits),
 	}
+
+
+def _message_credits(conversation) -> dict:
+	"""{message id: [credit entries]} from one query: replies attach to the reply message, photo searches to the customer message."""
+	out = {}
+	rows = CreditTransaction.objects.filter(conversation=conversation, kind="charge", action__in=("reply", "photo_search"))
+	for t in rows.order_by("created_at"):
+		msg_id = t.result_message_id if t.action == "reply" else t.trigger_message_id
+		if msg_id:
+			out.setdefault(msg_id, []).append({"action": t.action, "label": ACTIONS[t.action][0], "credits": f"{-t.amount:.2f}"})
+	return out
 
 
 def _error(code: str, message: str, http_status: int) -> Response:
@@ -259,7 +277,9 @@ class ConversationListView(APIView):
 
 		conversations = Conversation.objects.filter(project=project).select_related(
 			"knowledge_base", "contact"
-		).prefetch_related("messages").order_by("-updated_at")
+		).prefetch_related("messages").annotate(credits_used=Subquery(
+			CreditTransaction.objects.filter(conversation=OuterRef("pk"), kind="charge").values("conversation").annotate(s=Sum("amount")).values("s")
+		)).order_by("-updated_at")
 		if request.query_params.get("needs_human") == "1":
 			conversations = conversations.filter(handoff_at__gte=_paused_cutoff())
 
@@ -271,6 +291,7 @@ class ConversationListView(APIView):
 
 			conversations_data.append({
 				**_conversation_dict(conv),
+				"credits_used": _credits_used(conv.credits_used),
 				"message_count": message_count,
 				"last_message": {
 					"id": str(last_message.id),
@@ -355,11 +376,12 @@ class ConversationDetailView(APIView):
 			}, status=status.HTTP_404_NOT_FOUND)
 		
 		_verify_project_access(request.user, conversation.project)
+		used = CreditTransaction.objects.filter(conversation=conversation, kind="charge").aggregate(s=Sum("amount"))["s"]
 
 		return Response({
 			"success": True,
 			"data": {
-				"conversation": _conversation_dict(conversation)
+				"conversation": {**_conversation_dict(conversation), "credits_used": _credits_used(used)}
 			}
 		}, status=status.HTTP_200_OK)
 
@@ -462,7 +484,9 @@ class ConversationMessageListView(APIView):
 			offset = max(0, offset)
 			messages = messages_queryset[offset:offset + limit]
 		
-		messages_data = [_message_dict(msg) for msg in messages]
+		messages = list(messages)
+		credits = _message_credits(conversation)
+		messages_data = [_message_dict(msg, credits.get(msg.id, ())) for msg in messages]
 
 		# Calculate pagination info
 		# has_previous = there are older messages (lower offset)
