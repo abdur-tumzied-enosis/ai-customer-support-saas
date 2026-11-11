@@ -3,7 +3,7 @@ Utilities for tracking token usage across the application.
 """
 import logging
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 from django.db import transaction
 from django.utils import timezone
 from .models import UsageEvent, UsageCounter
@@ -151,19 +151,64 @@ def llm_costs(messages) -> tuple[Optional[Decimal], Optional[Decimal]]:
     return pricing["chat_in"]["cost_usd"], pricing["chat_out"]["cost_usd"]
 
 
-def record_image_usage(
-    project_id: str, op: str, *, conversation_id: Optional[str] = None, message_id: Optional[str] = None, **metadata
+def record_model_usage(
+    project_id: str,
+    kind: Literal["embed", "image", "rerank"],
+    *,
+    tokens: int,
+    cost_usd: Optional[Decimal],
+    model: str,
+    image_tokens: int = 0,
+    conversation_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    **metadata,
 ) -> None:
-    """Record one photo operation (op: "index" or "search"). Self-hosted, so cost is $0. Never raises."""
+    """Record one embed/image/rerank call. Reported cost wins, else tokens x AIModel price, else unknown (None). Never raises."""
+    from agents.models import AIModel
+
     try:
+        provider = _provider_of({}, model)
+        row = AIModel.objects.filter(provider=provider, name=model, input_price_per_mtok__isnull=False).first()
+        rate_in = row.input_price_per_mtok if row else None
+        if cost_usd is not None:
+            source = "provider_reported"
+        elif kind == "image":  # image events are priced on image tokens only, never also at the text rate
+            if row and row.image_price_per_mtok is not None and image_tokens:
+                cost_usd, source = image_tokens * row.image_price_per_mtok / 1_000_000, "token_calculated"
+            else:
+                source = "unknown"
+        elif row and tokens:  # no usage reported (tokens == 0) is unknown, never $0
+            cost_usd, source = tokens * row.input_price_per_mtok / 1_000_000, "token_calculated"
+        else:
+            source = "unknown"
         # atomic: a failed insert must not poison a caller's open transaction
         with transaction.atomic():
             UsageEvent.objects.create(
-                project_id=project_id, kind="image", tokens=0, cost_usd=Decimal(0), cost_source="system_default", metadata={"op": op, **metadata},
+                project_id=project_id, kind=kind, tokens=tokens, cost_usd=cost_usd, cost_source=source,
+                provider=provider, model_name=model, price_in_per_mtok=rate_in, metadata=metadata,
                 conversation_id=conversation_id, message_id=_consistent_message_id(conversation_id, message_id),
             )
     except Exception as e:
-        logger.error(f"Failed to record image usage: {e}", exc_info=True)
+        logger.error(f"Failed to record {kind} usage: {e}", exc_info=True)
+
+
+def record_image_usage(
+    project_id: str,
+    op: str,
+    *,
+    tokens: int,
+    cost_usd: Optional[Decimal],
+    model: str = "cohere/embed-5-fast",
+    conversation_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    **metadata,
+) -> None:
+    """Record one photo operation (op: "index" or "search"). Never raises."""
+    record_model_usage(
+        # Embedded reports only prompt tokens; a photo request is image-only, so all of them are image tokens
+        project_id, "image", tokens=tokens, cost_usd=cost_usd, model=model, image_tokens=tokens,
+        conversation_id=conversation_id, message_id=message_id, op=op, **metadata,
+    )
 
 
 def estimate_tokens(text: str) -> int:

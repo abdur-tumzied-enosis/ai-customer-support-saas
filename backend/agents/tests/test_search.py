@@ -5,6 +5,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import AIMessage
 
 from agents import vector_store
+from agents.embeddings_api import EmbeddingError, Reranked
 from agents.rag import Context, ToolDeps, _build_tools_from_context, generate_reply
 
 
@@ -23,14 +24,14 @@ class Broken:
 
 def fake_rerank_scores(query, texts):
 	"""Scores a doc by its leading number: "9 open 9-5" → 9."""
-	return [float(text.split()[0]) for text in texts]
+	return Reranked([float(text.split()[0]) for text in texts], 0, None, "cohere/rerank-v3.5")
 
 
 def deps(kb, web):
 	return ToolDeps(retriever_factory=lambda c: kb, retrieved_factory_for_crawler_url_context=lambda: web)
 
 
-@mock.patch.object(vector_store, "_tei_rerank_scores", fake_rerank_scores)
+@mock.patch.object(vector_store, "rerank_scores", fake_rerank_scores)
 @mock.patch("agents.rag.settings.RERANK_MIN_SCORE", 0.0)
 class MergedSearchTest(SimpleTestCase):
 	def search(self, kb, web, ctx=None):
@@ -57,7 +58,7 @@ class MergedSearchTest(SimpleTestCase):
 		assert out.startswith("ERROR: search is unavailable")
 
 
-@mock.patch.object(vector_store, "_tei_rerank_scores", fake_rerank_scores)
+@mock.patch.object(vector_store, "rerank_scores", fake_rerank_scores)
 @mock.patch("agents.rag.settings.RERANK_MIN_SCORE", 0.0)
 class SearchFirstTest(SimpleTestCase):
 	def run_reply(self, history=None):
@@ -77,3 +78,32 @@ class SearchFirstTest(SimpleTestCase):
 		history = [{"role": "user", "content": "is the Main St store open sunday?"}, {"role": "assistant", "content": "No."}]
 		_, ctx = self.run_reply(history)
 		assert ctx.trace["search_query"] == "is the Main St store open sunday?\nwhen?"
+
+
+class RerankDocsTest(SimpleTestCase):
+	docs = [Document(page_content=t) for t in ("off-topic", "best", "ok")]
+
+	def rerank(self, **kw):
+		return [d.page_content for d in vector_store.rerank_docs("q", self.docs, **kw)]
+
+	def test_empty_makes_no_call(self):
+		with mock.patch.object(vector_store, "rerank_scores") as call:
+			assert vector_store.rerank_docs("q", []) == []
+		call.assert_not_called()
+
+	def test_scores_decide_order_and_min_score_drops_low(self):
+		with mock.patch.object(vector_store, "rerank_scores", return_value=Reranked([0.01, 0.9, 0.4], 5, None, "m")):
+			assert self.rerank(top_k=3) == ["best", "ok", "off-topic"]
+			assert self.rerank(top_k=3, min_score=0.1) == ["best", "ok"]
+
+	def test_embedding_error_keeps_original_order(self):
+		with mock.patch.object(vector_store, "rerank_scores", side_effect=EmbeddingError("down")):
+			assert self.rerank(top_k=2, min_score=0.5) == ["off-topic", "best"]
+
+	def test_books_rerank_usage_when_project_given(self):
+		res = Reranked([0.1, 0.9, 0.4], 7, None, "cohere/rerank-v3.5")
+		with mock.patch.object(vector_store, "rerank_scores", return_value=res), 				mock.patch.object(vector_store, "record_model_usage") as rec:
+			vector_store.rerank_docs("q", self.docs)
+			rec.assert_not_called()
+			vector_store.rerank_docs("q", self.docs, project_id="p1")
+		rec.assert_called_once_with("p1", "rerank", tokens=7, cost_usd=None, model="cohere/rerank-v3.5")

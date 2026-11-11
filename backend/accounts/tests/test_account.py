@@ -79,6 +79,7 @@ class AccountSettingsTests(TestCase):
 		assert Project.objects.filter(pk=self.shared.pk).exists()  # teammate keeps the shared project
 		delete_collection.assert_any_call("vc-solo")
 		delete_collection.assert_any_call("vc-solo_web")
+		delete_collection.assert_any_call("vc-solo_images")  # legacy photo collection
 		delete_file.assert_called_once_with("documents/solo/x/a.txt")
 		assert self.client.get("/api/auth/me/").status_code in (401, 403)
 

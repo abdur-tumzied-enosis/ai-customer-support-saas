@@ -1,4 +1,5 @@
 from decimal import Decimal
+from agents.embeddings_api import Embedded
 from io import BytesIO
 from unittest import mock
 
@@ -134,7 +135,7 @@ class OwnerActionBillingTest(TestCase):
 		Image.new("RGB", (20, 10), "red").save(buf, "PNG")
 		image.file.name = default_storage.save("tmp/" + product_image_path(self.kb, str(image.id), "png"), ContentFile(buf.getvalue()))
 		image.save()
-		mock.patch("knowledge.tasks.embed_image", return_value=[1, 0, 0, 0]).start()
+		mock.patch("knowledge.tasks.embed_image", return_value=Embedded([[1, 0, 0, 0]], 1200, Decimal("0.00048"), "cohere/embed-5-fast")).start()
 		mock.patch("knowledge.tasks.upsert_image").start()
 		mock.patch("knowledge.models.delete_images").start()
 		embed_product_image(str(image.id))

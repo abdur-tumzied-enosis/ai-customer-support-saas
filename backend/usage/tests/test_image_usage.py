@@ -42,12 +42,12 @@ class ImageUsageTests(TestCase):
 		self.project = Project.objects.create(name="P", slug="p")
 
 	def test_record_image_usage(self):
-		record_image_usage(str(self.project.id), "search", matched=True)
+		record_image_usage(str(self.project.id), "search", tokens=0, cost_usd=None, matched=True)
 		e = UsageEvent.objects.get()
 		self.assertEqual((e.kind, e.tokens, e.metadata), ("image", 0, {"op": "search", "matched": True}))
 
 	def test_image_usage_cost_zero(self):
-		record_image_usage(str(self.project.id), "index")
+		record_image_usage(str(self.project.id), "index", tokens=0, cost_usd=Decimal(0))
 		self.assertEqual(UsageEvent.objects.get().cost_usd, Decimal(0))
 
 	def test_embed_cost_zero_backfill(self):
@@ -66,9 +66,9 @@ class ImageUsageTests(TestCase):
 		ProjectUser.objects.create(project=self.project, user=user)
 		pid = str(self.project.id)
 		for _ in range(2):
-			record_image_usage(pid, "index")
+			record_image_usage(pid, "index", tokens=0, cost_usd=None)
 		for _ in range(3):
-			record_image_usage(pid, "search")
+			record_image_usage(pid, "search", tokens=0, cost_usd=None)
 		UsageEvent.objects.create(project=self.project, kind="chat_in", tokens=100)
 		client = APIClient()
 		client.force_login(user)
@@ -81,5 +81,5 @@ class ImageUsageTests(TestCase):
 class ImageUsageNeverRaisesTests(TransactionTestCase):
 	# Real commits: the FK check is deferred to commit, so TestCase would hide the failure until teardown.
 	def test_record_image_usage_never_raises(self):
-		record_image_usage(str(uuid.uuid4()), "index")  # FK violation
+		record_image_usage(str(uuid.uuid4()), "index", tokens=0, cost_usd=None)  # FK violation
 		self.assertEqual(UsageEvent.objects.count(), 0)

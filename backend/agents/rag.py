@@ -5,6 +5,7 @@ from langchain_core.messages import AIMessage
 from django.conf import settings
 from .llm import create_basic_agent
 from .vector_store import rerank_docs
+from usage.utils import record_model_usage
 from .api_tool import build_call_api_tool
 import logging
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ class Context:
 	order_submitted: bool = False  # set by submit_order during this reply
 	conversation_id: Optional[str] = None  # usage attribution, set by channels_app.tasks.generate_agent_reply
 	message_id: Optional[str] = None
+	project_id: Optional[str] = None  # books embed/rerank cost for the reply; set by channels_app.tasks.build_reply_context
 
 
 @dataclass
@@ -74,6 +76,19 @@ def _get_retrievers(context: Context, deps: ToolDeps) -> list:
 	return [r for r in retrievers if r]
 
 
+def _book_query_embedding(retriever, context: Context) -> None:
+	"""Book the query embedding the retriever's embedder just made. Log-only on failure."""
+	try:
+		embedder = getattr(getattr(retriever, "vectorstore", None), "embeddings", None)
+		used = getattr(embedder, "last_usage", None)
+		if used and context.project_id:
+			embedder.last_usage = None  # a retriever can serve several searches in one reply
+			record_model_usage(context.project_id, "embed", tokens=used.tokens, cost_usd=used.cost_usd, model=used.model,
+				conversation_id=context.conversation_id, message_id=context.message_id, op="query")
+	except Exception:
+		logger.exception("Could not book query embedding usage")
+
+
 def _search(retrievers: list, query: str, context: Context) -> str:
 	"""Query every collection, rerank the combined results, keep the best that clear RERANK_MIN_SCORE."""
 	logger.info(f"[search] query={query!r}")
@@ -81,6 +96,7 @@ def _search(retrievers: list, query: str, context: Context) -> str:
 	for retriever in retrievers:
 		try:
 			docs += retriever.invoke(query)
+			_book_query_embedding(retriever, context)
 		except Exception:
 			# Qdrant down: answer from what the other collection, history and memory give instead of failing the reply
 			logger.exception("[search] retriever failed")
@@ -89,7 +105,7 @@ def _search(retrievers: list, query: str, context: Context) -> str:
 		context.trace.setdefault("search_errors", []).append(query)
 	if retrievers and failed == len(retrievers):
 		return "ERROR: search is unavailable right now. Do not guess; offer to have a person follow up if needed."
-	docs = rerank_docs(query, docs, top_k=SEARCH_TOP_K, min_score=settings.RERANK_MIN_SCORE)
+	docs = rerank_docs(query, docs, top_k=SEARCH_TOP_K, min_score=settings.RERANK_MIN_SCORE, project_id=context.project_id)
 	context.trace.setdefault("sources", []).extend(_source(d) for d in docs)
 	logger.info(f"[search] returned {len(docs)} docs")
 	return _format_docs(docs)

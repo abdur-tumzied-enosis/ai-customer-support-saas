@@ -1,13 +1,16 @@
 import os
 import threading
 from typing import Optional, List
-import requests
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from qdrant_client import QdrantClient, models
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
+
+from usage.utils import record_model_usage
+from . import embeddings_api
+from .embeddings_api import EmbeddingError, rerank_scores
 
 import logging
 logger = logging.getLogger(__name__)
@@ -29,63 +32,32 @@ def get_qdrant_client() -> QdrantClient:
 	return QdrantClient(url=settings.QDRANT_URL)
 
 
-def get_default_embeddings():
-	# multilingual-e5-base: a Bengali question finds English docs and vice versa (bge-base-en-v1.5 found 0/8
-	# Bengali→English in our eval, e5 7/8 top-1 at the same speed; bge-m3 8/8 but 2.3x slower).
-	# Served by the embeddings container (--model-id in docker-compose); the backend image ships no torch or models.
-	# e5 is trained with "query: " / "passage: " prefixes (TEIEmbeddings adds them); drop them for a non-e5 model.
+def get_default_embeddings() -> "OpenRouterEmbeddings":
+	# cohere/embed-5-fast through OpenRouter (agents/embeddings_api.py).
 	# NOTE: changing this model requires re-indexing all existing Qdrant collections.
-	if not settings.EMBEDDINGS_URL:
-		raise ImproperlyConfigured("EMBEDDINGS_URL is not set; start the embeddings service (docker-compose)")
-	return TEIEmbeddings(settings.EMBEDDINGS_URL)
+	if not settings.OPENROUTER_API_KEY:
+		raise ImproperlyConfigured("OPENROUTER_API_KEY is not set; embeddings need it")
+	return OpenRouterEmbeddings()
 
 
-TEI_TIMEOUT = 30
-TEI_BATCH = 32  # text-embeddings-inference's default --max-client-batch-size
+class OpenRouterEmbeddings(Embeddings):
+	"""Cohere embeddings via OpenRouter. Each call's Embedded (tokens, cost) lands on last_usage and in usage."""
 
+	def __init__(self):
+		self.last_usage = None
+		self.usage = []
 
-class TEIEmbeddings(Embeddings):
-	"""The e5 model served by text-embeddings-inference (EMBEDDINGS_URL), with the e5 prompts and normalization
-	the collections were indexed with."""
-
-	def __init__(self, url: str):
-		self.url = url.rstrip("/")
-
-	def _embed(self, texts: list[str]) -> list[list[float]]:
-		vectors = []
-		for i in range(0, len(texts), TEI_BATCH):
-			r = requests.post(
-				f"{self.url}/embed", json={"inputs": texts[i:i + TEI_BATCH], "normalize": True, "truncate": True},
-				timeout=TEI_TIMEOUT,
-			)
-			r.raise_for_status()
-			vectors += r.json()
-		return vectors
+	def _embed(self, texts: list[str], kind: str) -> list[list[float]]:
+		out = embeddings_api.embed_texts(texts, kind)
+		self.last_usage = out
+		self.usage.append(out)
+		return out.vectors
 
 	def embed_documents(self, texts: list[str]) -> list[list[float]]:
-		return self._embed(["passage: " + t for t in texts])
+		return self._embed(texts, "document")
 
 	def embed_query(self, text: str) -> list[float]:
-		return self._embed(["query: " + text])[0]
-
-
-def _tei_rerank_scores(query: str, texts: list[str]) -> list[float]:
-	"""Cross-encoder logits from text-embeddings-inference (RERANKER_URL), in `texts` order.
-	raw_scores: logits like CrossEncoder.predict, which RERANK_MIN_SCORE is tuned on (not sigmoid 0..1).
-	Model: cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 (docker-compose), multilingual (Bengali etc.).
-	ponytail: BAAI/bge-reranker-v2-m3 ranks better but took ~3.5s per query on CPU; use it with a GPU."""
-	if not settings.RERANKER_URL:
-		raise ImproperlyConfigured("RERANKER_URL is not set; start the reranker service (docker-compose)")
-	r = requests.post(
-		f"{settings.RERANKER_URL.rstrip('/')}/rerank",
-		json={"query": query, "texts": texts, "raw_scores": True, "truncate": True},
-		timeout=TEI_TIMEOUT,
-	)
-	r.raise_for_status()
-	scores = [0.0] * len(texts)
-	for item in r.json():
-		scores[item["index"]] = item["score"]
-	return scores
+		return self._embed([text], "query")[0]
 
 
 def get_sparse_embeddings() -> FastEmbedSparse:
@@ -100,7 +72,9 @@ def get_sparse_embeddings() -> FastEmbedSparse:
 	return _sparse
 
 
-def rerank_docs(query: str, docs: List[Document], top_k: int = 4, min_score: Optional[float] = None) -> List[Document]:
+def rerank_docs(
+	query: str, docs: List[Document], top_k: int = 4, min_score: Optional[float] = None, project_id: Optional[str] = None
+) -> List[Document]:
 	"""
 	Rerank retrieved documents using a cross-encoder for higher precision.
 	Drops docs scoring below `min_score` (unrelated text), so an off-topic query can return nothing.
@@ -109,12 +83,18 @@ def rerank_docs(query: str, docs: List[Document], top_k: int = 4, min_score: Opt
 	if not docs:
 		return docs
 	try:
-		scores = _tei_rerank_scores(query, [doc.page_content for doc in docs])
-		ranked = sorted(zip(scores, docs), key=lambda x: x[0], reverse=True)
+		res = rerank_scores(query, [doc.page_content for doc in docs])
+		if project_id:
+			record_model_usage(project_id, "rerank", tokens=res.tokens, cost_usd=res.cost_usd, model=res.model)
+		ranked = sorted(zip(res.scores, docs), key=lambda x: x[0], reverse=True)
 		return [doc for score, doc in ranked[:top_k] if min_score is None or score >= min_score]
-	except Exception as e:
+	except EmbeddingError as e:
 		logger.warning(f"Reranker failed, using original order: {e}")
 		return docs[:top_k]
+
+
+# Text retrieval never returns photo points (they carry a top-level `kind`; text points have none)
+NOT_IMAGE = models.Filter(must_not=[models.FieldCondition(key="kind", match=models.MatchValue(value="image"))])
 
 
 def get_retriever(collection_name: str, k: int = 10):
@@ -125,19 +105,19 @@ def get_retriever(collection_name: str, k: int = 10):
 		logger.debug(f"Collection '{collection_name}' does not exist, returning None retriever")
 		return None
 	if _is_hybrid(client, collection_name):
-		return _store(client, collection_name).as_retriever(search_kwargs={"k": k})
+		return _store(client, collection_name).as_retriever(search_kwargs={"k": k, "filter": NOT_IMAGE})
 	# Created before hybrid search: dense only until `manage.py reindex_vectors` rebuilds it
 	logger.warning(f"Collection '{collection_name}' has no sparse vectors; dense-only search. Run reindex_vectors.")
 	store = QdrantVectorStore(client=client, collection_name=collection_name, embedding=get_default_embeddings())
-	return store.as_retriever(search_kwargs={"k": k})
+	return store.as_retriever(search_kwargs={"k": k, "filter": NOT_IMAGE})
 
 
-def _store(client: QdrantClient, collection_name: str) -> QdrantVectorStore:
+def _store(client: QdrantClient, collection_name: str, embedding: Optional[Embeddings] = None) -> QdrantVectorStore:
 	"""Hybrid store: dense + BM25 candidates fused with RRF (the reranker then orders them)."""
 	return QdrantVectorStore(
 		client=client,
 		collection_name=collection_name,
-		embedding=get_default_embeddings(),
+		embedding=embedding or get_default_embeddings(),
 		sparse_embedding=get_sparse_embeddings(),
 		sparse_vector_name=SPARSE_VECTOR_NAME,
 		retrieval_mode=RetrievalMode.HYBRID,
@@ -148,9 +128,9 @@ def _is_hybrid(client: QdrantClient, collection_name: str) -> bool:
 	return SPARSE_VECTOR_NAME in (client.get_collection(collection_name).config.params.sparse_vectors or {})
 
 
-def _create_collection(client: QdrantClient, collection_name: str) -> None:
+def _create_collection(client: QdrantClient, collection_name: str, embedding: Optional[Embeddings] = None) -> None:
 	# Not QdrantVectorStore.construct_instance: it creates the sparse vector without the IDF modifier BM25 needs
-	size = len(get_default_embeddings().embed_query("dimension probe"))
+	size = len((embedding or get_default_embeddings()).embed_query("dimension probe"))
 	client.create_collection(
 		collection_name=collection_name,
 		vectors_config=models.VectorParams(size=size, distance=models.Distance.COSINE),
@@ -162,17 +142,20 @@ def _collection_exists(client: QdrantClient, collection_name: str) -> bool:
 	return client.collection_exists(collection_name)
 
 
-def add_texts_to_collection(collection_name: str, texts: list[str], metadatas: Optional[list[dict]] = None, ids: Optional[list[str]] = None) -> list[str]:
+def add_texts_to_collection(collection_name: str, texts: list[str], metadatas: Optional[list[dict]] = None, ids: Optional[list[str]] = None, usage: Optional[list] = None) -> list[str]:
 	"""
 	Add a batch of texts to the Qdrant collection, creating it if missing.
-	Returns the list of inserted IDs.
+	Returns the list of inserted IDs. Each embedding call's Embedded (tokens, cost) is appended to `usage`.
 	"""
 	client = get_qdrant_client()
 	metadatas = metadatas or [{} for _ in texts]
+	embedding = get_default_embeddings()
 	if not _collection_exists(client, collection_name):
-		_create_collection(client, collection_name)
+		_create_collection(client, collection_name, embedding)  # the probe's usage lands in embedding.usage too
 	# A pre-hybrid collection rejects sparse vectors: QdrantVectorStore raises, ingestion fails until reindex_vectors
-	inserted_ids = _store(client, collection_name).add_texts(texts=texts, metadatas=metadatas, ids=ids or None)
+	inserted_ids = _store(client, collection_name, embedding).add_texts(texts=texts, metadatas=metadatas, ids=ids or None)
+	if usage is not None:
+		usage.extend(embedding.usage)
 	return [str(x) for x in inserted_ids]
 
 

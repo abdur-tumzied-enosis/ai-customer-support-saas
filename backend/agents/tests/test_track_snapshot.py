@@ -24,7 +24,7 @@ class TrackSnapshotTests(TestCase):
 		self.assertEqual(out.price_out_per_mtok, Decimal("2.500000"))
 		self.assertEqual(UsageEvent.objects.get(kind="chat_in").cost_usd, Decimal("0.003"))
 
-	def test_image_is_system_default(self):
-		record_image_usage(str(self.project.id), "index")
+	def test_image_cost_is_provider_reported(self):
+		record_image_usage(str(self.project.id), "index", tokens=0, cost_usd=Decimal(0))
 		e = UsageEvent.objects.get(kind="image")
-		self.assertEqual((e.cost_usd, e.cost_source), (Decimal(0), "system_default"))
+		self.assertEqual((e.cost_usd, e.cost_source), (Decimal(0), "provider_reported"))

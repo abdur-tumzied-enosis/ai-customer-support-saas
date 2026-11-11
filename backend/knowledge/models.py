@@ -100,10 +100,6 @@ class KnowledgeBase(models.Model):
 			self.vector_collection = f"kb_{self.project.slug}_{self.id.hex}"
 		super().save(*args, **kwargs)
 
-	@property
-	def image_collection(self) -> str:
-		return f"{self.vector_collection}_images"
-
 	@classmethod
 	def get_default(cls, project) -> "KnowledgeBase":
 		# A pre-flag KB named "Default"/"DEFAULT" (the migration only flagged exact "default") would block creating "default"
@@ -259,7 +255,7 @@ class ProductField(models.Model):
 		constraints = [models.UniqueConstraint(fields=["kb", "key"], name="product_field_key_unique_per_kb")]
 
 
-# ponytail: no reindex_vectors support for image collections; re-queue embed_product_image for all images if the CLIP model changes.
+# ponytail: no reindex_vectors support for image collections; re-queue embed_product_image for all images if the embedding model changes.
 class Product(models.Model):
 	STATUS_CHOICES = [("needs_info", "Needs info"), ("active", "Active"), ("hidden", "Hidden")]
 	SOURCE_CHOICES = [("manual", "Manual"), ("kb", "Knowledge base"), ("csv", "CSV"), ("sheet", "Sheet")]
@@ -295,7 +291,7 @@ class Product(models.Model):
 		# The cascade skips ProductImage.delete(), so remove points and files here
 		images = list(self.images.all())
 		if images:
-			delete_images(self.kb.image_collection, [str(i.id) for i in images])
+			delete_images(self.kb.vector_collection, [str(i.id) for i in images])
 		for image in images:
 			image._delete_file()
 		return super().delete(*args, **kwargs)
@@ -329,7 +325,7 @@ class ProductImage(models.Model):
 			delete_keys(self.file.name, thumb_key(self.file.name))
 
 	def delete(self, *args, **kwargs):
-		delete_images(self.product.kb.image_collection, [str(self.id)])
+		delete_images(self.product.kb.vector_collection, [str(self.id)])
 		self._delete_file()
 		return super().delete(*args, **kwargs)
 

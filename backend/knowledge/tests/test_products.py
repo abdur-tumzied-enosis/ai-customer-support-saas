@@ -1,5 +1,6 @@
 import uuid
 from datetime import timedelta
+from decimal import Decimal
 from io import BytesIO
 from unittest import mock
 
@@ -10,6 +11,7 @@ from django.utils import timezone
 from PIL import Image
 
 from accounts.models import Project
+from agents.embeddings_api import Embedded, EmbeddingError
 from core.storage import thumb_key
 from core.tests.utils import fresh_storage
 from knowledge.models import Document, KnowledgeBase, Product, ProductImage, product_image_path
@@ -23,6 +25,9 @@ def png(w=2000, h=1000):
 	return buf.getvalue()
 
 
+EMBEDDED = Embedded([[1, 0, 0, 0]], 1200, Decimal("0.00048"), "cohere/embed-5-fast")
+
+
 @fresh_storage
 class ProductImageTest(TestCase):
 	def setUp(self):
@@ -33,21 +38,19 @@ class ProductImageTest(TestCase):
 		self.tmp = default_storage.save("tmp/" + product_image_path(self.kb, str(self.image.id), "png"), ContentFile(png()))
 		self.image.file.name = self.tmp
 		self.image.save()
-		self.embed = mock.patch("knowledge.tasks.embed_image", return_value=[1, 0, 0, 0]).start()
+		self.embed = mock.patch("knowledge.tasks.embed_image", return_value=EMBEDDED).start()
 		self.upsert = mock.patch("knowledge.tasks.upsert_image").start()
 		self.delete_images = mock.patch("knowledge.models.delete_images").start()
 		self.addCleanup(mock.patch.stopall)
-
-	def test_image_collection_name(self):
-		self.assertEqual(self.kb.image_collection, "vc-prod_images")
 
 	def test_embed_marks_ready_upserts_and_meters(self):
 		embed_product_image(str(self.image.id))
 		self.image.refresh_from_db()
 		self.assertEqual(self.image.status, "ready")
 		self.assertEqual(self.embed.call_args.args[0].size, (1600, 800))  # embedded from the display variant
-		self.upsert.assert_called_once_with(self.kb.image_collection, str(self.image.id), [1, 0, 0, 0], str(self.product.id))
-		self.assertEqual(UsageEvent.objects.filter(kind="image", metadata__op="index").count(), 1)
+		self.upsert.assert_called_once_with(self.kb.vector_collection, str(self.image.id), [1, 0, 0, 0], str(self.product.id), usage=[])
+		event = UsageEvent.objects.get(kind="image", metadata__op="index")
+		self.assertEqual((event.tokens, event.cost_usd), (1200, Decimal("0.00048")))
 
 	def test_embed_writes_variants_and_drops_tmp(self):
 		embed_product_image(str(self.image.id))
@@ -85,16 +88,31 @@ class ProductImageTest(TestCase):
 		self.assertEqual((self.image.status, self.image.error), ("failed", "RuntimeError"))
 		self.assertEqual(UsageEvent.objects.filter(kind="image").count(), 0)
 
+	def test_embedding_api_failure_marks_failed_without_usage(self):
+		self.embed.side_effect = EmbeddingError("embeddings returned 500")
+		embed_product_image(str(self.image.id))
+		self.image.refresh_from_db()
+		self.assertEqual((self.image.status, self.image.error), ("failed", "EmbeddingError"))
+		self.assertEqual(UsageEvent.objects.count(), 0)
+		self.upsert.assert_not_called()
+
+	def test_collection_creation_probe_is_booked_as_embed(self):
+		probe = Embedded([[0.0]], 3, Decimal("0.0000001"), "cohere/embed-5-fast")
+		self.upsert.side_effect = lambda *a, usage=None: usage.append(probe)
+		embed_product_image(str(self.image.id))
+		event = UsageEvent.objects.get(kind="embed")
+		self.assertEqual((event.tokens, event.cost_usd, event.metadata["image_id"]), (3, Decimal("0.0000001"), str(self.image.id)))
+
 	def test_deleted_image_is_noop(self):
 		embed_product_image(str(uuid.uuid4()))
 		self.upsert.assert_not_called()
 
 	def test_image_deleted_during_embed_removes_point_and_skips_metering(self):
 		image_id = str(self.image.id)
-		self.upsert.side_effect = lambda *a: ProductImage.objects.filter(id=image_id).delete()
+		self.upsert.side_effect = lambda *a, **kw: ProductImage.objects.filter(id=image_id).delete()
 		with mock.patch("knowledge.tasks.delete_images") as task_delete:
 			embed_product_image(image_id)
-		task_delete.assert_called_once_with(self.kb.image_collection, [image_id])
+		task_delete.assert_called_once_with(self.kb.vector_collection, [image_id])
 		self.assertEqual(UsageEvent.objects.filter(kind="image").count(), 0)
 
 	def test_product_delete_removes_points_and_files(self):
@@ -102,7 +120,7 @@ class ProductImageTest(TestCase):
 		self.image.refresh_from_db()
 		path = self.image.file.name
 		self.product.delete()
-		self.delete_images.assert_called_once_with(self.kb.image_collection, [str(self.image.id)])
+		self.delete_images.assert_called_once_with(self.kb.vector_collection, [str(self.image.id)])
 		self.assertFalse(default_storage.exists(path))
 		self.assertFalse(default_storage.exists(thumb_key(path)))
 		self.assertFalse(ProductImage.objects.exists())
@@ -112,7 +130,7 @@ class ProductImageTest(TestCase):
 		self.image.refresh_from_db()
 		path, image_id = self.image.file.name, str(self.image.id)
 		self.image.delete()
-		self.delete_images.assert_called_once_with(self.kb.image_collection, [image_id])
+		self.delete_images.assert_called_once_with(self.kb.vector_collection, [image_id])
 		self.assertFalse(default_storage.exists(path))
 		self.assertFalse(default_storage.exists(thumb_key(path)))
 

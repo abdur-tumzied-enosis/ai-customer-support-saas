@@ -400,7 +400,7 @@ def purge_project(project) -> None:
 	for kb in project.knowledge_bases.all():
 		delete_collection(kb.vector_collection)
 		delete_collection(kb.vector_collection + "_web")
-		delete_collection(kb.image_collection)
+		delete_collection(kb.vector_collection + "_images")  # legacy photo collection
 	for doc in Document.objects.filter(kb__project=project).exclude(file__isnull=True).exclude(file=""):
 		default_storage.delete(doc.file.name)
 	for img in ProductImage.objects.filter(product__kb__project=project):

@@ -100,6 +100,7 @@ def build_reply_context(project, knowledge_base: KnowledgeBase, conversation=Non
 	custom_instructions = get_effective_instructions(str(project.id), str(knowledge_base.id))
 	logger.info(f"Using {len(custom_instructions)} custom instructions")
 	context = Context(
+		project_id=str(project.id),
 		knowledge_base_id=str(knowledge_base.id),
 		vector_collection=knowledge_base.vector_collection,
 		custom_instructions=custom_instructions,

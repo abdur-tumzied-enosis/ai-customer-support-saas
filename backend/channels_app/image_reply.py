@@ -3,7 +3,8 @@ import logging
 
 from celery.exceptions import SoftTimeLimitExceeded
 
-from agents.image_search import embed_image, load_image, search_products
+from agents.embeddings_api import embed_image
+from agents.image_search import load_image, search_products
 from billing.service import charge
 from knowledge.models import Product
 from usage.utils import record_image_usage
@@ -27,7 +28,8 @@ def wants_photo_reply(project, attachment_info: list, channel_enabled: bool) -> 
 def _photo_note(conversation, msg, att) -> str:
 	try:
 		kb = conversation.knowledge_base
-		hits = search_products(kb.image_collection, embed_image(load_image(fetch_photo(msg, att))))
+		embedded = embed_image(load_image(fetch_photo(msg, att)))
+		hits = search_products(kb.vector_collection, embedded.vectors[0])
 		products = {str(p.id): p for p in Product.objects.filter(id__in=[pid for pid, _ in hits], kb=kb, status="active")}
 		matches = [(products[pid], score) for pid, score in hits if pid in products]  # drops stale and non-active points
 	except SoftTimeLimitExceeded:
@@ -37,7 +39,7 @@ def _photo_note(conversation, msg, att) -> str:
 		logger.warning(f"Photo on message {msg.id} could not be checked against the catalog: {type(e).__name__}")
 		return UNCHECKED_NOTE
 	record_image_usage(
-		str(conversation.project_id), "search", conversation_id=str(conversation.id), message_id=str(msg.id), matched=bool(matches)
+		str(conversation.project_id), "search", tokens=embedded.tokens, cost_usd=embedded.cost_usd, model=embedded.model, conversation_id=str(conversation.id), message_id=str(msg.id), matched=bool(matches)
 	)
 	if conversation.channel != "self":
 		try:
