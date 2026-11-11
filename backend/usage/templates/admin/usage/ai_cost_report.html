@@ -1,43 +1,198 @@
 {% extends "admin/base_site.html" %}
+{% block extrastyle %}{{ block.super }}
+<style>
+/* Palette: categorical slots 1-3 (blue, orange, aqua), ink and surfaces from the dataviz reference palette. */
+.ai-cost {
+  --surface: #fcfcfb; --page: #f9f9f7; --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --warn: #8a5300;
+  color: var(--ink); background: var(--page); padding: 24px; border-radius: 8px;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.5;
+}
+@media (prefers-color-scheme: dark) {
+  .ai-cost:not([data-theme="light"]) {
+    --surface: #1a1a19; --page: #0d0d0d; --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --warn: #fab219;
+  }
+}
+.ai-cost form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 20px; }
+.ai-cost label { display: grid; gap: 4px; color: var(--ink-2); font-size: 12px; }
+.ai-cost input[type="date"], .ai-cost input[type="text"] {
+  background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+}
+.ai-cost button, .ai-cost input[type="submit"] {
+  background: var(--s1); color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; cursor: pointer;
+}
+.ai-cost button:focus-visible, .ai-cost input:focus-visible, .ai-cost summary:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.ai-cost h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; color: var(--ink); }
+.ai-cost .note { color: var(--ink-2); margin: 0 0 16px; }
+.ai-cost .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-bottom: 16px; }
+.ai-cost .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.ai-cost .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+.ai-cost .tile .value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ai-cost .tile .label { color: var(--ink-2); font-size: 12px; }
+.ai-cost .warning { color: var(--warn); font-weight: 600; margin: 0 0 16px; }
+.ai-cost .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+
+/* Daily stacked columns. Segments are heights of the plot, so they share one scale. */
+.ai-cost .plot { display: grid; grid-template-columns: 56px 1fr; gap: 8px; }
+.ai-cost .yaxis { display: flex; flex-direction: column; justify-content: space-between; height: 200px; color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+.ai-cost .bars { position: relative; height: 200px; display: flex; align-items: flex-end; gap: 2px; border-bottom: 1px solid var(--axis); background: repeating-linear-gradient(to top, transparent 0 49px, var(--grid) 49px 50px); }
+.ai-cost .col { flex: 1 1 0; max-width: 28px; height: 100%; display: flex; flex-direction: column-reverse; }
+.ai-cost .col i { display: block; border-top: 2px solid var(--surface); }
+.ai-cost .col i:first-child { border-top: 0; }
+.ai-cost .unk-row { grid-column: 2; display: flex; gap: 2px; height: 6px; margin-top: 4px; }
+.ai-cost .unk-row i { flex: 1 1 0; max-width: 28px; border-radius: 1px; background: transparent; }
+.ai-cost .unk-row i.on { background: var(--warn); }
+.ai-cost .xaxis { grid-column: 2;display: flex; justify-content: space-between; color: var(--ink-3); font-size: 12px; }
+.ai-cost .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 12px; color: var(--ink-2); font-size: 13px; }
+.ai-cost .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--swatch); }
+
+/* Source split: one stacked horizontal bar plus values. */
+.ai-cost .split { display: flex; height: 22px; border-radius: 4px; overflow: hidden; background: var(--grid); }
+.ai-cost .split i { display: block; height: 100%; }
+.ai-cost .split-rows { margin: 14px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.ai-cost .split-rows li { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+
+/* Model bars */
+.ai-cost .model { display: grid; grid-template-columns: minmax(120px, 200px) 1fr auto; gap: 12px; align-items: center; padding: 6px 0; }
+.ai-cost .model .name { color: var(--ink); overflow-wrap: anywhere; }
+.ai-cost .model .name small { display: block; color: var(--ink-3); }
+.ai-cost .track { height: 14px; background: var(--grid); border-radius: 3px; overflow: hidden; }
+.ai-cost .track i { display: block; height: 100%; background: var(--s1); border-radius: 3px; }
+.ai-cost .model .usd { font-variant-numeric: tabular-nums; text-align: right; min-width: 90px; }
+.ai-cost .model .unpriced { display: block; color: var(--warn); font-size: 12px; }
+
+.ai-cost details { margin-top: 16px; }
+.ai-cost summary { cursor: pointer; color: var(--ink-2); }
+.ai-cost table { width: 100%; border-collapse: collapse; margin-top: 12px; font-variant-numeric: tabular-nums; }
+.ai-cost th, .ai-cost td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+.ai-cost th { color: var(--ink-2); font-weight: 600; }
+@media (max-width: 640px) {
+  .ai-cost { padding: 16px; }
+  .ai-cost .model { grid-template-columns: 1fr auto; }
+  .ai-cost .model .track { grid-column: 1 / -1; grid-row: 2; }
+}
+</style>
+{% endblock %}
 {% block content %}
+<div class="ai-cost">
 <form method="get">
 	<label>From <input type="date" name="start" value="{{ start|date:'Y-m-d' }}"></label>
 	<label>To <input type="date" name="end" value="{{ end|date:'Y-m-d' }}"></label>
 	<label>Project ID <input type="text" name="project" value="{{ project|default:'' }}"></label>
 	<input type="submit" value="Show">
 </form>
-<p>Internal only. Known cost is USD from provider charges or token-rate calculation. Credits are the customer-facing usage unit.</p>
+<p class="note">Internal only. Known cost is USD from provider charges or token-rate calculation. Credits are the customer-facing usage unit.</p>
+
 {% if has_unknown %}
-<p><strong>Unpriced usage in this range: {{ unknown_events }} events, {{ unknown_tokens }} tokens. Totals are incomplete.</strong></p>
+<p class="warning">Unpriced usage in this range: {{ unknown_events }} events, {{ unknown_tokens }} tokens. Totals are incomplete.</p>
 {% endif %}
-<h2>Overview</h2>
-<table>
-	<tr><th>Provider reported (USD)</th><td>{{ known_by_source.provider_reported|floatformat:6 }}</td></tr>
-	<tr><th>Token calculated (USD)</th><td>{{ known_by_source.token_calculated|floatformat:6 }}</td></tr>
-	<tr><th>System default (USD)</th><td>{{ known_by_source.system_default|floatformat:6 }}</td></tr>
-	<tr><th>Credits charged</th><td>{{ credits_charged }}</td></tr>
-	<tr><th>Legacy events (written before price snapshots)</th><td>{{ legacy_events }}</td></tr>
-	<tr><th>Legacy known cost (USD, as stored)</th><td>{{ legacy_usd|floatformat:6 }}</td></tr>
-</table>
-<h2>By model</h2>
-<table>
-	<thead><tr>
-		<th>Provider</th><th>Model</th><th>Events</th><th>Input tokens</th><th>Output tokens</th>
-		<th>Known cost (USD)</th><th>Unpriced events</th><th>Unpriced tokens</th>
-	</tr></thead>
-	<tbody>
-	{% for m in models %}
-		<tr>
-			<td>{{ m.provider }}</td><td>{{ m.model_name }}</td><td>{{ m.events }}</td>
-			<td>{{ m.input_tokens }}</td><td>{{ m.output_tokens }}</td><td>{{ m.known_usd|floatformat:6 }}</td>
-			<td>{{ m.unknown_events }}</td><td>{{ m.unknown_tokens }}</td>
-		</tr>
-	{% empty %}<tr><td colspan="8">No usage in this range.</td></tr>
-	{% endfor %}
-	</tbody>
-</table>
+
+<div class="tiles">
+	<div class="tile"><div class="value">${{ known_total|floatformat:4 }}</div><div class="label">Known cost (USD)</div></div>
+	<div class="tile"><div class="value">{{ credits_charged }}</div><div class="label">Credits charged</div></div>
+	<div class="tile"><div class="value">{{ unknown_events }}</div><div class="label">Unpriced events</div></div>
+	<div class="tile"><div class="value">{{ legacy_events }}</div><div class="label">Legacy events, before price snapshots (${{ legacy_usd|floatformat:4 }} as stored)</div></div>
+</div>
+
+<section class="section">
+	<h2>Known cost per day</h2>
+	<div class="legend">
+		<span style="--swatch:var(--s1)">Provider reported</span>
+		<span style="--swatch:var(--s2)">Token calculated</span>
+		<span style="--swatch:var(--s3)">System default</span>
+	</div>
+	<div class="plot">
+		<div class="yaxis"><span>${{ daily_max|floatformat:4 }}</span><span>$0</span></div>
+		<div class="bars" role="img" aria-label="Known cost per day, stacked by source">
+		{% for d in daily %}
+			<div class="col" title="{{ d.day|date:'j M Y' }}: ${{ d.total|floatformat:6 }} (provider {{ d.provider_reported|floatformat:6 }}, token {{ d.token_calculated|floatformat:6 }}, system {{ d.system_default|floatformat:6 }}){% if d.unknown_events %}; {{ d.unknown_events }} unpriced{% endif %}">
+				<i style="height:{% widthratio d.provider_reported daily_max 100 %}%; background:var(--s1)"></i>
+				<i style="height:{% widthratio d.token_calculated daily_max 100 %}%; background:var(--s2)"></i>
+				<i style="height:{% widthratio d.system_default daily_max 100 %}%; background:var(--s3)"></i>
+			</div>
+		{% endfor %}
+		</div>
+		<div class="unk-row" aria-hidden="true">{% for d in daily %}<i class="{% if d.unknown_events %}on{% endif %}" title="{{ d.day|date:'j M Y' }}: {{ d.unknown_events }} unpriced"></i>{% endfor %}</div>
+		<div class="xaxis"><span>{{ start|date:'j M Y' }}</span><span>{{ end|date:'j M Y' }}</span></div>
+	</div>
+</section>
+
+<div class="columns">
+	<section class="section">
+		<h2>Cost by source</h2>
+		<div class="split" role="img" aria-label="Known cost split by source">
+			<i style="width:{% widthratio known_by_source.provider_reported known_total 100 %}%; background:var(--s1)"></i>
+			<i style="width:{% widthratio known_by_source.token_calculated known_total 100 %}%; background:var(--s2)"></i>
+			<i style="width:{% widthratio known_by_source.system_default known_total 100 %}%; background:var(--s3)"></i>
+		</div>
+		<ul class="split-rows">
+			<li><span><span style="--swatch:var(--s1)">Provider reported</span></span><span>${{ known_by_source.provider_reported|floatformat:6 }}</span></li>
+			<li><span><span style="--swatch:var(--s2)">Token calculated</span></span><span>${{ known_by_source.token_calculated|floatformat:6 }}</span></li>
+			<li><span><span style="--swatch:var(--s3)">System default</span></span><span>${{ known_by_source.system_default|floatformat:6 }}</span></li>
+		</ul>
+	</section>
+
+	<section class="section">
+		<h2>Cost by model</h2>
+		{% for m in models %}
+			<div class="model">
+				<div class="name">{{ m.model_name|default:"Legacy (no snapshot)" }}<small>{{ m.provider }}</small></div>
+				<div class="track"><i style="width:{% widthratio m.known_usd model_max 100 %}%"></i></div>
+				<div class="usd">${{ m.known_usd|floatformat:6 }}
+					{% if m.unknown_events %}<span class="unpriced">{{ m.unknown_events }} unpriced</span>{% endif %}
+				</div>
+			</div>
+		{% empty %}
+			<p class="note">No usage in this range.</p>
+		{% endfor %}
+	</section>
+</div>
+
 {% if unmatched_models %}
-<h2>Models with unpriced usage</h2>
-<p>Check that each name matches an AI model's name exactly: {{ unmatched_models|join:", " }}</p>
+<section class="section">
+	<h2>Models with unpriced usage</h2>
+	<p class="note">Check that each name matches an AI model's name exactly: {{ unmatched_models|join:", " }}</p>
+</section>
 {% endif %}
+
+<details>
+	<summary>Table view</summary>
+	<h2>Overview</h2>
+	<table>
+		<tr><th>Provider reported (USD)</th><td>{{ known_by_source.provider_reported|floatformat:6 }}</td></tr>
+		<tr><th>Token calculated (USD)</th><td>{{ known_by_source.token_calculated|floatformat:6 }}</td></tr>
+		<tr><th>System default (USD)</th><td>{{ known_by_source.system_default|floatformat:6 }}</td></tr>
+		<tr><th>Credits charged</th><td>{{ credits_charged }}</td></tr>
+		<tr><th>Legacy events (written before price snapshots)</th><td>{{ legacy_events }}</td></tr>
+		<tr><th>Legacy known cost (USD, as stored)</th><td>{{ legacy_usd|floatformat:6 }}</td></tr>
+	</table>
+	<table>
+		<thead><tr>
+			<th>Provider</th><th>Model</th><th>Events</th><th>Input tokens</th><th>Output tokens</th>
+			<th>Known cost (USD)</th><th>Unpriced events</th><th>Unpriced tokens</th>
+		</tr></thead>
+		<tbody>
+		{% for m in models %}
+			<tr>
+				<td>{{ m.provider }}</td><td>{{ m.model_name }}</td><td>{{ m.events }}</td>
+				<td>{{ m.input_tokens }}</td><td>{{ m.output_tokens }}</td><td>{{ m.known_usd|floatformat:6 }}</td>
+				<td>{{ m.unknown_events }}</td><td>{{ m.unknown_tokens }}</td>
+			</tr>
+		{% empty %}<tr><td colspan="8">No usage in this range.</td></tr>
+		{% endfor %}
+		</tbody>
+	</table>
+	<table>
+		<thead><tr><th>Day</th><th>Provider reported</th><th>Token calculated</th><th>System default</th><th>Unpriced events</th></tr></thead>
+		<tbody>
+		{% for d in daily %}
+			<tr><td>{{ d.day|date:"Y-m-d" }}</td><td>{{ d.provider_reported|floatformat:6 }}</td><td>{{ d.token_calculated|floatformat:6 }}</td><td>{{ d.system_default|floatformat:6 }}</td><td>{{ d.unknown_events }}</td></tr>
+		{% endfor %}
+		</tbody>
+	</table>
+</details>
+</div>
 {% endblock %}

@@ -1,14 +1,37 @@
 """Internal AI cost report: known USD cost by source and model, unknown usage, and credits charged for a date range."""
+from datetime import timedelta
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db.models import Count, Q, Sum
+from django.db.models.functions import TruncDate
 
 from billing.models import CreditTransaction
 
 from .models import UsageEvent
 
 KNOWN_SOURCES = ("provider_reported", "token_calculated", "system_default")
+
+
+def _daily(events, start, end):
+	"""One row per day in [start, end], known USD by source; days with no usage stay at zero."""
+	days = {}
+	d = start
+	while d <= end:
+		days[d] = {"day": d, **{s: Decimal(0) for s in KNOWN_SOURCES}, "unknown_events": 0}
+		d += timedelta(days=1)
+	rows = events.annotate(day=TruncDate("created_at")).values("day", "cost_source").annotate(
+		usd=Sum("cost_usd"), unknown_n=Count("id", filter=Q(cost_usd__isnull=True)))
+	for r in rows:
+		row = days.get(r["day"])
+		if row is None:
+			continue
+		row["unknown_events"] += r["unknown_n"]
+		if r["cost_source"] in KNOWN_SOURCES and r["usd"] is not None:
+			row[r["cost_source"]] += r["usd"]
+	for row in days.values():
+		row["total"] = sum(row[s] for s in KNOWN_SOURCES)
+	return list(days.values())
 
 
 def _filter_project(qs, project_id, field):
@@ -69,15 +92,20 @@ def ai_cost_report(start, end, project_id=None) -> dict:
 		if r["unknown_n"] and r["model_name"] and not legacy:
 			unmatched.add(r["model_name"])
 
+	daily = _daily(events, start, end)
 	credits = -(txns.aggregate(s=Sum("amount"))["s"] or Decimal(0))
 	return {
 		"known_by_source": known_by_source,
+		"known_total": sum(known_by_source.values()),
 		"unknown_events": unknown_events,
 		"unknown_tokens": unknown_tokens,
 		"legacy_events": legacy_events,
 		"legacy_usd": legacy_usd,
 		"credits_charged": credits,
 		"models": sorted(models.values(), key=lambda m: m["known_usd"], reverse=True),
+		"model_max": max((m["known_usd"] for m in models.values()), default=Decimal(0)) or Decimal(1),
+		"daily": daily,
+		"daily_max": max((d["total"] for d in daily), default=Decimal(0)) or Decimal(1),
 		"unmatched_models": sorted(unmatched),
 		"has_unknown": unknown_events > 0,
 	}

@@ -85,3 +85,15 @@ class AiCostReportTests(TestCase):
 		for bad in ("00000000-0000-0000-0000-000000000000", "not-a-uuid"):
 			r = self.report(project_id=bad)
 			self.assertEqual((r["models"], r["credits_charged"]), ([], Decimal(0)))
+
+	def test_daily_series_fills_every_day_in_range(self):
+		yesterday = TODAY - timedelta(days=1)
+		self.event(cost_usd=Decimal("0.005"), cost_source="token_calculated", provider="google", model_name="g")
+		self.event(cost_usd=Decimal("0.001"), cost_source="provider_reported", provider="openrouter", model_name="o/x")
+		self.event(cost_usd=None, cost_source="unknown", provider="google", model_name="gemini-x")
+		r = ai_cost_report(yesterday, TODAY, project_id=str(self.project.id))
+		self.assertEqual([d["day"] for d in r["daily"]], [yesterday, TODAY])
+		today = r["daily"][1]
+		self.assertEqual((today["token_calculated"], today["provider_reported"], today["total"]), (Decimal("0.005"), Decimal("0.001"), Decimal("0.006")))
+		self.assertEqual((today["unknown_events"], r["daily"][0]["total"]), (1, Decimal(0)))
+		self.assertEqual(r["daily_max"], Decimal("0.006"))
