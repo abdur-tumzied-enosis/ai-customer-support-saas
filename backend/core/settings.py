@@ -174,10 +174,9 @@ QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production
 # Product image search. Master switch (platform kill switch); per-tenant grant is Project.image_search_allowed.
 IMAGE_SEARCH_ENABLED = env.bool("IMAGE_SEARCH_ENABLED", default=False)
 IMAGE_SEARCH_MIN_SCORE = env.float("IMAGE_SEARCH_MIN_SCORE", default=0.80)
-# cohere/rerank-v3.5 relevance (0..1) below which a retrieved chunk counts as unrelated. Bengali/English eval
-# (docs/evals/bengali_retrieval.json): relevant chunks 0.28..0.89, unrelated 0.01..0.49 (only one above 0.13, a
-# near-duplicate topic). 0.2 keeps every relevant chunk, so that one off-topic chunk passes (the prompt forbids guessing
-# from them). Re-tune if the rerank model changes.
+# cohere/rerank-5-fast relevance (0..1) below which a retrieved chunk counts as unrelated. Tuned on the v3.5 scores
+# from the Bengali/English eval (docs/evals/bengali_retrieval.json): relevant 0.28..0.89, unrelated 0.01..0.49. 0.2 keeps
+# every relevant chunk. Not yet measured for rerank-5-fast: re-tune it on real questions.
 RERANK_MIN_SCORE = env.float("RERANK_MIN_SCORE", default=0.2)
 
 # Meta / Facebook

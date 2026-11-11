@@ -50,7 +50,7 @@ Result (2026-11-11, 8 cases, top-1 / top-3): cohere/embed-5-fast 8/8 / 8/8; intf
 ### 2. Reranker
 
 - `rerank_docs` keeps its signature and its fallback (original order on error).
-- `_tei_rerank_scores` is replaced by a call to `POST https://openrouter.ai/api/v1/rerank` with a Cohere rerank model (`cohere/rerank-v3.5` by default; the eval decides between it and `cohere/rerank-4-pro`).
+- `_tei_rerank_scores` is replaced by a call to `POST https://openrouter.ai/api/v1/rerank` with a Cohere rerank model (`cohere/rerank-5-fast`, chosen by the user; the rerank threshold is not yet measured for it).
 - Cohere scores are relevance scores (0–1), not logits. `RERANK_MIN_SCORE` (`core/settings.py:186`, currently -4.5) is re-tuned on the eval set. The old comment about mmarco logits is replaced.
 
 ### 3. Collections

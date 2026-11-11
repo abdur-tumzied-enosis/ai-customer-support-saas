@@ -11,7 +11,7 @@ from PIL import Image
 
 BASE_URL = "https://openrouter.ai/api/v1"
 EMBED_MODEL = "cohere/embed-5-fast"
-RERANK_MODEL = "cohere/rerank-v3.5"
+RERANK_MODEL = "cohere/rerank-5-fast"
 TIMEOUT = 60
 
 
