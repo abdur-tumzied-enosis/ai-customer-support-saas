@@ -227,6 +227,12 @@ class AnalyticsOverviewView(APIView):
                 .values_list('kind', 'total')
             )
 
+            # Cost by kind (events with unknown cost are left out of the sum)
+            cost_by_kind = {
+                row['kind']: format(row['total'].normalize(), 'f')
+                for row in usage_events_qs.filter(cost_usd__isnull=False).values('kind').annotate(total=Sum('cost_usd'))
+            }
+
             # Prepare response
             analytics_data = {
                 "success": True,
@@ -274,6 +280,7 @@ class AnalyticsOverviewView(APIView):
                         "photos_indexed": photos_indexed,
                         "photo_searches": photo_searches,
                         "by_kind": tokens_by_kind,
+                        "cost_by_kind": cost_by_kind,
                         "trend": tokens_by_day
                     }
                 }

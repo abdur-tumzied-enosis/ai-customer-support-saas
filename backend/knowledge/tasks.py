@@ -3,8 +3,7 @@ import uuid
 import asyncio
 import logging
 from datetime import timedelta
-from decimal import Decimal
-from typing import List
+from typing import List, Optional
 from io import BytesIO
 from urllib.parse import urlparse, urljoin, urldefrag
 from celery import shared_task
@@ -18,8 +17,9 @@ from django.core.files.base import ContentFile
 from core.storage import ObjectTooLarge, delete_keys, read_capped, thumb_key
 from .models import IngestionJob, Document, IngestionJobStatus, DocumentFileType, KnowledgeBase, MAX_PRODUCT_IMAGE_BYTES, Product, ProductImage, ProductSource, product_image_path
 from agents.vector_store import add_texts_to_collection
-from agents.image_search import NotAnImage, delete_images, embed_image, load_image, make_variants, upsert_image
-from usage.utils import record_image_usage
+from agents.embeddings_api import embed_image
+from agents.image_search import NotAnImage, delete_images, load_image, make_variants, upsert_image
+from usage.utils import record_image_usage, record_model_usage
 from billing.service import charge
 
 logger = logging.getLogger(__name__)
@@ -141,13 +141,29 @@ def embed_crawled_document(document: Document, collection_name: str) -> None:
         for _ in chunks
     ]
     ids = [str(uuid.uuid4()) for _ in chunks]
-    inserted = add_texts_to_collection(collection_name=collection_name, texts=chunks, metadatas=metadatas, ids=ids)
+    embed_usage = []
+    inserted = add_texts_to_collection(collection_name=collection_name, texts=chunks, metadatas=metadatas, ids=ids, usage=embed_usage)
     document.vector_chunk_ids = inserted
     document.save(update_fields=['vector_chunk_ids'])
+    try:
+        from usage.utils import record_model_usage
+        costs = [e.cost_usd for e in embed_usage if e.cost_usd is not None]
+        record_model_usage(
+            str(document.kb.project_id),
+            "embed",
+            tokens=sum(e.tokens for e in embed_usage),
+            cost_usd=sum(costs) if costs else None,
+            model=embed_usage[0].model if embed_usage else "",
+            document_id=str(document.id),
+            num_chunks=len(chunks),
+        )
+    except Exception as e:
+        # Don't fail embedding if token tracking fails
+        logger.warning(f"Failed to track embedding usage for document {document.id}: {e}")
     logger.info(f"Embedded {len(inserted)} chunks for document {document.id} into '{collection_name}'")
 
 
-def embed_uploaded_chunks(document: Document, chunks: List[str]) -> list[str]:
+def embed_uploaded_chunks(document: Document, chunks: List[str], usage: Optional[list] = None) -> list[str]:
     """Embed an uploaded document's chunks into its KB collection; saves and returns the chunk IDs."""
     kb = document.kb
     metadatas = [
@@ -164,7 +180,7 @@ def embed_uploaded_chunks(document: Document, chunks: List[str]) -> list[str]:
     ]
     # Qdrant requires pure UUIDs, not UUIDs with suffixes
     ids = [str(uuid.uuid4()) for _ in chunks]
-    inserted = add_texts_to_collection(collection_name=kb.vector_collection, texts=chunks, metadatas=metadatas, ids=ids) or []
+    inserted = add_texts_to_collection(collection_name=kb.vector_collection, texts=chunks, metadatas=metadatas, ids=ids, usage=usage) or []
     # Saved on the document for deleting its vectors later
     document.vector_chunk_ids = inserted
     document.save(update_fields=['vector_chunk_ids'])
@@ -284,7 +300,8 @@ def run_ingestion_job(job_id: str) -> None:
         job.save()
 
         try:
-            inserted_ids = embed_uploaded_chunks(document, text_chunks)
+            embed_usage = []
+            inserted_ids = embed_uploaded_chunks(document, text_chunks, usage=embed_usage)
 
             if not inserted_ids:
                 logger.error(f"Job {job_id}: No chunks were inserted into vector database")
@@ -294,18 +311,18 @@ def run_ingestion_job(job_id: str) -> None:
 
             # Track embedding token usage
             try:
-                from usage.utils import track_token_usage, estimate_tokens
-                total_embedding_tokens = sum(estimate_tokens(chunk) for chunk in text_chunks)
-                track_token_usage(
+                from usage.utils import record_model_usage
+                costs = [e.cost_usd for e in embed_usage if e.cost_usd is not None]
+                total_embedding_tokens = sum(e.tokens for e in embed_usage)
+                record_model_usage(
                     str(job.kb.project_id),
                     "embed",
-                    total_embedding_tokens,
-                    {
-                        "document_id": str(document.id),
-                        "document_filename": document.filename,
-                        "num_chunks": len(text_chunks)
-                    },
-                    pricing={"cost_usd": Decimal(0), "cost_source": "system_default"},  # self-hosted embeddings
+                    tokens=total_embedding_tokens,
+                    cost_usd=sum(costs) if costs else None,
+                    model=embed_usage[0].model if embed_usage else "",
+                    document_id=str(document.id),
+                    document_filename=document.filename,
+                    num_chunks=len(text_chunks),
                 )
                 logger.debug(f"Job {job_id}: Tracked {total_embedding_tokens} embedding tokens")
             except Exception as e:
@@ -790,8 +807,17 @@ def embed_product_image(image_id: str) -> None:
         data = _finalize_product_image(image)
         if data is None:
             return
-        vector = embed_image(load_image(data, MAX_PRODUCT_IMAGE_BYTES))
-        upsert_image(kb.image_collection, image_id, vector, str(image.product_id))
+        embedded = embed_image(load_image(data, MAX_PRODUCT_IMAGE_BYTES))
+        probe = []
+        try:
+            upsert_image(kb.vector_collection, image_id, embedded.vectors[0], str(image.product_id), usage=probe)
+        finally:
+            if probe:  # this call created the collection: book its dimension probe as an embed
+                costs = [e.cost_usd for e in probe if e.cost_usd is not None]
+                record_model_usage(
+                    str(kb.project_id), "embed", tokens=sum(e.tokens for e in probe),
+                    cost_usd=sum(costs) if costs else None, model=probe[0].model, image_id=image_id,
+                )
     except Exception as exc:
         logger.warning(f"Embedding product image {image_id} failed: {exc}")
         if isinstance(exc, NotAnImage) and image.file.name.startswith("tmp/"):
@@ -800,9 +826,9 @@ def embed_product_image(image_id: str) -> None:
         return
     if not ProductImage.objects.filter(id=image_id).update(status="ready", error=""):
         # Deleted while being embedded: drop the point we just wrote, and do not meter it
-        delete_images(kb.image_collection, [image_id])
+        delete_images(kb.vector_collection, [image_id])
         return
-    record_image_usage(str(kb.project_id), "index", image_id=image_id)
+    record_image_usage(str(kb.project_id), "index", tokens=embedded.tokens, cost_usd=embedded.cost_usd, model=embedded.model, image_id=image_id)
     charge(kb.project, "photo_index", key=f"photo_index:{image_id}")  # never blocked, may go below zero
 
 

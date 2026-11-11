@@ -1,0 +1,22 @@
+{
+  "docs": [
+    "Returns are accepted within 30 days of delivery. Items must be unused and in their original packaging.",
+    "Delivery inside Dhaka takes 1 to 2 days. Outside Dhaka it takes 3 to 5 days.",
+    "We accept bKash, Nagad and cash on delivery. Card payments are not available.",
+    "Our shop is open from 10 AM to 9 PM, Saturday to Thursday. Closed on Friday.",
+    "Saree blouse pieces can be tailored within 7 working days for an extra 300 taka.",
+    "Orders can be cancelled before they are shipped. After shipment, cancellation is not possible.",
+    "Exchange is available once for a different size of the same product within 7 days.",
+    "Gift wrapping costs 100 taka and is available for all products."
+  ],
+  "cases": [
+    {"question": "আপনার দোকান কখন খোলা থাকে?", "gold": 3},
+    {"question": "ঢাকার ভেতরে ডেলিভারি করতে কতদিন লাগে?", "gold": 1},
+    {"question": "আমি কি বিকাশে টাকা দিতে পারি?", "gold": 2},
+    {"question": "পণ্য ফেরত দিতে চাইলে কতদিনের মধ্যে?", "gold": 0},
+    {"question": "শিপমেন্টের পর অর্ডার বাতিল করা যাবে?", "gold": 5},
+    {"question": "ব্লাউজ সেলাই করতে কত সময় লাগে?", "gold": 4},
+    {"question": "সাইজ বদলাতে পারব?", "gold": 6},
+    {"question": "গিফট র‍্যাপিং এর দাম কত?", "gold": 7}
+  ]
+}

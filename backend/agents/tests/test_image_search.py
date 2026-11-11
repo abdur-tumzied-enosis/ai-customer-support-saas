@@ -3,6 +3,7 @@ import uuid
 from unittest import mock
 
 from celery.exceptions import SoftTimeLimitExceeded
+from langchain_core.embeddings import Embeddings
 from django.test import SimpleTestCase, override_settings
 from PIL import Image
 from qdrant_client import QdrantClient, models
@@ -13,6 +14,18 @@ from agents.image_search import (
 )
 
 
+class _Probe(Embeddings):
+	def __init__(self):
+		self.usage = []
+
+	def embed_documents(self, texts):
+		return [[1.0, 0, 0, 0] for _ in texts]
+
+	def embed_query(self, text):
+		self.usage.append(object())
+		return [1.0, 0, 0, 0]
+
+
 def _png_bytes(w, h):
 	buf = io.BytesIO()
 	Image.new("RGB", (w, h), "red").save(buf, "PNG")
@@ -20,13 +33,16 @@ def _png_bytes(w, h):
 
 
 class ImageSearchTest(SimpleTestCase):
-	"""In-memory Qdrant with hand-made 4-dim vectors; the real CLIP model is never loaded."""
+	"""In-memory Qdrant with hand-made 4-dim vectors; no model is called."""
 
 	def setUp(self):
 		client = QdrantClient(":memory:")
-		p = mock.patch.object(image_search, "get_qdrant_client", return_value=client)
-		p.start()
-		self.addCleanup(p.stop)
+		for p in (
+			mock.patch.object(image_search, "get_qdrant_client", return_value=client),
+			mock.patch.object(image_search, "get_default_embeddings", side_effect=_Probe),
+		):
+			p.start()
+			self.addCleanup(p.stop)
 		self.A1, self.A2, self.B1, self.C1 = (str(uuid.uuid4()) for _ in range(4))
 
 	def test_search_groups_by_product_and_filters_by_score(self):
@@ -97,11 +113,12 @@ class ImageSearchTest(SimpleTestCase):
 			with self.assertRaises(SoftTimeLimitExceeded):
 				load_image(_png_bytes(4, 4))
 
-	def test_model_limits_onnx_threads(self):
-		fake = mock.Mock()
-		with mock.patch.object(image_search, "_model", None), mock.patch("fastembed.ImageEmbedding", fake):
-			image_search._get_model()
-		self.assertEqual(fake.call_args.kwargs["threads"], 1)
+	def test_upsert_reports_the_probe_only_when_it_creates_the_collection(self):
+		usage = []
+		upsert_image("c_images", self.A1, [1, 0, 0, 0], "pA", usage=usage)
+		upsert_image("c_images", self.A2, [1, 0, 0, 0], "pA", usage=usage)
+		self.assertEqual(len(usage), 1)
+		self.assertFalse(hasattr(image_search, "embed_image"))  # photo embedding lives in embeddings_api
 
 	def test_upsert_survives_concurrent_collection_create(self):
 		client = image_search.get_qdrant_client()

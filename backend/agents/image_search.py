@@ -1,5 +1,3 @@
-import os
-import threading
 from io import BytesIO
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -7,7 +5,7 @@ from django.conf import settings
 from PIL import Image, ImageOps
 from qdrant_client import models
 
-from agents.vector_store import get_qdrant_client
+from agents.vector_store import _create_collection, get_default_embeddings, get_qdrant_client
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
@@ -17,10 +15,9 @@ DISPLAY_EDGE = 1600
 THUMB_EDGE = 320
 WEBP_QUALITY = 80
 
-_FORMATS = {"JPEG": "jpg", "MPO": "jpg", "PNG": "png", "WEBP": "webp"}  # MPO: multi-picture JPEG from phones
+IMAGE_KIND = models.FieldCondition(key="kind", match=models.MatchValue(value="image"))  # photo points share the KB collection with text
 
-_model = None
-_model_lock = threading.Lock()
+_FORMATS = {"JPEG": "jpg", "MPO": "jpg", "PNG": "png", "WEBP": "webp"}  # MPO: multi-picture JPEG from phones
 
 
 class NotAnImage(ValueError):
@@ -70,39 +67,22 @@ def image_format(data: bytes) -> str:
 	return _FORMATS[Image.open(BytesIO(data)).format]
 
 
-def _get_model():
-	# ponytail: in-process CLIP model; move to a model server like TEI if worker memory hurts.
-	global _model
-	if _model is None:
-		with _model_lock:
-			if _model is None:
-				from fastembed import ImageEmbedding
-				# Baked into the image (Dockerfile); without local_files_only fastembed asks the hub first and fails offline.
-				# threads=1: every worker process loads its own copy (~650 MB), and ONNX's default of one thread per core
-				# across many processes oversubscribes the CPU.
-				_model = ImageEmbedding(
-					settings.IMAGE_EMBEDDING_MODEL, threads=1, local_files_only=os.environ.get("HF_HUB_OFFLINE") == "1",
-				)
-	return _model
-
-
-def embed_image(img: Image.Image) -> list[float]:
-	return list(_get_model().embed([img]))[0].tolist()
-
-
-def upsert_image(collection: str, image_id: str, vector: list[float], product_id: str) -> None:
+def upsert_image(collection: str, image_id: str, vector: list[float], product_id: str, usage: list | None = None) -> None:
+	"""usage, if given, receives the Embedded of the dimension probe when this call creates the collection."""
 	client = get_qdrant_client()
 	if not client.collection_exists(collection):
 		try:
-			client.create_collection(
-				collection_name=collection,
-				vectors_config=models.VectorParams(size=len(vector), distance=models.Distance.COSINE),
-			)
+			embedding = get_default_embeddings()
+			try:
+				_create_collection(client, collection, embedding)  # hybrid-capable: text ingestion shares this collection
+			finally:
+				if usage is not None:
+					usage.extend(embedding.usage)
 		except Exception:
 			if not client.collection_exists(collection):  # else another worker created it first
 				raise
 	client.upsert(collection, points=[models.PointStruct(
-		id=image_id, vector=vector, payload={"product_id": product_id, "image_id": image_id},
+		id=image_id, vector=vector, payload={"kind": "image", "product_id": product_id, "image_id": image_id},
 	)])
 
 
@@ -113,7 +93,7 @@ def search_products(collection: str, vector: list[float]) -> list[tuple[str, flo
 		return []
 	res = client.query_points_groups(
 		collection, query=vector, group_by="product_id", limit=IMAGE_SEARCH_TOP_K, group_size=1,
-		score_threshold=settings.IMAGE_SEARCH_MIN_SCORE,
+		query_filter=models.Filter(must=[IMAGE_KIND]), score_threshold=settings.IMAGE_SEARCH_MIN_SCORE,
 	)
 	return [(g.id, g.hits[0].score) for g in res.groups if g.hits]
 

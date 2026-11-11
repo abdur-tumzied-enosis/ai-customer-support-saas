@@ -53,3 +53,13 @@ class LlmCostsTest(TestCase):
 	def test_unknown_price_is_none(self):
 		msg = AIMessage("c", response_metadata={"model_name": "unpriced"}, usage_metadata={"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
 		assert llm_costs([msg]) == (None, None)
+
+
+class EmbeddingPricingTest(TestCase):
+	def test_embedding_model_stores_input_and_image_prices(self):
+		m = AIModel.objects.create(
+			kind="embedding", provider="openrouter", name="cohere/embed-5-fast-test",
+			input_price_per_mtok=Decimal("0.08"), image_price_per_mtok=Decimal("0.40"),
+		)
+		m.refresh_from_db()
+		self.assertEqual((m.kind, m.input_price_per_mtok, m.image_price_per_mtok), ("embedding", Decimal("0.08"), Decimal("0.40")))

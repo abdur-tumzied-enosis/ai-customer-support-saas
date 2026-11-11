@@ -1,4 +1,5 @@
 import io
+from decimal import Decimal
 from unittest import mock
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -6,6 +7,7 @@ from django.conf import settings
 from django.test import SimpleTestCase, override_settings
 from PIL import Image
 
+from agents.embeddings_api import Embedded
 from agents.llm import build_system_prompt
 from channels_app.tasks import FALLBACK_REPLY
 from channels_app import media, tasks
@@ -70,7 +72,7 @@ class ImageReplyTest(PipelineBase):
 			mock.patch(f"channels_app.service.{handler}.store_message_media.delay", side_effect=stored_then_scheduled).start()
 		mock.patch("channels_app.service.facebook_messing.get_user_name", return_value="Ann").start()
 		self.fetch = mock.patch("channels_app.image_reply.fetch_photo", return_value=png_bytes()).start()
-		self.embed = mock.patch("channels_app.image_reply.embed_image", return_value=[1, 0, 0, 0]).start()
+		self.embed = mock.patch("channels_app.image_reply.embed_image", return_value=Embedded([[1, 0, 0, 0]], 1200, Decimal("0.00048"), "cohere/embed-5-fast")).start()
 		self.search = mock.patch(
 			"channels_app.image_reply.search_products", side_effect=lambda collection, vector: [(str(self.product.id), 0.93)]
 		).start()
@@ -99,7 +101,7 @@ class ImageReplyTest(PipelineBase):
 		question = self.questions[0]
 		assert '"Red Kurta" (similarity 0.93): Cotton kurta in red, sizes S to XL' in question, question
 		assert "[Message includes attachments" not in question
-		self.search.assert_called_once_with(self.kb.image_collection, [1, 0, 0, 0])
+		self.search.assert_called_once_with(self.kb.vector_collection, [1, 0, 0, 0])
 		event = self.searches().get()
 		assert event.metadata == {"op": "search", "matched": True}
 		assert (event.message_id, event.conversation_id) == (msg.id, msg.conversation_id)

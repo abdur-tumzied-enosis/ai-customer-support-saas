@@ -7,6 +7,7 @@ Deletes each KB's collections (`{vector_collection}` and `{vector_collection}_we
 document that had vectors: uploads from their stored file, crawled pages from their saved markdown.
 Qdrant only holds data derived from Postgres and the uploaded files, so a wiped Qdrant volume is fine.
 While a KB is rebuilding its replies get no search results, so run it when traffic is low.
+Product photos (ready or pending) are re-queued for embedding afterwards.
 Embedding usage is not billed to the projects.
 
 Every step is logged (knowledge.management.commands.reindex_vectors), one line per document, so a run can be
@@ -18,8 +19,8 @@ import time
 from django.core.management.base import BaseCommand
 
 from agents.vector_store import delete_collection
-from knowledge.models import KnowledgeBase
-from knowledge.tasks import chunk_text, embed_crawled_document, embed_uploaded_chunks, extract_text_from_file
+from knowledge.models import KnowledgeBase, ProductImage
+from knowledge.tasks import chunk_text, embed_crawled_document, embed_product_image, embed_uploaded_chunks, extract_text_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class Command(BaseCommand):
 			)
 			delete_collection(kb.vector_collection)
 			delete_collection(web_collection)
+			delete_collection(kb.vector_collection + "_images")  # legacy photo collection
 			kb_chunks = 0
 			for i, doc in enumerate(docs, 1):
 				label = doc.page_url or doc.filename or "-"
@@ -74,6 +76,9 @@ class Command(BaseCommand):
 						f"into '{collection}' (was {old_count})"
 					)
 			total_chunks += kb_chunks
+			# Photos live in the main collection that was just dropped; re-embed them in the background
+			for image_id in ProductImage.objects.filter(product__kb=kb, status__in=["ready", "pending"]).values_list("id", flat=True):
+				embed_product_image.delay(str(image_id))
 			logger.info(f"reindex_vectors: KB {kb.id} '{kb.name}' done: {kb_chunks} chunk(s)")
 		elapsed = time.monotonic() - started
 		logger.info(

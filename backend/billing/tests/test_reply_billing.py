@@ -1,4 +1,5 @@
 from decimal import Decimal
+from agents.embeddings_api import Embedded
 from unittest import mock
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -115,7 +116,7 @@ class ReplyBillingTest(PipelineBase):
 	def test_photo_search_charged_even_if_reply_times_out(self):
 		self.project.image_search_allowed = True
 		self.project.save()
-		patches = {"fetch_photo": b"x", "load_image": object(), "embed_image": [1, 0], "search_products": []}
+		patches = {"fetch_photo": b"x", "load_image": object(), "embed_image": Embedded([[1, 0]], 5, None, "cohere/embed-5-fast"), "search_products": []}
 		for name, value in patches.items():
 			mock.patch(f"channels_app.image_reply.{name}", return_value=value).start()
 		self.gen.side_effect = SoftTimeLimitExceeded()

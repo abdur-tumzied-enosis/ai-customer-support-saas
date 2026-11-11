@@ -173,16 +173,12 @@ QDRANT_URL = env("QDRANT_URL", default="http://localhost:6333")
 QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production authentication
 # Product image search. Master switch (platform kill switch); per-tenant grant is Project.image_search_allowed.
 IMAGE_SEARCH_ENABLED = env.bool("IMAGE_SEARCH_ENABLED", default=False)
-IMAGE_EMBEDDING_MODEL = env("IMAGE_EMBEDDING_MODEL", default="Qdrant/clip-ViT-B-32-vision")
 IMAGE_SEARCH_MIN_SCORE = env.float("IMAGE_SEARCH_MIN_SCORE", default=0.80)
-# Embedding / reranker model servers (text-embeddings-inference, docker-compose). Required: the backend image has no
-# torch or models of its own. Unset EMBEDDINGS_URL fails search/indexing; unset RERANKER_URL keeps retrieval order.
-EMBEDDINGS_URL = env("EMBEDDINGS_URL", default="")
-RERANKER_URL = env("RERANKER_URL", default="")
-# Cross-encoder score below which a retrieved chunk counts as unrelated. mmarco-mMiniLMv2 logits (Bengali/Banglish/
-# English eval): relevant chunks -4.2..+10.7, unrelated -7.3..-3.0. Set to keep every relevant chunk, so some
-# off-topic ones pass (the prompt forbids guessing from them). Re-tune if RERANKER_MODEL changes.
-RERANK_MIN_SCORE = env.float("RERANK_MIN_SCORE", default=-4.5)
+# cohere/rerank-v3.5 relevance (0..1) below which a retrieved chunk counts as unrelated. Bengali/English eval
+# (docs/evals/bengali_retrieval.json): relevant chunks 0.28..0.89, unrelated 0.01..0.49 (only one above 0.13, a
+# near-duplicate topic). 0.2 keeps every relevant chunk, so that one off-topic chunk passes (the prompt forbids guessing
+# from them). Re-tune if the rerank model changes.
+RERANK_MIN_SCORE = env.float("RERANK_MIN_SCORE", default=0.2)
 
 # Meta / Facebook
 META_APP_ID = env("META_APP_ID", default="")

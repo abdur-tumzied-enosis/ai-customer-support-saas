@@ -7,13 +7,14 @@ ROLES = ("reply", "fallback", "memory", "transcription")
 
 class AIModel(models.Model):
 	"""A model the admin can pick in ModelConfig. Prices price providers that don't report a charged amount (Google)."""
-	KIND_CHOICES = [("text", "Text"), ("transcription", "Transcription")]
+	KIND_CHOICES = [("text", "Text"), ("transcription", "Transcription"), ("embedding", "Embedding"), ("rerank", "Rerank")]
 	PROVIDER_CHOICES = [("google", "Google"), ("openrouter", "OpenRouter")]
 	kind = models.CharField(max_length=16, choices=KIND_CHOICES, default="text")
 	provider = models.CharField(max_length=16, choices=PROVIDER_CHOICES)
 	name = models.CharField(max_length=200, help_text="Provider's model id, e.g. deepseek/deepseek-v4.1-flash or gemini-3.8-flash")
 	input_price_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True, help_text="USD per 1M input tokens")
 	output_price_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True, help_text="USD per 1M output tokens")
+	image_price_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True, help_text="USD per 1M image tokens")
 	notes = models.TextField(blank=True)
 
 	class Meta:
