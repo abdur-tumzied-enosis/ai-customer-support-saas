@@ -13,14 +13,16 @@ type Props = { projectId: string | null; text: string; onUse: (suggestion: strin
 export function ImproveInstruction({ projectId, text, onUse }: Props) {
 	const toast = useToast();
 	const [busy, setBusy] = useState(false);
-	const [suggestion, setSuggestion] = useState<{ suggestion: string; why: string } | null>(null);
+	// `for` is the text the rewrite was made from; the card hides once the textarea no longer matches it
+	const [result, setResult] = useState<{ suggestion: string; why: string; for: string } | null>(null);
+	const suggestion = result && result.for === text ? result : null;
 
 	async function improve() {
 		if (!projectId) return;
 		setBusy(true);
 		try {
 			const res = await orderInstructionApi.improve(projectId, text, "general");
-			setSuggestion(res.data);
+			setResult({ ...res.data, for: text });
 		} catch (e) {
 			toast.error(formatError(e));
 		} finally {
@@ -44,12 +46,12 @@ export function ImproveInstruction({ projectId, text, onUse }: Props) {
 							size="sm"
 							onClick={() => {
 								onUse(suggestion.suggestion);
-								setSuggestion(null);
+								setResult(null);
 							}}
 						>
 							Use this
 						</Button>
-						<Button type="button" size="sm" variant="ghost" onClick={() => setSuggestion(null)}>
+						<Button type="button" size="sm" variant="ghost" onClick={() => setResult(null)}>
 							Dismiss
 						</Button>
 					</div>
