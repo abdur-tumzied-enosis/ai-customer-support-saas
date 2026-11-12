@@ -32,7 +32,7 @@ class ImageSearchSwitchTests(TestCase):
 
 	def test_defaults(self):
 		p = Project.objects.create(name="P", slug="p")
-		self.assertFalse(p.image_search_allowed)
+		self.assertTrue(p.image_search_allowed)
 		self.assertTrue(p.image_search_enabled)
 
 

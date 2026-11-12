@@ -26,7 +26,7 @@ class Project(models.Model):
 	created_at = models.DateTimeField(auto_now_add=True)
 	# Product image search: the platform switch is settings.IMAGE_SEARCH_ENABLED; `allowed` is the operator's
 	# per-tenant grant (admin only); `enabled` is the tenant's own switch.
-	image_search_allowed = models.BooleanField(default=False)
+	image_search_allowed = models.BooleanField(default=True)
 	image_search_enabled = models.BooleanField(default=True)
 	# ISO 4217 code shown with prices (symbols live in the frontend)
 	currency = models.CharField(max_length=3, default="BDT")
