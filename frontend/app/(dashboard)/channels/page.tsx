@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -349,6 +350,9 @@ export default function ChannelsPage() {
 						)}
 					</div>
 				)}
+				<Link href={`/docs/connect-channels#${platform.name}`} target="_blank" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+					Step-by-step setup guide <ExternalLink className="h-3 w-3" />
+				</Link>
 				{platform.documentation_url && (
 					<a
 						href={platform.documentation_url}
