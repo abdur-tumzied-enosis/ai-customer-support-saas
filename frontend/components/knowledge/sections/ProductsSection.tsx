@@ -13,7 +13,7 @@ import ProductEditor from "@/components/knowledge/catalog/ProductEditor";
 import { useKnowledge } from "@/components/knowledge/KnowledgeContext";
 import ProductSourcesPanel from "@/components/knowledge/catalog/ProductSourcesPanel";
 import CandidateReview from "@/components/knowledge/catalog/CandidateReview";
-import { candidateApi, productApi, type CandidatePage, type LastExtraction, type Product, type ProductStatus } from "@/lib/api";
+import { candidateApi, productApi, projectSettingsApi, type CandidatePage, type LastExtraction, type Product, type ProductStatus } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 
 type Tab = "all" | ProductStatus;
@@ -43,6 +43,13 @@ export default function ProductsSection() {
 	const [view, setView] = useState<View>("products");
 	const [pages, setPages] = useState<CandidatePage[]>([]);
 	const [lastExtraction, setLastExtraction] = useState<LastExtraction>({});
+	// The project's currency, not the product's: a new product has no row to read it from
+	const [currency, setCurrency] = useState("BDT");
+
+	useEffect(() => {
+		if (!projectId) return;
+		projectSettingsApi.get(projectId).then((s) => setCurrency(s.currency)).catch(() => {});
+	}, [projectId]);
 
 	const load = useCallback(async () => {
 		if (!projectId || !kbId) return;
@@ -168,7 +175,7 @@ export default function ProductsSection() {
 								kbId={kbId}
 								pages={pages}
 								lastExtraction={lastExtraction}
-								currency={products[0]?.currency ?? "BDT"}
+								currency={currency}
 								isAdmin={isAdmin}
 								onChanged={refresh}
 							/>
@@ -189,7 +196,7 @@ export default function ProductsSection() {
 								projectId={projectId}
 								kbId={kbId}
 								product={products.find((p) => p.id === editor.id) ?? null}
-								currency={products[0]?.currency ?? "BDT"}
+								currency={currency}
 								imageSearchOff={imageSearchOn === false}
 								onSaved={(p) => { put(p); setEditor((e) => e && { ...e, id: p.id }); }}
 								onDeleted={(id) => { setProducts((prev) => (prev ?? []).filter((p) => p.id !== id)); setEditor(null); }}

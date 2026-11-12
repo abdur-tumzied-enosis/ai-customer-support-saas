@@ -7,10 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Loader2, Pencil } from "lucide-react";
 import { API_BASE_URL, type Product } from "@/lib/api";
+import { CURRENCIES } from "@/lib/currencies";
 import { formatError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
-export const currencySymbol = (code: string) => (code === "BDT" ? "৳" : code);
+export const currencySymbol = (code: string) => CURRENCIES.find((c) => c.code === code)?.symbol ?? code;
 
 type Props = {
 	products: Product[];
