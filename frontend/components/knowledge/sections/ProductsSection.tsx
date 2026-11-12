@@ -143,7 +143,7 @@ export default function ProductsSection() {
 			</CardHeader>
 			<CardContent className="space-y-4">
 				{!selectedKb ? (
-					<p className="text-center py-4 text-muted-foreground">No knowledge base selected</p>
+					<p className="text-center py-4 text-muted-foreground">No agent memory selected</p>
 				) : products === null && loadFailed ? (
 					<div className="flex justify-center py-4">
 						<Button variant="outline" onClick={() => { setLoadFailed(false); load(); }}>Retry</Button>

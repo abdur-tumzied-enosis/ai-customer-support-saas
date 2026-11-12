@@ -169,7 +169,7 @@ export default function SettingsPage() {
 				<CardHeader>
 					<CardTitle>Your data</CardTitle>
 					<CardDescription>
-						Download everything in your projects as JSON: knowledge bases, instructions, widgets, contacts and
+						Download everything in your projects as JSON: agent memories, instructions, widgets, contacts and
 						conversations. Channel access tokens are left out.
 					</CardDescription>
 				</CardHeader>
@@ -187,7 +187,7 @@ export default function SettingsPage() {
 				<CardHeader>
 					<CardTitle className="text-destructive">Delete account</CardTitle>
 					<CardDescription>
-						Permanently deletes your account. Projects only you belong to are deleted with all their knowledge bases,
+						Permanently deletes your account. Projects only you belong to are deleted with all their agent memories,
 						documents, widgets and conversations. Projects shared with teammates stay with them. This cannot be undone.
 					</CardDescription>
 				</CardHeader>

@@ -74,8 +74,7 @@ class ImageUsageTests(TestCase):
 		client.force_login(user)
 		r = client.get("/api/analytics/overview/")
 		self.assertEqual(r.status_code, 200, r.content)
-		tu = r.json()["data"]["token_usage"]
-		self.assertEqual((tu["photos_indexed"], tu["photo_searches"], tu["total"]), (2, 3, 100))
+		self.assertEqual(r.json()["data"]["photos"]["searches"], 3)
 
 
 class ImageUsageNeverRaisesTests(TransactionTestCase):

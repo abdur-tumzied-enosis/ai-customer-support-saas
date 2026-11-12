@@ -31,7 +31,7 @@ export default function SetupWizard({ projectId }: Props) {
 				const kbs = res.data.knowledge_bases;
 				const kb = kbs.find((k) => k.is_default) ?? kbs[0];
 				if (kb) setKbId(kb.id);
-				else setError("Add a knowledge base before setting up orders.");
+				else setError("Add an agent memory before setting up orders.");
 			})
 			.catch((e) => setError(formatError(e)));
 	}, [projectId]);

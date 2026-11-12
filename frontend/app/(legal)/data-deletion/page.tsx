@@ -43,7 +43,7 @@ export default function DataDeletionPage() {
 			<h2>If you have a {site.productName} account</h2>
 			<p>
 				Sign in and open <strong>Account settings → Delete account</strong>. This immediately deletes your account and
-				every project only you belong to, with its knowledge bases, documents, widgets and conversations; backups
+				every project only you belong to, with its agent memories, documents, widgets and conversations; backups
 				roll off within 30 days. The same page has <strong>Export data</strong> if you want a copy first. Can&apos;t
 				sign in? Email <a href={mail}>{site.privacyEmail}</a> from the address on your account.
 			</p>

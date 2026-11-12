@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 const LINKS = [
 	{ href: "/conversations", title: "Conversations", text: "Read and reply to customer threads.", icon: MessageSquare },
-	{ href: "/knowledge", title: "Knowledge base", text: "Manage the sources your agent learns from.", icon: BookOpen },
+	{ href: "/knowledge", title: "Agent memory", text: "Manage the sources your agent learns from.", icon: BookOpen },
 	{ href: "/channels", title: "Channels", text: "Connect Facebook, WhatsApp and more.", icon: Radio },
 	{ href: "/credits", title: "Credits", text: "Check your balance and add more.", icon: Coins },
 ] as const;

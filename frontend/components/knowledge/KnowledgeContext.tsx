@@ -171,7 +171,7 @@ export function KnowledgeProvider({ children }: { children: ReactNode }) {
 		}
 	}, [authLoading, projectId, fetchKnowledgeBases]);
 
-	// Documents and instructions follow the selected knowledge base; the old KB's lists go so the counts show loading
+	// Documents and instructions follow the selected agent memory; the old KB's lists go so the counts show loading
 	useEffect(() => {
 		setDocuments([]);
 		setInstructions([]);

@@ -87,13 +87,28 @@ export default function PricingSection() {
 									</p>
 								)}
 								{perReply > 0 && <p className={cn("text-sm", muted)}>About {formatCredits(Math.floor(replies))} AI replies*</p>}
-								<ul className="space-y-2 text-sm flex-1">
-									{p.features.map((f) => (
-										<li key={f} className="flex gap-2">
-											<Check className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
-											<span>{f}</span>
-										</li>
-									))}
+								<ul className={cn("space-y-3 text-sm flex-1 border-t pt-4", p.highlighted ? "border-primary-foreground/20" : "border-border")}>
+									{p.features.map((f) => {
+										// "Label (detail)" renders the detail as a quieter second line.
+										const [, label, detail] = f.match(/^(.*?)\s*\((.*)\)$/) ?? [null, f, ""];
+										const inherits = f.startsWith("Everything in ");
+										return (
+											<li key={f} className="flex gap-3">
+												<span
+													className={cn(
+														"mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full",
+														p.highlighted ? "bg-primary-foreground/15" : "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400"
+													)}
+												>
+													<Check className="h-3 w-3" strokeWidth={3} aria-hidden />
+												</span>
+												<span className={cn("leading-snug", inherits && "font-semibold")}>
+													{label}
+													{detail && <span className={cn("block text-xs mt-0.5", muted)}>{detail}</span>}
+												</span>
+											</li>
+										);
+									})}
 								</ul>
 								<Button asChild variant={p.highlighted ? "secondary" : "outline"} className="w-full">
 									<Link href="/sign-up">Get started</Link>

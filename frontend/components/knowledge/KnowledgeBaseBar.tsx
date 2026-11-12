@@ -44,7 +44,7 @@ export default function KnowledgeBaseBar({ projectId, knowledgeBases, selected, 
 			onSaved(res.data.knowledge_base);
 		} catch (err) {
 			setError(err instanceof ApiError && err.code === "duplicate_name"
-				? "A knowledge base with this name already exists"
+				? "An agent memory with this name already exists"
 				: formatError(err));
 		} finally {
 			setSaving(false);
@@ -72,18 +72,18 @@ export default function KnowledgeBaseBar({ projectId, knowledgeBases, selected, 
 					))}
 				</SelectContent>
 			</Select>
-			<Button variant="ghost" size="icon" onClick={() => open("rename")} disabled={!selected} title="Rename knowledge base">
+			<Button variant="ghost" size="icon" onClick={() => open("rename")} disabled={!selected} title="Rename agent memory">
 				<Pencil className="h-4 w-4" />
 			</Button>
 			<Button variant="outline" onClick={() => open("create")}>
 				<Plus className="mr-2 h-4 w-4" />
-				New knowledge base
+				New agent memory
 			</Button>
 
 			<Dialog open={mode !== null} onOpenChange={(isOpen) => !isOpen && setMode(null)}>
 				<DialogContent>
 					<DialogHeader>
-						<DialogTitle>{mode === "rename" ? "Rename knowledge base" : "New knowledge base"}</DialogTitle>
+						<DialogTitle>{mode === "rename" ? "Rename agent memory" : "New agent memory"}</DialogTitle>
 					</DialogHeader>
 					<div className="space-y-2">
 						<Label htmlFor="kb-name">Name</Label>

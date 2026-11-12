@@ -82,7 +82,7 @@ export default function ChannelsPage() {
 		}
 	};
 
-	// Fetch platforms, channels, and knowledge bases
+	// Fetch platforms, channels, and agent memories
 	useEffect(() => {
 		if (projectSlug && projectId) {
 			fetchPlatforms();
@@ -121,7 +121,7 @@ export default function ChannelsPage() {
 			const response = await knowledgeBaseApi.list(projectId);
 			setKnowledgeBases(response.data.knowledge_bases);
 		} catch (err) {
-			console.error("Failed to fetch knowledge bases:", err);
+			console.error("Failed to fetch agent memories:", err);
 		}
 	};
 
@@ -146,9 +146,9 @@ export default function ChannelsPage() {
 			return;
 		}
 
-		// The backend ignores incoming messages on channels without a knowledge base
+		// The backend ignores incoming messages on channels without an agent memory
 		if (!formData.knowledge_base_id) {
-			toast.error("Please select a knowledge base");
+			toast.error("Please select an agent memory");
 			return;
 		}
 
@@ -274,14 +274,14 @@ export default function ChannelsPage() {
 	const renderKnowledgeBaseSelect = (id: string, isEdit: boolean = false) => (
 		<div className="space-y-2">
 			<Label htmlFor={id}>
-				Knowledge Base <span className="text-destructive">*</span>
+				Agent Memory <span className="text-destructive">*</span>
 			</Label>
 			<Select
 				value={formData.knowledge_base_id || undefined}
 				onValueChange={(value: string) => setFormData(prev => ({ ...prev, knowledge_base_id: value }))}
 			>
 				<SelectTrigger id={id}>
-					<SelectValue placeholder="Select a knowledge base" />
+					<SelectValue placeholder="Select an agent memory" />
 				</SelectTrigger>
 				<SelectContent>
 					{knowledgeBases.map((kb) => (
@@ -293,10 +293,10 @@ export default function ChannelsPage() {
 			</Select>
 			<p className="text-xs text-muted-foreground">
 				{knowledgeBases.length === 0
-					? "No knowledge bases yet. Create one first; the AI answers from it."
+					? "No agent memories yet. Create one first; the AI answers from it."
 					: isEdit
 						? "Changing this applies to existing customers from their next message"
-						: "The AI answers this channel's messages from this knowledge base"}
+						: "The AI answers this channel's messages from this agent memory"}
 			</p>
 		</div>
 	);
@@ -498,14 +498,14 @@ export default function ChannelsPage() {
 									{!channel.knowledge_base && (
 										<Badge variant="destructive">
 											<AlertCircle className="mr-1 h-3 w-3" />
-											No knowledge base — messages are ignored
+											No agent memory — messages are ignored
 										</Badge>
 									)}
 								</div>
 
 								{channel.knowledge_base && (
 									<div className="pt-3 border-t">
-										<p className="text-xs text-muted-foreground">Knowledge Base:</p>
+										<p className="text-xs text-muted-foreground">Agent Memory:</p>
 										<p className="text-sm font-medium">{channel.knowledge_base.name}</p>
 									</div>
 								)}

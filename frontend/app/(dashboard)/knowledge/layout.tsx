@@ -36,7 +36,7 @@ function KnowledgeShell({ children }: { children: React.ReactNode }) {
 	return (
 		<div className="space-y-6">
 			<div className="flex flex-wrap items-center justify-between gap-4">
-				<h1 className="text-2xl font-semibold">Knowledge Base</h1>
+				<h1 className="text-2xl font-semibold">Agent Memory</h1>
 				{projectId && (
 					<KnowledgeBaseBar
 						projectId={projectId}

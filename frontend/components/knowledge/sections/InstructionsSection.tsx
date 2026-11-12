@@ -60,7 +60,7 @@ export default function InstructionsSection() {
 		return inst.knowledge_base_id ? (
 			<Badge variant="secondary" className="gap-1"><Database className="h-3 w-3" />Only {inst.knowledge_base_name}</Badge>
 		) : (
-			<Badge variant="secondary" className="gap-1"><Layers className="h-3 w-3" />Shared · all knowledge bases</Badge>
+			<Badge variant="secondary" className="gap-1"><Layers className="h-3 w-3" />Shared · all agent memories</Badge>
 		);
 	}
 
@@ -149,7 +149,7 @@ export default function InstructionsSection() {
 			const forKb = newInstructionScope === "kb" ? selectedKb : undefined;
 			await customInstructionApi.create({
 				project_id: currentProjectId,
-				knowledge_base_id: forKb?.id ?? null, // null: shared by every knowledge base
+				knowledge_base_id: forKb?.id ?? null, // null: shared by every agent memory
 				label: newInstruction.label.trim(),
 				message: newInstruction.message.trim(),
 				api_tool_enabled: newInstruction.api_tool_enabled,
@@ -163,7 +163,7 @@ export default function InstructionsSection() {
 			setShowTemplates(false);
 			setAlert({
 				type: "success",
-				message: forKb ? `Instruction added for ${forKb.name} only` : "Instruction added for every knowledge base",
+				message: forKb ? `Instruction added for ${forKb.name} only` : "Instruction added for every agent memory",
 			});
 		} catch (error) {
 			setAlert({ type: "error", message: formatError(error) });
@@ -250,7 +250,7 @@ export default function InstructionsSection() {
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> Custom Instructions</CardTitle>
 				<CardDescription>
-					Define how your agent should behave, act, and take actions with customers. Shared instructions apply to every knowledge base; instructions for one knowledge base are added on top of them.
+					Define how your agent should behave, act, and take actions with customers. Shared instructions apply to every agent memory; instructions for one agent memory are added on top of them.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
@@ -336,8 +336,8 @@ export default function InstructionsSection() {
 										<Label>Applies to</Label>
 										<div className="grid gap-2 sm:grid-cols-2">
 											{([
-												["shared", "Shared", "Every knowledge base"],
-												["kb", `Only ${selectedKb?.name ?? "this knowledge base"}`, "Added on top of the shared instructions"],
+												["shared", "Shared", "Every agent memory"],
+												["kb", `Only ${selectedKb?.name ?? "this agent memory"}`, "Added on top of the shared instructions"],
 											] as const).map(([value, title, hint]) => (
 												<button
 													key={value}
@@ -552,7 +552,7 @@ export default function InstructionsSection() {
 					) : instructions.length > 0 ? (
 						<div className="space-y-6">
 							{renderInstructionGroup(
-								<><Layers className="h-4 w-4" /> Shared · all knowledge bases</>,
+								<><Layers className="h-4 w-4" /> Shared · all agent memories</>,
 								instructions.filter((inst) => !inst.knowledge_base_id),
 								"No shared instructions yet.",
 							)}

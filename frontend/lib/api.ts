@@ -448,7 +448,7 @@ export type KnowledgeBase = {
 	created_at: string;
 };
 
-// Knowledge Base API functions
+// Agent Memory API functions
 export const knowledgeBaseApi = {
 	list: async (projectId: string) =>
 		apiFetch<{ knowledge_bases: KnowledgeBase[]; count: number }>(`/api/kb/knowledge-bases/?project_id=${projectId}`),
@@ -865,18 +865,8 @@ export type AnalyticsData = {
 			count: number;
 		}>;
 	};
-	token_usage: {
-		total: number;
-		input_tokens: number;
-		output_tokens: number;
-		embedding_tokens: number;
-		by_kind: Record<string, number>;
-		photos_indexed: number;
-		photo_searches: number;
-		trend: Array<{
-			date: string;
-			total_tokens: number;
-		}>;
+	photos: {
+		searches: number;
 	};
 };
 

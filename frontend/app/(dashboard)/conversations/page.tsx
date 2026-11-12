@@ -162,7 +162,7 @@ export default function ConversationsPage() {
 				{conversations.length === 0 ? (
 					<CardContent className="p-4">
 						<div className="text-center text-muted-foreground py-8">
-							No conversations yet. Start a test chat to try your knowledge base.
+							No conversations yet. Start a test chat to try your agent memory.
 						</div>
 					</CardContent>
 				) : (
@@ -220,13 +220,13 @@ export default function ConversationsPage() {
 				<DialogContent>
 					<DialogHeader>
 						<DialogTitle>New test chat</DialogTitle>
-						<DialogDescription>The bot answers only from the knowledge base you pick.</DialogDescription>
+						<DialogDescription>The bot answers only from the agent memory you pick.</DialogDescription>
 					</DialogHeader>
 					<div className="space-y-2">
-						<Label htmlFor="new-chat-kb">Knowledge base</Label>
+						<Label htmlFor="new-chat-kb">Agent memory</Label>
 						<Select value={newChatKbId || undefined} onValueChange={setNewChatKbId}>
 							<SelectTrigger id="new-chat-kb">
-								<SelectValue placeholder="Select a knowledge base" />
+								<SelectValue placeholder="Select an agent memory" />
 							</SelectTrigger>
 							<SelectContent>
 								{knowledgeBases.map((kb) => (

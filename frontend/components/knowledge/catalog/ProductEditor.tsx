@@ -23,7 +23,7 @@ const HALF_SAVED = "Product added, but price and SKU didn't save. Check them and
 
 // Where a product came from; the editor says so
 const ORIGIN: Record<string, string> = {
-	kb: "a knowledge base page",
+	kb: "an agent memory page",
 	csv: "a CSV or Excel file",
 	sheet: "a Google Sheet",
 	api: "a REST API",

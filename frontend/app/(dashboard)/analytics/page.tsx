@@ -13,7 +13,6 @@ import {
 	TrendingUp,
 	Database,
 	Zap,
-	Cpu,
 	Camera
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -73,17 +72,6 @@ export default function AnalyticsPage() {
 		return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
 	};
 
-	const formatTokens = (tokens: number) => {
-		if (tokens === 0) return "0";
-		if (tokens >= 1000000) {
-			return (tokens / 1000000).toFixed(2) + "M";
-		}
-		if (tokens >= 1000) {
-			return (tokens / 1000).toFixed(2) + "K";
-		}
-		return tokens.toString();
-	};
-
 	if (loading) {
 		return (
 			<div className="space-y-6">
@@ -130,18 +118,6 @@ export default function AnalyticsPage() {
 		value: count,
 	}));
 
-	const tokensByKind = Object.entries(data.token_usage.by_kind)
-		.filter(([kind]) => kind !== "image") // photo indexing is counted in the tiles, not as token spend
-		.map(([kind, total]) => ({
-		name: kind.replace("chat_", "").replace("_", " "),
-		value: total,
-	}));
-
-	const tokensOverTime = data.token_usage.trend.map((item) => ({
-		date: item.date,
-		count: item.total_tokens,
-	}));
-
 	return (
 		<div className="space-y-6">
 			{/* Header */}
@@ -174,70 +150,16 @@ export default function AnalyticsPage() {
 				</div>
 			</div>
 
-			{/* Token Usage Metrics */}
-			<div className="space-y-4">
-				<h2 className="text-xl font-semibold">Token Usage</h2>
-				<StatsGrid columns={4}>
-					<MetricCard
-						title="Total Tokens"
-						value={formatTokens(data.token_usage.total)}
-						description="All token usage"
-						icon={Cpu}
-					/>
-					<MetricCard
-						title="Input Tokens"
-						value={formatTokens(data.token_usage.input_tokens)}
-						description="Chat input tokens"
-						icon={TrendingUp}
-					/>
-					<MetricCard
-						title="Output Tokens"
-						value={formatTokens(data.token_usage.output_tokens)}
-						description="Chat output tokens"
-						icon={MessageSquare}
-					/>
-					<MetricCard
-						title="Embedding Tokens"
-						value={formatTokens(data.token_usage.embedding_tokens)}
-						description="Document embedding tokens"
-						icon={Database}
-					/>
-				</StatsGrid>
-				<StatsGrid columns={2}>
-					<MetricCard
-						title="Photos indexed"
-						value={data.token_usage.photos_indexed ?? 0}
-						description="Product photos added to image search"
-						icon={Camera}
-					/>
+			<StatsGrid columns={2}>
 					<MetricCard
 						title="Photo searches"
-						value={data.token_usage.photo_searches ?? 0}
+						value={data.photos.searches ?? 0}
 						description="Customer photos matched against your products"
 						icon={Camera}
 					/>
 				</StatsGrid>
-				<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-					{tokensOverTime.length > 0 && (
-						<TrendChart
-							title="Token Usage Over Time"
-							description="Daily token consumption"
-							data={tokensOverTime}
-							color="#8b5cf6"
-						/>
-					)}
-					{tokensByKind.length > 0 && (
-						<DistributionChart
-							title="Token Usage by Type"
-							description="Breakdown by usage type"
-							data={tokensByKind}
-							color="#06b6d4"
-						/>
-					)}
-				</div>
-			</div>
 
-			{/* Overview Metrics */}
+				{/* Overview Metrics */}
 			<div className="space-y-4">
 				<h2 className="text-xl font-semibold">Overview</h2>
 				<StatsGrid columns={4}>
@@ -256,7 +178,7 @@ export default function AnalyticsPage() {
 					<MetricCard
 						title="Documents"
 						value={data.knowledge.total_documents}
-						description={`${data.knowledge.knowledge_bases} knowledge bases`}
+						description={`${data.knowledge.knowledge_bases} agent memories`}
 						icon={FileText}
 					/>
 					<MetricCard
@@ -307,9 +229,9 @@ export default function AnalyticsPage() {
 				</div>
 			</div>
 
-			{/* Knowledge Base Analytics */}
+			{/* Agent Memory Analytics */}
 			<div className="space-y-4">
-				<h2 className="text-xl font-semibold">Knowledge Base Analytics</h2>
+				<h2 className="text-xl font-semibold">Agent Memory Analytics</h2>
 				<StatsGrid columns={3}>
 					<MetricCard
 						title="Total Storage"
@@ -324,9 +246,9 @@ export default function AnalyticsPage() {
 						icon={Zap}
 					/>
 					<MetricCard
-						title="Knowledge Bases"
+						title="Agent Memories"
 						value={data.knowledge.knowledge_bases}
-						description="Total knowledge bases"
+						description="Total agent memories"
 						icon={FileText}
 					/>
 				</StatsGrid>

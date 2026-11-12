@@ -274,10 +274,10 @@ export default function WidgetsPage() {
 									<Input id="widget-name" value={form.name} placeholder="Main website" onChange={(e) => setForm({ ...form, name: e.target.value })} />
 								</div>
 								<div className="space-y-1">
-									<Label>Knowledge base</Label>
+									<Label>Agent memory</Label>
 									<Select value={form.knowledge_base_id} onValueChange={(value) => setForm({ ...form, knowledge_base_id: value })}>
 										<SelectTrigger>
-											<SelectValue placeholder="Choose a knowledge base" />
+											<SelectValue placeholder="Choose an agent memory" />
 										</SelectTrigger>
 										<SelectContent>
 											{knowledgeBases.map((kb) => (
@@ -288,7 +288,7 @@ export default function WidgetsPage() {
 										</SelectContent>
 									</Select>
 									{selectedKb && selectedKb.document_count === 0 && (
-										<p className="text-xs text-destructive">This knowledge base has no documents yet, so answers will be generic.</p>
+										<p className="text-xs text-destructive">This agent memory has no documents yet, so answers will be generic.</p>
 									)}
 								</div>
 								<div className="space-y-1">

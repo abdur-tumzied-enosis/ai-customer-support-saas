@@ -37,7 +37,7 @@ export default function PrivacyPage() {
 			</ul>
 			<h3>Business content</h3>
 			<ul>
-				<li>Documents, web pages and instructions you add to a knowledge base.</li>
+				<li>Documents, web pages and instructions you add to an agent memory.</li>
 				<li>Channel credentials (for example Meta page tokens) and API tool settings.</li>
 			</ul>
 			<h3>End-customer conversations (processed for the business)</h3>
@@ -56,7 +56,7 @@ export default function PrivacyPage() {
 
 			<h2>2. How we use it</h2>
 			<ul>
-				<li>To provide the service: generate replies, search the business&apos;s knowledge base, hand conversations to staff.</li>
+				<li>To provide the service: generate replies, search the business&apos;s agent memory, hand conversations to staff.</li>
 				<li>To secure the service: prevent abuse, rate-limit, investigate incidents.</li>
 				<li>To support you and send service emails (for example password resets). No marketing without consent.</li>
 			</ul>
@@ -114,7 +114,7 @@ export default function PrivacyPage() {
 			<h2>6. Retention</h2>
 			<ul>
 				<li>Conversations and contact profiles: deleted {site.conversationRetentionDays} days after the last message, or sooner if the business deletes them.</li>
-				<li>Knowledge base content: until the business deletes it or closes its account.</li>
+				<li>Agent memory content: until the business deletes it or closes its account.</li>
 				<li>Account data: until you delete your account; backups roll off within 30 days.</li>
 				<li>Security logs: up to 30 days.</li>
 			</ul>

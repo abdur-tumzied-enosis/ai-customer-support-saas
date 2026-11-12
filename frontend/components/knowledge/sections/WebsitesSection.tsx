@@ -127,7 +127,7 @@ export default function WebsitesSection() {
 			return (
 				<div className="text-center py-8 text-muted-foreground">
 					<Globe className="h-12 w-12 mx-auto mb-2 opacity-50" />
-					<p>No websites crawled into <span className="font-medium">{selectedKb?.name ?? "this knowledge base"}</span> yet</p>
+					<p>No websites crawled into <span className="font-medium">{selectedKb?.name ?? "this agent memory"}</span> yet</p>
 					<p className="text-sm">Enter a URL above to crawl a website</p>
 				</div>
 			);
@@ -349,7 +349,7 @@ export default function WebsitesSection() {
 								disabled={crawling}
 							/>
 							<p className="text-xs text-muted-foreground mt-1">
-								Only content relevant to this query will be saved to the knowledge base.
+								Only content relevant to this query will be saved to the agent memory.
 							</p>
 						</div>
 					</form>

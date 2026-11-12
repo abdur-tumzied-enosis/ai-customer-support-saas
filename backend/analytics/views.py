@@ -193,45 +193,45 @@ class AnalyticsOverviewView(APIView):
             )
             
             # Total tokens by type
-            total_input_tokens = usage_events_qs.filter(kind='chat_in').aggregate(
-                total=Sum('tokens')
-            )['total'] or 0
+            # total_input_tokens = usage_events_qs.filter(kind='chat_in').aggregate(
+                # total=Sum('tokens')
+            # )['total'] or 0
             
-            total_output_tokens = usage_events_qs.filter(kind='chat_out').aggregate(
-                total=Sum('tokens')
-            )['total'] or 0
+            # total_output_tokens = usage_events_qs.filter(kind='chat_out').aggregate(
+                # total=Sum('tokens')
+            # )['total'] or 0
             
-            total_embedding_tokens = usage_events_qs.filter(kind='embed').aggregate(
-                total=Sum('tokens')
-            )['total'] or 0
+            # total_embedding_tokens = usage_events_qs.filter(kind='embed').aggregate(
+                # total=Sum('tokens')
+            # )['total'] or 0
             
-            photos_indexed = usage_events_qs.filter(kind='image', metadata__op='index').count()
+            # photos_indexed = usage_events_qs.filter(kind='image', metadata__op='index').count()
             photo_searches = usage_events_qs.filter(kind='image', metadata__op='search').count()
 
-            total_tokens = total_input_tokens + total_output_tokens + total_embedding_tokens
+            # total_tokens = total_input_tokens + total_output_tokens + total_embedding_tokens
             
             # Token usage trend by day
-            tokens_by_day = list(
-                usage_events_qs
-                .annotate(date=TruncDate('created_at'))
-                .values('date')
-                .annotate(total_tokens=Sum('tokens'))
-                .order_by('date')
-            )
+            # tokens_by_day = list(
+                # usage_events_qs
+                # .annotate(date=TruncDate('created_at'))
+                # .values('date')
+                # .annotate(total_tokens=Sum('tokens'))
+                # .order_by('date')
+            # )
             
             # Token usage by kind
-            tokens_by_kind = dict(
-                usage_events_qs
-                .values('kind')
-                .annotate(total=Sum('tokens'))
-                .values_list('kind', 'total')
-            )
+            # tokens_by_kind = dict(
+                # usage_events_qs
+                # .values('kind')
+                # .annotate(total=Sum('tokens'))
+                # .values_list('kind', 'total')
+            # )
 
             # Cost by kind (events with unknown cost are left out of the sum)
-            cost_by_kind = {
-                row['kind']: format(row['total'].normalize(), 'f')
-                for row in usage_events_qs.filter(cost_usd__isnull=False).values('kind').annotate(total=Sum('cost_usd'))
-            }
+            # cost_by_kind = {
+                # row['kind']: format(row['total'].normalize(), 'f')
+                # for row in usage_events_qs.filter(cost_usd__isnull=False).values('kind').annotate(total=Sum('cost_usd'))
+            # }
 
             # Prepare response
             analytics_data = {
@@ -272,17 +272,17 @@ class AnalyticsOverviewView(APIView):
                         "new_signups": new_users,
                         "trend": users_by_day
                     },
-                    "token_usage": {
-                        "total": total_tokens,
-                        "input_tokens": total_input_tokens,
-                        "output_tokens": total_output_tokens,
-                        "embedding_tokens": total_embedding_tokens,
-                        "photos_indexed": photos_indexed,
-                        "photo_searches": photo_searches,
-                        "by_kind": tokens_by_kind,
-                        "cost_by_kind": cost_by_kind,
-                        "trend": tokens_by_day
-                    }
+                    "photos": {"searches": photo_searches}
+                        # "total": total_tokens,
+                        # "input_tokens": total_input_tokens,
+                        # "output_tokens": total_output_tokens,
+                        # "embedding_tokens": total_embedding_tokens,
+                        # "photos_indexed": photos_indexed,
+                        # "photo_searches": photo_searches,
+                        # "by_kind": tokens_by_kind,
+                        # "cost_by_kind": cost_by_kind,
+                        # "trend": tokens_by_day
+                    # }
                 }
             }
 

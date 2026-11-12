@@ -88,7 +88,7 @@ export default function DocumentsSection() {
 			return (
 				<div className="text-center py-8 text-muted-foreground">
 					<File className="h-12 w-12 mx-auto mb-2 opacity-50" />
-					<p>No documents in <span className="font-medium">{selectedKb?.name ?? "this knowledge base"}</span> yet</p>
+					<p>No documents in <span className="font-medium">{selectedKb?.name ?? "this agent memory"}</span> yet</p>
 					<p className="text-sm">Upload PDF or text files to get started</p>
 				</div>
 			);
@@ -154,7 +154,7 @@ export default function DocumentsSection() {
 		<Card>
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> Documents</CardTitle>
-				<CardDescription>Upload PDF and text files to enhance your agent&apos;s knowledge base</CardDescription>
+				<CardDescription>Upload PDF and text files to enhance your agent&apos;s agent memory</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
 				<div className="flex flex-wrap items-center gap-4">
