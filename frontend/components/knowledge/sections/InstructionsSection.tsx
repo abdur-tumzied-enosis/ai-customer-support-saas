@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { FileText, Plus, Trash2, Loader2, Pencil, Sparkles, Tag, Layers, Database } from "lucide-react";
 import { customInstructionApi, instructionTemplateApi, type ApiDomain, type CustomInstruction, type InstructionTemplate } from "@/lib/api";
 import { ApiAccessEditor, toApiDomainsPayload } from "@/components/knowledge/ApiAccessEditor";
+import { ImproveInstruction } from "@/components/knowledge/ImproveInstruction";
 import { useKnowledge } from "@/components/knowledge/KnowledgeContext";
 import { formatError } from "@/lib/errors";
 
@@ -382,6 +383,11 @@ export default function InstructionsSection() {
 												setNewInstruction((prev) => ({ ...prev, message: e.target.value }))
 											}
 										/>
+										<ImproveInstruction
+											projectId={currentProjectId}
+											text={newInstruction.message}
+											onUse={(message) => setNewInstruction((prev) => ({ ...prev, message }))}
+										/>
 									</div>
 									<ApiAccessEditor
 										value={newInstruction}
@@ -462,6 +468,11 @@ export default function InstructionsSection() {
 											onChange={(e) =>
 												setEditInstruction((prev) => ({ ...prev, message: e.target.value }))
 											}
+										/>
+										<ImproveInstruction
+											projectId={currentProjectId}
+											text={editInstruction.message}
+											onUse={(message) => setEditInstruction((prev) => ({ ...prev, message }))}
 										/>
 									</div>
 									<ApiAccessEditor
