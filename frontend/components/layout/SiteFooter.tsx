@@ -6,6 +6,7 @@ const links = [
 	{ href: "/terms", label: "Terms" },
 	{ href: "/dpa", label: "DPA" },
 	{ href: "/data-deletion", label: "Data deletion" },
+	{ href: "/docs/connect-channels", label: "Channel setup guide" },
 ] as const;
 
 export default function SiteFooter() {
