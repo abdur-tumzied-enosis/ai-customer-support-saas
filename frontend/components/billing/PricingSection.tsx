@@ -37,7 +37,6 @@ export default function PricingSection() {
 		const replies = replyCredits > 0 ? total / replyCredits : 0;
 		return { p, total, replies, perReply: replies > 0 ? Number(p.price) / replies : 0 };
 	});
-	const maxPerReply = Math.max(...rows.map((r) => r.perReply));
 	const freeCredits = Number(data.signup_credits) > 0 ? data.signup_credits : null;
 
 	return (
@@ -47,6 +46,16 @@ export default function PricingSection() {
 				<p className="text-muted-foreground text-center mt-3 mb-12">
 					Buy credits once and use them on every channel. Bigger packs cost less per reply.
 				</p>
+
+				{freeCredits && (
+					<div className="mb-10 mx-auto max-w-3xl rounded-xl border border-[hsl(var(--marigold))] bg-[hsl(var(--marigold)/0.12)] p-5 text-center">
+						<p className="text-lg font-semibold">Start with {formatCredits(freeCredits)} free credits</p>
+						<p className="text-sm text-muted-foreground mt-1">
+							{replyCredits > 0 ? `About ${formatCredits(Math.floor(Number(freeCredits) / replyCredits))} AI replies. ` : ""}
+							No card needed. Buy a pack only when you run out.
+						</p>
+					</div>
+				)}
 
 				<div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 					{rows.map(({ p, total, replies, perReply }) => {
@@ -73,7 +82,7 @@ export default function PricingSection() {
 									{money(Number(p.price))} for {formatCredits(total)} credits
 								</p>
 								{p.bonus_credits > 0 && (
-									<p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+									<p className={cn("text-sm font-medium", p.highlighted ? "text-primary-foreground" : "text-emerald-700 dark:text-emerald-400")}>
 										+{formatCredits(p.bonus_credits)} bonus credits
 									</p>
 								)}
@@ -94,49 +103,33 @@ export default function PricingSection() {
 					})}
 				</div>
 
-				{maxPerReply > 0 && (
-					<div
-						className="mt-10 max-w-2xl mx-auto space-y-3"
-						role="img"
-						aria-label={`Price per AI reply: ${rows.map((r) => `${r.p.name} ${perReplyText(r.perReply)}`).join(", ")}`}
-					>
-						{rows.map(({ p, perReply }) => (
-							<div key={p.name} className="flex items-center gap-3 text-sm">
-								<span className="w-16 text-muted-foreground">{p.name}</span>
-								<div className="flex-1 h-2 rounded-full bg-muted">
-									<div className="h-2 rounded-full bg-primary" style={{ width: `${(perReply / maxPerReply) * 100}%` }} />
-								</div>
-								<span className="w-14 text-right tabular-nums">{perReplyText(perReply)}</span>
-							</div>
-						))}
-					</div>
-				)}
-
-				<div className="mt-12 max-w-2xl mx-auto">
-					<h3 className="text-lg font-semibold mb-3">What uses credits</h3>
-					<dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-2 text-sm">
+				<div className="mt-14 max-w-2xl mx-auto">
+					<h3 className="text-lg font-semibold">What uses credits</h3>
+					<p className="text-sm text-muted-foreground mt-1">
+						Your credits are shared across every channel. Most of them go on replies; setup helpers cost a fraction or a few credits.
+					</p>
+					<dl className="mt-4 rounded-xl border border-border bg-card divide-y divide-border text-sm">
 						{data.actions.map((a) => (
-							<div key={a.action} className="contents">
-								<dt className="text-muted-foreground">{a.label}</dt>
-								<dd className="text-right tabular-nums">
+							<div key={a.action} className="flex items-center justify-between gap-4 px-4 py-3">
+								<dt>{a.label}</dt>
+								<dd className="tabular-nums font-medium whitespace-nowrap">
 									{formatCredits(a.credits)} {Number(a.credits) === 1 ? "credit" : "credits"}
 								</dd>
 							</div>
 						))}
 					</dl>
-					{freeCredits && <p className="mt-4 text-sm font-medium">{formatCredits(freeCredits)} free credits to start</p>}
 					<p className="mt-4 text-xs text-muted-foreground">
 						*Estimate if credits are used only for AI replies; other actions use credits too.
 					</p>
-					<p className="mt-1 text-xs text-muted-foreground">
-						Payments are coming soon. For now we add credits to your project.{" "}
+					<p className="mt-2 text-sm text-muted-foreground">
+						Online payment is coming soon. To top up now, email{" "}
 						<a
 							href={`mailto:${site.supportEmail}`}
 							className="underline underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
 						>
-							Contact us
+							{site.supportEmail}
 						</a>{" "}
-						to top up.
+						and we will add credits to your project.
 					</p>
 				</div>
 			</div>

@@ -70,6 +70,49 @@ a {
 
 
 
+/* Landing page only: see DESIGN.md. Overrides the shadcn tokens inside .landing so shared components restyle with it. */
+@layer base {
+  .landing {
+    --background: 40 38% 96%;
+    --foreground: 28 20% 9%;
+    --card: 40 40% 99%;
+    --card-foreground: 28 20% 9%;
+    --primary: 158 62% 18%;
+    --primary-foreground: 40 38% 96%;
+    --secondary: 40 25% 90%;
+    --secondary-foreground: 28 20% 9%;
+    --muted: 40 22% 91%;
+    --muted-foreground: 30 10% 38%;
+    --accent: 40 25% 90%;
+    --accent-foreground: 28 20% 9%;
+    --border: 38 18% 84%;
+    --input: 38 18% 84%;
+    --ring: 158 62% 18%;
+    --marigold: 42 96% 56%;
+  }
+  .dark .landing {
+    --background: 28 12% 7%;
+    --foreground: 40 25% 94%;
+    --card: 28 12% 10%;
+    --card-foreground: 40 25% 94%;
+    --primary: 152 48% 58%;
+    --primary-foreground: 28 12% 7%;
+    --secondary: 28 10% 16%;
+    --secondary-foreground: 40 25% 94%;
+    --muted: 28 10% 14%;
+    --muted-foreground: 35 10% 66%;
+    --accent: 28 10% 16%;
+    --accent-foreground: 40 25% 94%;
+    --border: 28 8% 20%;
+    --input: 28 8% 20%;
+    --ring: 152 48% 58%;
+    --marigold: 42 90% 58%;
+  }
+  .landing h1, .landing h2 {
+    font-family: var(--font-display), serif;
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

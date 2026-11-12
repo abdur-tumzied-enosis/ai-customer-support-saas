@@ -1,0 +1,217 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>AI Reply Flow</title>
+<style>
+/* Layout: one column of text, each diagram in its own scroll box, a call table at the end. */
+:root {
+  --bg: #f6f7f5;
+  --surface: #ffffff;
+  --fg: #1d2421;
+  --muted: #5b6661;
+  --line: #d9dfdb;
+  --accent: #0f766e;
+  --accent-soft: #d9efec;
+  --code: #eef2f0;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111614;
+    --surface: #182020;
+    --fg: #e6ece9;
+    --muted: #9aa7a2;
+    --line: #2c3634;
+    --accent: #5fd0c4;
+    --accent-soft: #1d3634;
+    --code: #1f2827;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111614;
+  --surface: #182020;
+  --fg: #e6ece9;
+  --muted: #9aa7a2;
+  --line: #2c3634;
+  --accent: #5fd0c4;
+  --accent-soft: #1d3634;
+  --code: #1f2827;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 64px;
+}
+main { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+header h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); max-width: 70ch; }
+.eyebrow {
+  font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin: 0 0 6px;
+}
+section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px;
+  min-width: 0;
+}
+section h2 { font-size: 19px; margin: 0 0 6px; text-wrap: balance; }
+section > p { margin: 0 0 14px; color: var(--muted); max-width: 70ch; }
+.diagram {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--bg);
+}
+.diagram pre.mermaid { margin: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.legend span::before {
+  content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+  margin-right: 6px; vertical-align: -1px; background: var(--accent-soft); border: 1px solid var(--accent);
+}
+.legend .grey::before { background: var(--code); border-color: var(--line); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+td code, li code {
+  font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace; font-size: 12.5px;
+  background: var(--code); padding: 1px 5px; border-radius: 4px; white-space: nowrap;
+}
+.table-wrap { overflow-x: auto; }
+ul.notes { margin: 0; padding-left: 18px; color: var(--muted); }
+ul.notes li { margin-bottom: 6px; }
+.skip { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; margin: 0; }
+</style>
+
+<main>
+  <header>
+    <p class="eyebrow">Auto Magic Pro · backend</p>
+    <h1>AI reply flow and RAG flow</h1>
+    <p>How an inbound customer message becomes a delivered AI reply, what the RAG step does inside it, how knowledge gets into the search index, and which function to call for each job. Read from the code; the diagrams show the current behavior.</p>
+  </header>
+
+  <section>
+    <h2>1. Reply event flow</h2>
+    <p>From the inbound event to delivery. Batching, pause and handoff checks, and redelivery all happen here.</p>
+    <div class="legend"><span>Inbound</span><span class="grey">Background task</span></div>
+    <div class="diagram"><pre class="mermaid">
+flowchart TD
+  subgraph IN["Inbound events"]
+    FB["Facebook / Instagram webhook"] --> FBH["handle_facebook_message: create_inbound_message"]
+    WA["WhatsApp webhook"] --> WAH["handle_whatsapp_message: create_inbound_message"]
+    WG["Widget visitor POST"] --> WGH["create_inbound_message: status pending"]
+    ST["Staff test chat (self channel)"] --> STH["create_ui_message"]
+  end
+
+  FBH -->|photo or audio| MS["store_message_media, queue replies"]
+  WAH -->|photo or audio| MS
+  MS --> SR
+  FBH -->|text| SR["schedule_reply: countdown = 3s debounce"]
+  WAH -->|text| SR
+  WGH --> SR
+  STH --> SR
+
+  SR --> PR["process_reply task, queue replies"]
+  PR --> B{"Newer text message has its own task?"}
+  B -->|yes| BX["Mark batched, return"]
+  B -->|no| LK{"Lock reply-lock:conv free?"}
+  LK -->|no| RY["Retry in 3s"]
+  LK -->|yes| TU["pending_turn: unanswered inbound messages"]
+  TU --> PZ{"Paused, out of credits, or customer asked for a person?"}
+  PZ -->|paused| CP["Mark completed, staff answers"]
+  PZ -->|credits or human request| HO["start_handoff + handoff text"]
+  PZ -->|normal| PH["annotate_turn: photo matches"]
+  PH --> AG["generate_agent_reply (RAG, see section 2)"]
+  AG -->|error, no POST sent| RT["Retry up to 2x"]
+  AG --> OM["create_outbound_message: meta answered_through, api_calls, trace, billable"]
+  HO --> OM
+  OM --> DL{"deliver via channel sender"}
+  DL -->|ok| OK["charge_delivered_reply, schedule_memory_update (+5 min)"]
+  DL -->|fail| FL["status failed, redeliver task retries the send only"]
+
+  CR["Beat: recover-stuck-replies, every 5 min"] -.->|re-queues pending inbound older than 5 min| PR
+    </pre></div>
+  </section>
+
+  <section>
+    <h2>2. RAG flow inside one reply</h2>
+    <p>What <code>generate_agent_reply</code> does. Most replies take one LLM call, because search runs before the agent.</p>
+    <div class="legend"><span>Pre-search (every reply with a KB)</span><span class="grey">Agent tools (only if the model calls them)</span></div>
+    <div class="diagram"><pre class="mermaid">
+flowchart TD
+  Q["question: whole pending turn, formatted with photo notes"] --> H["build_history: max 50 msgs, 3000 token budget, after episode summary"]
+  Q --> C["build_reply_context: instructions, customer memory, api_domains, order tools if ordering on"]
+  C --> R{"KB collection or web crawl collection exists?"}
+  R -->|no| AG
+  R -->|yes| SQ["_search_query: previous user msg (300 chars) + question"]
+  SQ --> QD["Qdrant hybrid search per collection: dense (OpenRouter embed) + BM25 sparse, k=10"]
+  QD --> RK["rerank_docs (OpenRouter rerank): top 5 with score >= RERANK_MIN_SCORE 0.2"]
+  RK --> PRE["Pre-search results go into the system prompt"]
+  PRE --> AG["LLM agent call (usually the only one)"]
+  AG -->|tool: retrieve_business_context| T1["Agent's own keyword query, same search pipeline"]
+  AG -->|tool: escalate_to_human| T2["Sets handoff_reason"]
+  AG -->|tool: call_api, if api_domains set| T3["Logs api_call for the reply"]
+  AG -->|order tools, if ordering on| T4["Product and order tools"]
+  T1 --> AG
+  T2 --> AG
+  T3 --> AG
+  T4 --> AG
+  AG -->|final text| OUT["reply text + trace (sources, tool calls, tokens), usage tracked per project"]
+    </pre></div>
+  </section>
+
+  <section>
+    <h2>3. Knowledge ingestion (fills what RAG searches)</h2>
+    <p>Everything RAG can find got there through one of these paths.</p>
+    <div class="diagram"><pre class="mermaid">
+flowchart LR
+  UP["Upload file"] --> IJ["run_ingestion_job"]
+  CW["Website crawl"] --> CWJ["crawl_website: page relevance filter"]
+  IJ --> EX["extract_text_from_file"]
+  CWJ --> EC["embed_crawled_document"]
+  EX --> CH["chunk_text: 1000 chars, 200 overlap"]
+  CH --> EM["add_texts_to_collection: dense + BM25 sparse"]
+  EC --> EM
+  EM --> QD[("Qdrant: KB.vector_collection")]
+  PI["Product image"] --> EPI["embed_product_image"] -->|IMAGE_SEARCH_ENABLED| UI["upsert_image"] --> QD
+    </pre></div>
+  </section>
+
+  <section>
+    <h2>4. When to call what</h2>
+    <p>Pick the row for the job you are doing. Only the first row is the normal entry point.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Situation</th><th>Call</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>New customer message arrives</td><td><code>schedule_reply(msg)</code></td><td>The only normal entry point. Do not call <code>process_reply</code> directly.</td></tr>
+          <tr><td>Photo or audio arrives</td><td><code>store_message_media.delay(msg.id, wants_reply)</code></td><td>Calls <code>schedule_reply</code> when done.</td></tr>
+          <tr><td>Need the RAG answer for a message, inside the pipeline</td><td><code>generate_agent_reply(msg, kb, question=...)</code></td><td>DB reads only, so call it outside a transaction.</td></tr>
+          <tr><td>RAG without history, memory, billing or delivery</td><td><code>agents.rag.generate_reply(question, Context, ToolDeps, history, project_id)</code></td><td>For tools or tests only. It sends nothing.</td></tr>
+          <tr><td>Search only</td><td><code>get_retriever(collection)</code>, then <code>rerank_docs(query, docs, top_k, min_score, project_id)</code></td><td>Use this for a search-only feature.</td></tr>
+          <tr><td>Add knowledge</td><td><code>add_texts_to_collection(...)</code> or queue <code>run_ingestion_job</code></td><td>Use the job when you need status tracking.</td></tr>
+          <tr><td>Send a reply to the customer</td><td><code>deliver(conversation, out_msg, reference_msg)</code></td><td>Failed sends go to <code>redeliver</code>.</td></tr>
+          <tr><td>Staff reply to a customer message</td><td>Not traced</td><td>Outside the scope read for these diagrams.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Notes</h2>
+    <ul class="notes">
+      <li>Settings that change the flow: <code>REPLY_DEBOUNCE_SECONDS</code> (3s for facebook, instagram and whatsapp), <code>RERANK_MIN_SCORE</code> (0.2), <code>MEMORY_UPDATE_DELAY_SECONDS</code> (300).</li>
+      <li>Scheduled tasks that touch this path: <code>recover-stuck-replies</code> every 5 min, <code>summarize-idle-episodes</code> every 30 min, <code>reconcile</code> every 10 min.</li>
+      <li>Changing the embedding model requires re-indexing every Qdrant collection (noted in the code).</li>
+    </ul>
+    <p class="skip">Not checked: the app was not run, so these diagrams come from reading the code and may drift. Order-tool names, the staff reply path and webhook payload parsing were not traced.</p>
+  </section>
+</main>
