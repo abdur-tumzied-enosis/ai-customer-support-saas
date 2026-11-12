@@ -242,9 +242,9 @@ export const orderInstructionApi = {
 			method: "PATCH",
 			json: data,
 		}),
-	improve: (projectId: string, text: string) =>
+	improve: (projectId: string, text: string, scope: "general" | "order" = "order") =>
 		apiFetch<{ suggestion: string; why: string }>("/api/kb/instructions/improve/", {
 			method: "POST",
-			json: { project_id: projectId, text, scope: "order" },
+			json: { project_id: projectId, text, scope },
 		}),
 };

@@ -138,6 +138,15 @@ class GuardTest(TestCase):
 		self.assertEqual(r.status_code, 422, r.content)
 		self.assertEqual(r.json()["error"]["code"], "no_safe_suggestion")
 
+	def test_improve_endpoint_accepts_general_scope(self):
+		router = Router(checks=[InstructionCheck()], improvements=[Improvement(suggestion="Greet warmly.", why="clearer")])
+		with fake_llm(router):
+			r = self.client.post("/api/kb/instructions/improve/", {
+				"project_id": str(self.project.id), "text": "be nice", "scope": "general",
+			}, format="json")
+		self.assertEqual(r.status_code, 200, r.content)
+		self.assertEqual(r.json()["data"]["suggestion"], "Greet warmly.")
+
 	def test_unparseable_check_is_blocked_not_a_server_error(self):
 		with fake_llm(Router(checks=[None])):
 			verdict = check_instruction("Confirm orders before submit.", str(self.project.id))
