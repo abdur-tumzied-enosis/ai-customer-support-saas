@@ -52,10 +52,11 @@ class SignUpSerializer(serializers.Serializer):
 			email_verified=False,
 		)
 
-		# Always create a default project named "my_project"
+		# Default project named "<first> <last> <last 4 chars of its id>"
+		project_id = uuid4()
 		project_slug = uuid4().hex[:30]
-		
-		project = Project.objects.create(name="Default Project", slug=project_slug, created_by=user)
+		project_name = f"{first_name} {last_name} {str(project_id)[-4:]}"
+		project = Project.objects.create(id=project_id, name=project_name, slug=project_slug, created_by=user)
 		# Create ProjectUser relationship
 		ProjectUser.objects.create(project=project, user=user, role="admin")
 

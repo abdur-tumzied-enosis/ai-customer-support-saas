@@ -48,7 +48,7 @@ class SignUpViewTests(TestCase):
 		project_user = ProjectUser.objects.filter(user=user).first()
 		self.assertIsNotNone(project_user)
 		self.assertEqual(project_user.role, "admin")
-		self.assertEqual(project_user.project.name, "Default Project")
+		self.assertEqual(project_user.project.name, f"{project_user.user.first_name} {project_user.user.last_name} {str(project_user.project.id)[-4:]}")
 		
 		# Check user data in response
 		user_data = response.json()["data"]["user"]
@@ -176,7 +176,7 @@ class SignUpViewTests(TestCase):
 		project_user = ProjectUser.objects.get(user=user)
 		
 		self.assertIsNotNone(project_user.project)
-		self.assertEqual(project_user.project.name, "Default Project")
+		self.assertEqual(project_user.project.name, f"{project_user.user.first_name} {project_user.user.last_name} {str(project_user.project.id)[-4:]}")
 		self.assertIsNotNone(project_user.project.slug)
 
 
