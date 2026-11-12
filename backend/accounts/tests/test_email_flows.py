@@ -4,7 +4,7 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.tasks import send_email
@@ -53,6 +53,7 @@ class EmailFlowTests(TestCase):
 			self.client.post("/api/auth/verify-email/", {"email": "ann@x.com", "code": wrong}, format="json")
 		assert self.client.post("/api/auth/verify-email/", {"email": "ann@x.com", "code": code}, format="json").status_code == 400
 
+	@override_settings(EMAIL_LOGO_URL="")  # don't inherit a logo URL from .env
 	def test_password_reset(self):
 		user = User.objects.create_user(username="bo@x.com", email="bo@x.com", password="old-pass-123", email_verified=False)
 		with self.captureOnCommitCallbacks(execute=True):

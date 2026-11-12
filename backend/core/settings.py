@@ -272,16 +272,17 @@ SITE_URL = env("SITE_URL", default="http://localhost:3000").rstrip("/")
 PRODUCT_NAME = env("PRODUCT_NAME", default="TumarAgent")
 EMAIL_LOGO_URL = env("EMAIL_LOGO_URL", default="")  # public PNG for the email header (app_logo/lockup_black.png); empty → text wordmark
 
-# Outgoing email (accounts.tasks.send_email): Gmail SMTP with an app password (Google account → Security → 2-Step
-# Verification → App passwords). No password set → emails print to the backend/celery log instead.
-EMAIL_HOST = env("EMAIL_HOST", default="smtp.gmail.com")
-EMAIL_PORT = env.int("EMAIL_PORT", default=587)
-EMAIL_USE_TLS = True
+# Outgoing email (accounts.tasks.send_email) via Resend's SMTP relay (smtp.resend.com, user "resend", password = API
+# key). No SMTP_PASSWORD set -> emails print to the backend/celery log instead.
+EMAIL_HOST = env("SMTP_HOST", default="smtp.resend.com")
+EMAIL_PORT = env.int("SMTP_PORT", default=587)
+EMAIL_USE_TLS = env.bool("SMTP_USE_TLS", default=True)
+EMAIL_USE_SSL = env.bool("SMTP_USE_SSL", default=False)  # port 465; mutually exclusive with TLS
 EMAIL_TIMEOUT = 20
-EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
-EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_HOST_USER = env("SMTP_USERNAME", default="resend")
+EMAIL_HOST_PASSWORD = env("SMTP_PASSWORD", default="")
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend" if EMAIL_HOST_PASSWORD else "django.core.mail.backends.console.EmailBackend"
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default=f"{PRODUCT_NAME} <{EMAIL_HOST_USER or 'noreply@localhost'}>")
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default=f"{PRODUCT_NAME} <noreply@localhost>")
 PASSWORD_RESET_TIMEOUT = 60 * 60  # reset links last an hour
 
 # HTTPS hardening; TLS terminates at the reverse proxy, which must set X-Forwarded-Proto

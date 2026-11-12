@@ -23,7 +23,7 @@ HTML = f"""<!doctype html>
 </body></html>"""
 
 
-# smtplib errors subclass OSError, so Gmail hiccups and timeouts retry
+# smtplib errors subclass OSError, so SMTP hiccups and timeouts retry
 @shared_task(autoretry_for=(OSError,), retry_backoff=True, max_retries=3)
 def send_email(to: str, subject: str, body: str) -> None:
 	name = settings.PRODUCT_NAME
