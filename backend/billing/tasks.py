@@ -1,7 +1,9 @@
 import logging
 from datetime import timedelta
 
+import requests
 from celery import shared_task
+from django.conf import settings
 from django.db.models import DecimalField, F, Q, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -45,3 +47,16 @@ def check_balances() -> list:
 def reconcile() -> None:
 	charge_missed_replies()
 	check_balances()
+
+
+@shared_task
+def notify_telegram(text: str) -> None:
+	if not (settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID):
+		return
+	try:
+		requests.post(
+			f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+			json={"chat_id": settings.TELEGRAM_CHAT_ID, "text": text}, timeout=10,
+		).raise_for_status()
+	except requests.RequestException:
+		logger.exception("Telegram notify failed")  # shortcut: no retry; the request is still in the DB/admin

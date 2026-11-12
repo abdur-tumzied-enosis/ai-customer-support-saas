@@ -190,6 +190,11 @@ META_APP_SECRET = env("META_APP_SECRET", default="")
 FB_VERIFY_TOKEN = env("FB_VERIFY_TOKEN", default="verify-token")
 PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", default="")  # how Meta reaches this backend (ngrok/domain); "" → request host
 
+# Credit top-ups: Telegram alert + bKash number customers pay to
+TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
+TELEGRAM_CHAT_ID = env("TELEGRAM_CHAT_ID", default="")
+BKASH_NUMBER = env("BKASH_NUMBER", default="")
+
 # Google / Gemini
 GOOGLE_API_KEY = env("GOOGLE_API_KEY", default="")
 GOOGLE_USE_VERTEXAI = env.bool("GOOGLE_USE_VERTEXAI", default=True)  # True: Vertex AI express mode (API key); False: Gemini Developer API

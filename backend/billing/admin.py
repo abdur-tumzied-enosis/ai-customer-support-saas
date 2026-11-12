@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.urls import path
 
 from . import report, service
-from .models import ActionPrice, CreditPackage, CreditTransaction, CreditWallet, PricingSettings
+from .models import ActionPrice, CreditPackage, CreditRequest, CreditTransaction, CreditWallet, PricingSettings
 
 
 @admin.register(ActionPrice)
@@ -128,3 +128,10 @@ class CreditTransactionAdmin(admin.ModelAdmin):
 		txn = service.grant(obj.wallet.project, obj.amount, obj.kind, created_by=request.user, note=obj.note)
 		# point the admin log entry and "added" link at the real ledger row
 		obj.pk, obj.balance_after, obj.created_at = txn.pk, txn.balance_after, txn.created_at
+
+
+@admin.register(CreditRequest)
+class CreditRequestAdmin(admin.ModelAdmin):
+	list_display = ("id", "project", "package", "phone", "bkash_phone", "trx_id", "status", "created_at")
+	list_filter = ("status",)
+	search_fields = ("trx_id", "phone", "bkash_phone", "project__name")

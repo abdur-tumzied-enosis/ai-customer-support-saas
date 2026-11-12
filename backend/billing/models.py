@@ -118,3 +118,24 @@ class CreditPackage(models.Model):
 
 	def __str__(self):
 		return self.name
+
+
+class CreditRequest(models.Model):
+	"""Manual bKash top-up: customer asks for a package, sends money, then submits the transaction id."""
+	STATUS_CHOICES = [("requested", "Requested"), ("paid", "Payment submitted"), ("granted", "Credits granted"), ("rejected", "Rejected")]
+	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="credit_requests")
+	user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+	package = models.ForeignKey(CreditPackage, on_delete=models.PROTECT, related_name="+")
+	phone = models.CharField(max_length=20)  # contact number
+	bkash_phone = models.CharField(max_length=20, blank=True)  # number the money was sent from
+	trx_id = models.CharField(max_length=40, blank=True)
+	status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="requested")
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	@property
+	def reference(self):
+		return f"AM{self.pk}"
+
+	def __str__(self):
+		return f"{self.reference} {self.package} {self.status}"

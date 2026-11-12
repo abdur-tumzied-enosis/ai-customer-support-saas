@@ -118,7 +118,7 @@ class PricingTest(TestCase):
 			self.assertNotIn(word, text)
 		data = res.json()["data"]
 		self.assertEqual([p["name"] for p in data["packages"]], ["Starter"])
-		self.assertEqual(set(data["packages"][0]), {"name", "credits", "bonus_credits", "price", "currency", "features", "highlighted"})
+		self.assertEqual(set(data["packages"][0]), {"id", "name", "credits", "bonus_credits", "price", "currency", "features", "highlighted"})
 		self.assertEqual([a["action"] for a in data["actions"]], ["reply", "photo_search", "product_import", "order_setup"])
 		self.assertEqual(data["actions"][0], {"action": "reply", "label": "AI reply", "credits": "1.00"})
 		self.assertEqual(data["signup_credits"], f"{PricingSettings.get().signup_credits:.2f}")
@@ -171,3 +171,31 @@ class ConversationCreditsTest(BillingApiBase):
 		with CaptureQueriesContext(connection) as after:
 			self.client.get(self.url)
 		self.assertEqual(len(before), len(after))
+
+
+class CreditRequestTest(BillingApiBase):
+	def setUp(self):
+		super().setUp()
+		self.pkg = CreditPackage.objects.create(name="Starter", credits=100, price=Decimal("500"))
+		self.url = "/api/billing/credit-requests/"
+
+	def post(self, user, url, **data):
+		self.client.force_login(user)
+		return self.client.post(url, {"project_id": str(self.project.id), **data}, format="json")
+
+	def test_request_then_payment(self):
+		from unittest.mock import patch
+		with patch("billing.api.notify_telegram.delay") as tg, self.captureOnCommitCallbacks(execute=True):
+			res = self.post(self.admin, self.url, package_id=self.pkg.id, phone="01700000000")
+			self.assertEqual(res.status_code, 201)
+			rid = res.json()["data"]["id"]
+			res = self.post(self.admin, f"{self.url}{rid}/payment/", trx_id="ABC123", bkash_phone="01800000000")
+		self.assertEqual(res.status_code, 200)
+		self.assertEqual(tg.call_count, 2)
+		from billing.models import CreditRequest
+		r = CreditRequest.objects.get(pk=rid)
+		self.assertEqual((r.status, r.trx_id), ("paid", "ABC123"))
+
+	def test_validation_and_access(self):
+		self.assertEqual(self.post(self.admin, self.url, package_id=self.pkg.id, phone="1").status_code, 400)
+		self.assertEqual(self.post(self.member, self.url, package_id=self.pkg.id, phone="01700000000").status_code, 403)

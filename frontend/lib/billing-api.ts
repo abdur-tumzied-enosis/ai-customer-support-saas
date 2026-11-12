@@ -13,12 +13,18 @@ export type CreditTxn = {
 	conversation_id: string | null;
 };
 export type PublicPricing = {
-	packages: { name: string; credits: number; bonus_credits: number; price: string; currency: string; features: string[]; highlighted: boolean }[];
+	packages: { id: number; name: string; credits: number; bonus_credits: number; price: string; currency: string; features: string[]; highlighted: boolean }[];
 	actions: { action: string; label: string; credits: string }[];
 	signup_credits: string;
 };
 
+export type CreditRequest = { id: number; reference: string; status: string; package: string; amount: string; currency: string; bkash_number: string };
+
 export const billingApi = {
+	requestCredits: (projectId: string, packageId: number, phone: string) =>
+		apiFetch<CreditRequest>("/api/billing/credit-requests/", { method: "POST", json: { project_id: projectId, package_id: packageId, phone } }).then((r) => r.data),
+	submitPayment: (projectId: string, id: number, trxId: string, bkashPhone: string) =>
+		apiFetch<CreditRequest>(`/api/billing/credit-requests/${id}/payment/`, { method: "POST", json: { project_id: projectId, trx_id: trxId, bkash_phone: bkashPhone } }).then((r) => r.data),
 	wallet: (projectId: string) => apiFetch<Wallet>(`/api/billing/wallet/?project_id=${projectId}`).then((r) => r.data),
 	transactions: (projectId: string, p: { kind?: string; offset?: number; limit?: number }) => {
 		const q = new URLSearchParams({ project_id: projectId });
