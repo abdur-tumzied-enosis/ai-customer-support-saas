@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { site } from "@/lib/site";
 
-export const metadata: Metadata = { title: `Data Processing Agreement · ${site.productName}` };
+export const metadata: Metadata = {
+	title: "Data Processing Agreement",
+	description: "The data processing agreement between TumarAgent and businesses that process customer personal data with it.",
+};
 
 // Template drafted for launch; have counsel review before go-live (docs/launch-checklist.md).
 export default function DpaPage() {

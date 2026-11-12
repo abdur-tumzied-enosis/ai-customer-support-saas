@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { site } from "@/lib/site";
 
-export const metadata: Metadata = { title: `Terms of Service · ${site.productName}` };
+export const metadata: Metadata = {
+	title: "Terms of Service",
+	description: "The terms for using TumarAgent, the AI customer support assistant for WhatsApp, Messenger and Instagram.",
+};
 
 // Template drafted for launch; have counsel review before go-live (docs/launch-checklist.md).
 export default function TermsPage() {

@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { site } from "@/lib/site";
 
-export const metadata: Metadata = { title: `Privacy Policy · ${site.productName}` };
+export const metadata: Metadata = {
+	title: "Privacy Policy",
+	description: "How TumarAgent collects, uses and protects personal data for businesses and their customers.",
+};
 
 // Template drafted for launch; have counsel review before go-live (docs/launch-checklist.md).
 export default function PrivacyPage() {

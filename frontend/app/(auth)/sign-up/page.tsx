@@ -15,7 +15,7 @@ import { site } from "@/lib/site";
 
 export default function SignUpPage() {
 	const router = useRouter();
-	const { loading: authLoading } = useRedirectIfAuthenticated();
+	useRedirectIfAuthenticated(); // form renders immediately: no loading-to-form layout shift, and crawlers get real HTML
 	const [firstName, setFirstName] = useState("");
 	const [lastName, setLastName] = useState("");
 	const [businessName, setBusinessName] = useState("");
@@ -24,14 +24,6 @@ export default function SignUpPage() {
 	const [confirmPassword, setConfirmPassword] = useState("");
 	const toast = useToast();
 	const [loading, setLoading] = useState(false);
-
-	if (authLoading) {
-		return (
-			<div className="flex items-center justify-center min-h-[400px]">
-				<div className="text-muted-foreground">Loading...</div>
-			</div>
-		);
-	}
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();

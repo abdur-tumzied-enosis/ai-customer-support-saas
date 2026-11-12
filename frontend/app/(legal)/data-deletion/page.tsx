@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { site } from "@/lib/site";
 
-export const metadata: Metadata = { title: `Data Deletion · ${site.productName}` };
+export const metadata: Metadata = {
+	title: "Data Deletion",
+	description: "How to ask TumarAgent to delete your personal data, conversations and account.",
+};
 
 // Also the "Data Deletion Instructions URL" in the Meta app settings.
 export default function DataDeletionPage() {

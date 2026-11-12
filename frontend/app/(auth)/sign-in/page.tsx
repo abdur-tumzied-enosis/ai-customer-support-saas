@@ -14,20 +14,12 @@ import { useRedirectIfAuthenticated, useAuth } from "@/hooks/useAuth";
 
 export default function SignInPage() {
 	const router = useRouter();
-	const { loading: authLoading } = useRedirectIfAuthenticated();
+	useRedirectIfAuthenticated(); // form renders immediately: no loading-to-form layout shift, and crawlers get real HTML
 	const { checkAuth } = useAuth();
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
 	const toast = useToast();
 	const [loading, setLoading] = useState(false);
-
-	if (authLoading) {
-		return (
-			<div className="flex items-center justify-center min-h-[400px]">
-				<div className="text-muted-foreground">Loading...</div>
-			</div>
-		);
-	}
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();

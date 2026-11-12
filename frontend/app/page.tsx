@@ -15,7 +15,7 @@ const body = Hind_Siliguri({ subsets: ["bengali", "latin"], weight: ["400", "500
 
 export const metadata: Metadata = {
 	description:
-		"TumarAgent answers your customers on Messenger, WhatsApp and Instagram in Bangla and English, finds products and takes orders. Start with free credits, no card needed.",
+		"TumarAgent answers customers on Messenger, WhatsApp and Instagram in Bangla and English, finds products and takes orders. Free credits, no card.",
 };
 
 // Re-check the offer deadline hourly so the banner disappears on its own.
