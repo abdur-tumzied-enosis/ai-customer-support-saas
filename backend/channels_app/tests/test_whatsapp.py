@@ -8,7 +8,7 @@ from django.test import Client, SimpleTestCase, TestCase
 from accounts.models import Project
 from channels_app.facebook_client import WHATSAPP_MAX_TEXT_CHARS, send_whatsapp_text
 from channels_app.models import ChannelCredential, Conversation, CustomerContact, Message
-from channels_app.reply import deliver
+from channels_app.reply import attempt_delivery, deliver
 from channels_app.service.conversation_service import ensure_contact_conversation
 from channels_app.service.message_service import create_outbound_message
 from channels_app.service.whatsapp_messaging import handle_whatsapp_message
@@ -114,6 +114,53 @@ class WhatsAppSendTest(WhatsAppBase):
 		out.refresh_from_db()
 		assert out.meta["send_error"] == "Re-engagement message"
 
+	def pending(self, body="Hello"):
+		return create_outbound_message(
+			project=self.project, contact=self.conv.contact, text=body, conversation=self.conv, status="pending",
+		)
+
+	def status(self, out, state, part=0, wamid="wamid.out"):
+		handle_whatsapp_message(payload(statuses=[
+			{"id": wamid, "status": state, "biz_opaque_callback_data": f"out:{out.id}:{part}"},
+		]))
+		out.refresh_from_db()
+
+	@mock.patch("channels_app.tasks.send_whatsapp_text", return_value={"error": "whatsapp send failed", "unknown": True})
+	def test_timed_out_send_is_held_then_settled_by_the_status_webhook(self, send, schedule):
+		out = self.pending()
+		attempt_delivery(out.id)
+		out.refresh_from_db()
+		assert out.status == "unknown" and out.meta["inflight"] == 0
+		assert send.call_args.kwargs["callback_data"] == f"out:{out.id}:0"
+		out.deliver_after = out.created_at
+		out.save(update_fields=["deliver_after"])
+		attempt_delivery(out.id)  # unknown rows are never claimed: no second send
+		assert send.call_count == 1
+
+		self.status(out, "delivered")
+		assert out.status == "completed" and out.external_message_id == "wamid.out" and "inflight" not in out.meta
+
+	@mock.patch("channels_app.tasks.send_whatsapp_text", return_value={"error": "whatsapp send failed", "unknown": True})
+	def test_failed_status_makes_the_reply_sendable_again(self, send, schedule):
+		out = self.pending()
+		attempt_delivery(out.id)
+		self.status(out, "failed")
+		assert out.status == "pending" and "inflight" not in out.meta
+		send.return_value = {"message_id": "wamid.2"}
+		attempt_delivery(out.id)
+		out.refresh_from_db()
+		assert out.status == "completed" and send.call_count == 2
+
+	@mock.patch("channels_app.tasks.send_whatsapp_text", return_value={"error": "whatsapp send failed", "unknown": True})
+	def test_status_for_another_part_or_a_known_reply_is_ignored(self, send, schedule):
+		out = self.pending()
+		attempt_delivery(out.id)
+		self.status(out, "delivered", part=3)
+		assert out.status == "unknown"
+		handle_whatsapp_message(payload(statuses=[{"id": "w", "status": "read", "biz_opaque_callback_data": "other"}]))
+		out.refresh_from_db()
+		assert out.status == "unknown"
+
 
 @mock.patch("channels_app.service.whatsapp_messaging.schedule_reply")
 class WhatsAppWebhookTest(WhatsAppBase):
@@ -148,6 +195,25 @@ class SendWhatsAppTextTest(SimpleTestCase):
 		post.return_value.status_code = 400
 		post.return_value.json.return_value = {"error": {"code": 131047, "message": "Re-engagement message"}}
 		assert send_whatsapp_text("tok", "pn-1", "880", "hi") == {"error": "Re-engagement message"}
+
+	@mock.patch("channels_app.facebook_client.requests.post")
+	def test_ambiguous_failures_are_flagged_unknown_and_rejections_are_not(self, post):
+		import requests
+		post.side_effect = requests.Timeout()
+		assert send_whatsapp_text("tok", "pn-1", "880", "hi")["unknown"] is True
+		post.side_effect = None
+		post.return_value.status_code = 503
+		post.return_value.json.return_value = {}
+		assert send_whatsapp_text("tok", "pn-1", "880", "hi")["unknown"] is True
+		post.return_value.status_code = 400
+		assert "unknown" not in send_whatsapp_text("tok", "pn-1", "880", "hi")
+
+	@mock.patch("channels_app.facebook_client.requests.post")
+	def test_callback_data_travels_with_the_message(self, post):
+		post.return_value.status_code = 200
+		post.return_value.json.return_value = {"messages": [{"id": "wamid.out"}]}
+		send_whatsapp_text("tok", "pn-1", "880", "hi", callback_data="out:1:0")
+		assert post.call_args.kwargs["json"]["biz_opaque_callback_data"] == "out:1:0"
 
 
 class ContactConversationKbTest(WhatsAppBase):

@@ -1,14 +1,16 @@
+from datetime import timedelta
 from decimal import Decimal
 from agents.embeddings_api import Embedded
 from unittest import mock
 
 from celery.exceptions import SoftTimeLimitExceeded
 from django.test import override_settings
+from django.utils import timezone
 
 from billing import service
 from billing.models import CreditTransaction
 from channels_app.models import Message
-from channels_app.reply import redeliver as redeliver_task
+from channels_app.reply import deliver_outbound
 from channels_app.tests.test_reply_pipeline import PipelineBase
 
 PHOTO = {"has_attachments": True, "attachment_info": [{"type": "image", "payload": {}}], "meta": {"photo_reply": True}}
@@ -24,7 +26,8 @@ class ReplyBillingTest(PipelineBase):
 		return qs.filter(action=action) if action else qs
 
 	def redeliver(self, out):
-		redeliver_task.apply(args=[str(out.id)])
+		Message.objects.filter(id=out.id).update(deliver_after=timezone.now() - timedelta(seconds=1))
+		deliver_outbound.apply(args=[str(out.id)])
 
 	def test_delivered_reply_charged_once(self):
 		m = self.inbound("hello")
@@ -38,8 +41,7 @@ class ReplyBillingTest(PipelineBase):
 
 	def test_failed_then_redelivered_charged_once(self):
 		self.send.return_value = {}
-		with mock.patch("channels_app.reply.redeliver.apply_async"):
-			self.run_reply(self.inbound("hello"))
+		self.run_reply(self.inbound("hello"))
 		out = self.outbound()[0]
 		self.assertEqual(self.rows().count(), 0)
 		self.send.return_value = {"message_id": "mid.2"}
@@ -49,16 +51,14 @@ class ReplyBillingTest(PipelineBase):
 
 	def test_never_delivered_not_charged(self):
 		self.send.return_value = {}
-		with mock.patch("channels_app.reply.redeliver.apply_async"):
-			self.run_reply(self.inbound("hello"))
+		self.run_reply(self.inbound("hello"))
 		self.redeliver(self.outbound()[0])
 		self.assertEqual(self.rows().count(), 0)
 
 	def test_fallback_reply_not_charged_even_after_redeliver(self):
 		self.gen.side_effect = SoftTimeLimitExceeded()
 		self.send.return_value = {}
-		with mock.patch("channels_app.reply.redeliver.apply_async"):
-			self.run_reply(self.inbound("hello"))
+		self.run_reply(self.inbound("hello"))
 		out = self.outbound()[0]
 		self.assertNotIn("billable", out.meta)
 		self.assertEqual(self.rows().count(), 0)

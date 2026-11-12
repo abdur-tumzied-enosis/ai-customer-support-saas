@@ -125,7 +125,8 @@ CELERY_RESULT_BACKEND = "cache+memory://" if TESTING else REDIS_URL
 # Customer replies get their own queue/worker so document ingestion can't delay them (docker-compose: celery-replies)
 CELERY_TASK_ROUTES = {
     "channels_app.reply.process_reply": {"queue": "replies"},
-    "channels_app.reply.redeliver": {"queue": "replies"},
+    "channels_app.reply.deliver_outbound": {"queue": "replies"},
+    "channels_app.reply.recover_pending_deliveries": {"queue": "replies"},
     "channels_app.media_store.store_message_media": {"queue": "replies"},  # on the reply path for photos
 }
 STUCK_JOB_THRESHOLD_MINUTES =env.int("STUCK_JOB_THRESHOLD_MINUTES", default=120)
@@ -149,6 +150,10 @@ CELERY_BEAT_SCHEDULE = {
     'recover-stuck-replies': {
         'task': 'channels_app.reply.recover_stuck_replies',
         'schedule': 300,
+    },
+    'recover-pending-deliveries': {
+        'task': 'channels_app.reply.recover_pending_deliveries',
+        'schedule': 30,
     },
     'billing-reconcile': {
         'task': 'billing.tasks.reconcile',

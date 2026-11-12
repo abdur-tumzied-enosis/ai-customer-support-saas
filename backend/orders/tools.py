@@ -3,6 +3,7 @@ import json
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 
+from agents.idempotency import once
 from knowledge.catalog import effective_price, product_key
 from knowledge.models import Product
 
@@ -152,4 +153,11 @@ def build_order_tools(conversation, settings, context) -> list:
 		set_status(order, "cancelled", actor)
 		return json.dumps({"order_number": order.number, "status": "cancelled"})
 
-	return [find_products, update_draft, submit_order, change_order, cancel_order]
+	def placed(result: str) -> None:  # a stored submit_order result: restore what the live call sets
+		if json.loads(result).get("order_number") is not None:
+			context.order_submitted = True
+
+	# submit_order and cancel_order run once per inbound message, however often the reply is re-run. Not the others:
+	# find_products only reads, and update_draft / change_order replace state, so repeating one is harmless while a
+	# stored answer could be stale (draft set to tea, then coffee, then tea again must really end on tea).
+	return [find_products, update_draft, once(context, submit_order, replay=placed), change_order, once(context, cancel_order)]

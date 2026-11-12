@@ -13,7 +13,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -62,7 +62,7 @@ def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bo
 	# Instagram DMs go through the same Send API (Page token, /me/messages), with a smaller text limit
 	cred = tasks.get_facebook_credential(reference_msg, conversation.channel)
 	parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
-	send = cred and (lambda text: tasks.send_text_message(
+	send = cred and (lambda text, ref: tasks.send_text_message(
 		page_access_token=cred.get_credentials().page_access_token,
 		recipient_psid=conversation.contact.external_id,
 		text=text,
@@ -73,21 +73,30 @@ def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bo
 def _send_whatsapp(conversation, out_msg: Message, reference_msg: Message) -> bool:
 	cred = tasks.get_whatsapp_credential(reference_msg)
 	creds = cred and cred.get_credentials()
-	send = cred and (lambda text: tasks.send_whatsapp_text(
-		creds.access_token, creds.phone_number_id, conversation.contact.external_id, text
+	send = cred and (lambda text, ref: tasks.send_whatsapp_text(
+		creds.access_token, creds.phone_number_id, conversation.contact.external_id, text, callback_data=ref
 	))
 	return _send_parts(out_msg, split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS), send, "whatsapp")
 
 
 def _send_parts(out_msg: Message, parts: list, send, channel: str) -> bool:
-	"""Send `parts` in order with `send(text) -> {"message_id"} | {"error"?}`; records progress on out_msg."""
+	"""Send `parts` in order with `send(text, ref) -> {"message_id"} | {"error"?, "unknown"?}`; records progress on out_msg.
+	`ref` ("out:<message id>:<part>") is the stable per-part reference. meta["inflight"] is written before each request
+	and cleared once its outcome is known: if it is still set later, that part may or may not have been delivered."""
 	sent = out_msg.meta.get("parts_sent", 0)  # resume point when redelivering a partly sent reply
 	response = {}
 	while send and sent < len(parts):
-		response = send(parts[sent])
+		out_msg.meta = {**out_msg.meta, "inflight": sent, "parts_total": len(parts)}
+		out_msg.save(update_fields=["meta"])
+		response = send(parts[sent], f"out:{out_msg.id}:{sent}")
+		if response.get("unknown"):
+			break  # may have been accepted: leave "inflight" set, attempt_delivery holds the reply instead of resending
+		out_msg.meta = {k: v for k, v in out_msg.meta.items() if k != "inflight"}
 		if not response.get("message_id"):
 			break
 		sent += 1
+		out_msg.meta = {**out_msg.meta, "parts_sent": sent}  # saved per part: a crash resumes after the last accepted part
+		out_msg.save(update_fields=["meta"])
 	meta = {k: v for k, v in out_msg.meta.items() if k != "send_error"}
 	if len(parts) > 1:
 		meta["parts_sent"] = sent
@@ -254,7 +263,10 @@ def _reply(task, conversation, msg: Message) -> None:
 	reply_text = reply_text or (tasks.FALLBACK_REPLY_BN if bengali else tasks.FALLBACK_REPLY)
 
 	newest = turn[-1]
+	local = conversation.channel in ("self", "widget")  # no provider: the stored row is the delivery (see SENDERS)
 	billable = agent_replied and not handoff_reason and conversation.channel != "self"
+	# The reply is saved "pending" in the same transaction that completes the inbound, so a crash after this commit
+	# leaves a row recover_pending_deliveries re-sends; only the send is ever retried, never the LLM.
 	with transaction.atomic():
 		out_msg = create_outbound_message(
 			project=conversation.project,
@@ -268,40 +280,145 @@ def _reply(task, conversation, msg: Message) -> None:
 			},
 			conversation=conversation,
 			id=newest.agent_reply_id or None,
+			status="completed" if local else "pending",
 		)
 		_complete(turn)
-	if not deliver(conversation, out_msg, newest):
-		# Failed rows don't count as answered (pending_turn, build_history); retry only the send, never the LLM
-		logger.warning(f"process_reply: conversation={conversation.id} delivery failed for reply {out_msg.id}, queued redeliver")
-		out_msg.status = "failed"
-		out_msg.save(update_fields=["status"])
-		out_id = str(out_msg.id)
-		transaction.on_commit(lambda: redeliver.apply_async(args=[out_id], countdown=10))
-	else:
-		logger.info(f"process_reply: conversation={conversation.id} reply {out_msg.id} delivered ({conversation.channel})")
-		charge_delivered_reply(out_msg)
 	schedule_memory_update(conversation)
+	if local:
+		charge_delivered_reply(out_msg)
+		return
+	# Sent by its own task, not here: this task's 60s soft limit could cut a send off and leave it unknown.
+	# If this enqueue is lost, recover_pending_deliveries finds the pending row.
+	out_id = str(out_msg.id)
+	transaction.on_commit(lambda: deliver_outbound.delay(out_id))
 
 
-@shared_task(bind=True, max_retries=2, default_retry_delay=30)
-def redeliver(self, message_id: str) -> None:
-	"""Re-send a bot reply whose delivery failed. Gives up once the conversation has moved on."""
+MAX_DELIVERY_ATTEMPTS = 5
+DELIVERY_LEASE_SECONDS = 120  # a worker that dies mid-send frees the reply after this
+DELIVERY_BACKOFF_SECONDS = 30  # doubles per failed attempt, capped at 10 minutes
+
+
+def attempt_delivery(message_id) -> None:
+	"""Claim and send one saved outbound reply, then record the outcome. Safe to call any number of times from
+	any worker: only one caller wins the claim, and a completed reply is never sent again.
+	Meta's send APIs take no idempotency key, so a send whose outcome was not recorded (worker died mid-request,
+	timeout) is held as "unknown" instead of retried; confirmed failures are retried with backoff."""
+	now = timezone.now()
+	claimed = Message.objects.filter(
+		Q(status="pending", deliver_after__lte=now) | Q(status="processing", deliver_after__lt=now),
+		id=message_id, direction="out", conversation__isnull=False,
+	).update(
+		status="processing", deliver_after=now + timedelta(seconds=DELIVERY_LEASE_SECONDS),
+		delivery_attempts=F("delivery_attempts") + 1,
+	)
+	if not claimed:
+		return
 	out_msg = Message.objects.select_related("conversation__contact").get(id=message_id)
 	conversation = out_msg.conversation
-	# A newer message means a newer reply (or staff) re-answers this turn, since failed rows don't count
-	# ponytail: a message landing between this check and the send can still get this turn answered twice
-	if (
-		out_msg.status != "failed" or conversation.is_paused()
-		or conversation.messages.filter(created_at__gt=out_msg.created_at).exists()
-	):
+	if out_msg.delivery_attempts > MAX_DELIVERY_ATTEMPTS:  # attempts that killed their worker count too
+		logger.error(f"Reply {out_msg.id} abandoned after {MAX_DELIVERY_ATTEMPTS} delivery attempts")
+		out_msg.status = "failed"
+		out_msg.save(update_fields=["status"])
 		return
+	if "inflight" in out_msg.meta:  # the attempt before this one died mid-request: never resend blindly
+		return _hold_unknown(out_msg)
 	newest_in = conversation.messages.filter(direction="in").order_by("-created_at").first()
-	if deliver(conversation, out_msg, newest_in):
+	try:
+		delivered = deliver(conversation, out_msg, newest_in)
+	except Exception:
+		logger.exception(f"Delivery of reply {out_msg.id} raised")
+		delivered = False
+	if not delivered and "inflight" in out_msg.meta:  # timeout or 5xx: the provider may have accepted it
+		return _hold_unknown(out_msg)
+	if delivered:
+		logger.info(f"Reply {out_msg.id} delivered ({conversation.channel})")
 		out_msg.status = "completed"
 		out_msg.save(update_fields=["status"])
 		charge_delivered_reply(out_msg)
 		return
-	raise self.retry(exc=RuntimeError(f"Delivery of message {message_id} failed"))
+	if out_msg.delivery_attempts >= MAX_DELIVERY_ATTEMPTS:
+		logger.error(f"Reply {out_msg.id} not delivered after {out_msg.delivery_attempts} attempts, giving up")
+		out_msg.status = "failed"  # failed rows don't count as answered (pending_turn, build_history)
+		out_msg.save(update_fields=["status"])
+		return
+	backoff = min(DELIVERY_BACKOFF_SECONDS * 2 ** (out_msg.delivery_attempts - 1), 600)
+	logger.warning(f"Reply {out_msg.id} delivery attempt {out_msg.delivery_attempts} failed, retrying in {backoff}s")
+	out_msg.status = "pending"
+	out_msg.deliver_after = timezone.now() + timedelta(seconds=backoff)
+	out_msg.save(update_fields=["status", "deliver_after"])
+
+
+def _hold_unknown(out_msg: Message) -> None:
+	"""Outcome of the in-flight part is unknown. It is not retried: that could message the customer twice.
+	WhatsApp resolves itself through the status webhook (see resolve_unknown); otherwise staff decide in the admin."""
+	logger.error(f"Reply {out_msg.id} part {out_msg.meta.get('inflight')} may or may not have been delivered; held as unknown")
+	out_msg.status = "unknown"
+	out_msg.deliver_after = timezone.now()  # when it was held: recover_pending_deliveries ages it from here
+	out_msg.save(update_fields=["status", "deliver_after"])
+
+
+def resolve_unknown(message_id, accepted: bool, part: Optional[int] = None, provider_id: str = "") -> None:
+	"""Settle a reply held as unknown: the in-flight part was accepted (carry on after it) or was not (send it again).
+	`part` guards against a late status for a different part than the one in flight."""
+	out_msg = Message.objects.filter(id=message_id, direction="out", status="unknown").first()
+	if not out_msg or (part is not None and part != out_msg.meta.get("inflight")):
+		return
+	meta = {k: v for k, v in out_msg.meta.items() if k not in ("inflight", "send_error")}
+	done = False
+	if accepted:
+		meta["parts_sent"] = sent = out_msg.meta.get("inflight", 0) + 1
+		done = sent >= meta.get("parts_total", 1)
+		out_msg.external_message_id = provider_id or out_msg.external_message_id
+	out_msg.meta = meta
+	out_msg.status = "completed" if done else "pending"
+	out_msg.deliver_after = timezone.now()
+	out_msg.save(update_fields=["meta", "status", "deliver_after", "external_message_id"])
+	logger.info(f"Reply {out_msg.id} resolved: accepted={accepted}, now {out_msg.status}")
+	if done:
+		charge_delivered_reply(out_msg)
+
+
+@shared_task(soft_time_limit=60, time_limit=90)  # under DELIVERY_LEASE_SECONDS, so a hung send ends before its lease does
+def deliver_outbound(message_id: str) -> None:
+	attempt_delivery(message_id)
+
+
+UNKNOWN_REVIEW_AFTER = timedelta(minutes=15)
+
+
+def _age_unknown_deliveries(now) -> None:
+	"""Replies held as unknown for 15+ minutes. WhatsApp reports every message it accepted through a status webhook
+	within seconds, so silence this long means the send most likely never arrived: send it again (if the webhook was
+	only very late the customer gets a duplicate). Messenger and Instagram have no such signal, so staff are told."""
+	stale = Message.objects.filter(
+		direction="out", status="unknown", deliver_after__lt=now - UNKNOWN_REVIEW_AFTER, conversation__isnull=False,
+	).select_related("conversation__contact").order_by("deliver_after")[:100]
+	needs_review = 0
+	for out_msg in stale:
+		if out_msg.conversation.channel == "whatsapp":
+			resolve_unknown(out_msg.id, accepted=False)
+		else:
+			needs_review += 1
+	if needs_review:
+		logger.error(f"{needs_review} replies have been held as unknown for over 15 minutes and need review in the admin")
+
+
+@shared_task
+def recover_pending_deliveries() -> None:
+	"""Re-send replies that were saved but not delivered: queued ones whose retry time has come, and ones whose
+	worker died mid-send (lease expired). Runs every 30s; attempt_delivery's claim makes overlap harmless."""
+	_age_unknown_deliveries(timezone.now())
+	due = list(
+		Message.objects.filter(
+			direction="out", status__in=("pending", "processing"), deliver_after__lt=timezone.now(), conversation__isnull=False,
+		).order_by("deliver_after").values_list("id", flat=True)[:100]
+	)
+	# Once per row per minute: when the queue is behind, a row stays due for many sweeps and would be queued every time
+	queued = [m for m in due if cache.add(f"deliver-queued:{m}", 1, timeout=60)]
+	for message_id in queued:
+		deliver_outbound.delay(str(message_id))
+	if queued:
+		logger.warning(f"Re-queued {len(queued)} undelivered replies")
 
 
 @shared_task

@@ -7,6 +7,7 @@ from .llm import create_basic_agent
 from .vector_store import rerank_docs
 from usage.utils import record_model_usage
 from .api_tool import build_call_api_tool
+from .idempotency import once
 import logging
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,12 @@ def _build_tools_from_context(context: Context, deps: ToolDeps, retrievers: Opti
 	tools.append(escalate_to_human)
 
 	if context.api_domains:
-		tools.append(build_call_api_tool(context.api_domains, context.api_call_log))
+		# POSTs run once per inbound message; a POST that timed out or got a 5xx may still have happened, so it is never repeated
+		tools.append(once(
+			context, build_call_api_tool(context.api_domains, context.api_call_log),
+			when=lambda a: str(a.get("method") or "").upper() != "GET",
+			unsure=lambda r: r.startswith(("ERROR: timeout", "ERROR: request failed", "HTTP 5")),
+		))
 
 	tools.extend(context.order_tools)
 	return tools

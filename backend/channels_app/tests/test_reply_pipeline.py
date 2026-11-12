@@ -10,7 +10,8 @@ from django.utils import timezone
 from accounts.models import Project
 from channels_app.models import Conversation, CustomerContact, Message
 from channels_app.facebook_client import split_text
-from channels_app.reply import process_reply, recover_stuck_replies, redeliver as redeliver_task
+from channels_app import reply
+from channels_app.reply import deliver_outbound, process_reply, recover_pending_deliveries, recover_stuck_replies
 from channels_app.service.conversation_service import create_conversation, ensure_contact_conversation
 from channels_app.service.message_service import create_ui_message
 from channels_app.tasks import FALLBACK_REPLY, FALLBACK_REPLY_BN, handle_incoming_message, handle_ui_message
@@ -37,6 +38,8 @@ class PipelineBase(TestCase):
 		cred.get_credentials.return_value.page_access_token = "tok"
 		mock.patch("channels_app.tasks.get_facebook_credential", return_value=cred).start()
 		self.emit = mock.patch("channels_app.handoff.emit_event").start()
+		# the reply is sent by its own task, queued on commit: run it right away
+		mock.patch("channels_app.reply.deliver_outbound.delay", side_effect=lambda i: deliver_outbound.apply(args=[i])).start()
 		self.addCleanup(mock.patch.stopall)
 
 	def inbound(self, text, **extra):
@@ -45,6 +48,11 @@ class PipelineBase(TestCase):
 		)
 
 	def run_reply(self, msg):
+		process_reply.apply(args=[str(msg.conversation_id), str(msg.id)])
+		for out in Message.objects.filter(conversation_id=msg.conversation_id, direction="out", status="pending"):
+			deliver_outbound.apply(args=[str(out.id)])  # what the on-commit enqueue does in production
+
+	def save_reply_only(self, msg):
 		process_reply.apply(args=[str(msg.conversation_id), str(msg.id)])
 
 	def outbound(self):
@@ -322,43 +330,208 @@ class ReviewFixesTest(PipelineBase):
 
 
 class DeliveryTest(PipelineBase):
-	def test_failed_send_marks_reply_failed_and_redelivers(self):
-		self.send.return_value = {}
-		with mock.patch("channels_app.reply.redeliver.apply_async") as redeliver, 				mock.patch("channels_app.memory.update_contact_memory.apply_async"):
-			with self.captureOnCommitCallbacks(execute=True):
-				self.run_reply(self.inbound("hi"))
+	def make_due(self, out):
+		Message.objects.filter(id=out.id).update(deliver_after=timezone.now() - timedelta(seconds=1))
+
+	def fresh(self, out):
+		out.refresh_from_db()
+		return out
+
+	def test_saved_reply_is_sent_and_completed(self):
+		self.run_reply(self.inbound("hi"))
 		out = self.outbound()[0]
-		assert out.status == "failed" and self.gen.call_count == 1
-		redeliver.assert_called_once_with(args=[str(out.id)], countdown=10)
+		assert (out.status, out.external_message_id, out.delivery_attempts) == ("completed", "mid.out", 1)
+
+	def test_failed_send_stays_pending_and_retries_send_only(self):
+		self.send.return_value = {}
+		self.run_reply(self.inbound("hi"))
+		out = self.outbound()[0]
+		assert out.status == "pending" and out.delivery_attempts == 1 and out.deliver_after > timezone.now()
+		assert self.gen.call_count == 1
+
+		self.send.reset_mock()
+		deliver_outbound.apply(args=[str(out.id)])  # backoff not over: nothing happens
+		self.send.assert_not_called()
 
 		self.send.return_value = {"message_id": "mid.retry"}
-		redeliver_task.apply(args=[str(out.id)])
-		out.refresh_from_db()
+		self.make_due(out)
+		deliver_outbound.apply(args=[str(out.id)])
+		out = self.fresh(out)
 		assert out.status == "completed" and out.external_message_id == "mid.retry"
 		assert "send_error" not in out.meta and self.gen.call_count == 1  # send only, LLM not re-run
 
-	def test_redeliver_skips_when_customer_wrote_again(self):
+	def test_gives_up_after_max_attempts(self):
 		self.send.return_value = {}
-		with mock.patch("channels_app.reply.redeliver.apply_async"):
-			self.run_reply(self.inbound("hi"))
-		self.inbound("hello??")
-		self.send.reset_mock()
-		redeliver_task.apply(args=[str(self.outbound()[0].id)])
+		self.run_reply(self.inbound("hi"))
+		out = self.outbound()[0]
+		for _ in range(reply.MAX_DELIVERY_ATTEMPTS - 1):
+			self.make_due(out)
+			deliver_outbound.apply(args=[str(out.id)])
+		assert self.fresh(out).status == "failed" and self.send.call_count == reply.MAX_DELIVERY_ATTEMPTS
+
+	def test_timeout_is_held_as_unknown_and_never_resent(self):
+		self.send.return_value = {"unknown": True}  # no response: Meta may have accepted it
+		self.run_reply(self.inbound("hi"))
+		out = self.outbound()[0]
+		assert out.status == "unknown" and out.meta["inflight"] == 0
+		self.make_due(out)
+		with mock.patch("channels_app.reply.deliver_outbound.delay") as delay:
+			recover_pending_deliveries.apply()
+		delay.assert_not_called()
+		deliver_outbound.apply(args=[str(out.id)])
+		assert self.send.call_count == 1 and self.fresh(out).status == "unknown"
+
+	def test_reply_is_sent_by_its_own_task_after_commit_not_inside_the_reply_task(self):
+		with mock.patch("channels_app.reply.deliver_outbound.delay") as delay:
+			with self.captureOnCommitCallbacks(execute=True):
+				process_reply.apply(args=[str(self.conv.id), str(self.inbound("hi").id)])
+		out = self.outbound()[0]
+		delay.assert_called_once_with(str(out.id))
+		assert out.status == "pending" and self.send.call_count == 0  # the soft limit of process_reply can no longer cut a send
+
+	def held_unknown(self, minutes, platform="facebook"):
+		self.contact.platform = platform
+		self.contact.save()
+		out = Message.objects.create(
+			project=self.project, contact=self.contact, conversation=self.conv, direction="out", sender="bot",
+			status="unknown", text="x", meta={"inflight": 0, "parts_total": 1},
+		)
+		Message.objects.filter(id=out.id).update(deliver_after=timezone.now() - timedelta(minutes=minutes))
+		return out
+
+	def test_stale_unknown_whatsapp_reply_is_sent_again_and_a_fresh_one_waits(self):
+		stale, fresh = self.held_unknown(20, "whatsapp"), self.held_unknown(5, "whatsapp")
+		with mock.patch("channels_app.reply.deliver_outbound.delay"):
+			recover_pending_deliveries.apply()
+		assert self.fresh(stale).status == "pending" and "inflight" not in self.fresh(stale).meta
+		assert self.fresh(fresh).status == "unknown"
+
+	def test_stale_unknown_messenger_reply_is_reported_not_resent(self):
+		out = self.held_unknown(20)
+		with mock.patch("channels_app.reply.deliver_outbound.delay"), self.assertLogs("channels_app.reply", "ERROR") as logs:
+			recover_pending_deliveries.apply()
+		assert "need review" in logs.output[0] and self.fresh(out).status == "unknown"
+
+	def test_sweep_queues_a_due_reply_once_a_minute_even_if_it_stays_due(self):
+		self.save_reply_only(self.inbound("hi"))  # the queue is behind: the row is still pending at the next sweep
+		with mock.patch("channels_app.reply.deliver_outbound.delay") as delay:
+			recover_pending_deliveries.apply()
+			recover_pending_deliveries.apply()
+		delay.assert_called_once()
+
+	def test_rejection_is_a_confirmed_failure_and_retried(self):
+		self.send.return_value = {}  # Meta answered with an error: nothing was sent
+		self.run_reply(self.inbound("hi"))
+		out = self.outbound()[0]
+		assert out.status == "pending" and "inflight" not in out.meta
+
+	def test_exception_during_send_is_unknown(self):
+		self.send.side_effect = RuntimeError("connection dropped")
+		self.run_reply(self.inbound("hi"))
+		assert self.outbound()[0].status == "unknown"
+
+	def test_unknown_reply_resolved_as_not_delivered_is_sent_again(self):
+		self.send.return_value = {"unknown": True}
+		self.run_reply(self.inbound("hi"))
+		out = self.outbound()[0]
+		reply.resolve_unknown(out.id, accepted=False)
+		self.send.return_value = {"message_id": "mid.2"}
+		deliver_outbound.apply(args=[str(out.id)])
+		out = self.fresh(out)
+		assert out.status == "completed" and out.external_message_id == "mid.2" and self.send.call_count == 2
+
+	def test_unknown_reply_resolved_as_delivered_completes_and_charges_nothing_twice(self):
+		self.send.return_value = {"unknown": True}
+		self.run_reply(self.inbound("hi"))
+		out = self.outbound()[0]
+		with mock.patch("channels_app.reply.charge_delivered_reply") as charge:
+			reply.resolve_unknown(out.id, accepted=True, provider_id="mid.9")
+			reply.resolve_unknown(out.id, accepted=True, provider_id="mid.9")  # a second status webhook
+		out = self.fresh(out)
+		assert out.status == "completed" and out.external_message_id == "mid.9"
+		charge.assert_called_once()
+		assert self.send.call_count == 1
+
+	def test_crash_after_save_is_redelivered_by_recovery(self):
+		self.save_reply_only(self.inbound("hi"))  # the worker dies right after the commit, before the send is queued
+		out = self.outbound()[0]
+		assert out.status == "pending" and out.external_message_id == ""
 		self.send.assert_not_called()
+		with mock.patch("channels_app.reply.deliver_outbound.delay", side_effect=lambda i: deliver_outbound.apply(args=[i])):
+			recover_pending_deliveries.apply()
+		assert self.fresh(out).status == "completed"
+		self.send.assert_called_once()
+
+	def test_two_workers_send_once(self):
+		self.save_reply_only(self.inbound("hi"))  # the worker dies right after the commit, before the send is queued
+		out = self.outbound()[0]
+		reply.attempt_delivery(out.id)
+		reply.attempt_delivery(out.id)  # same task enqueued twice
+		self.send.assert_called_once()
+
+	def test_live_lease_is_not_stolen_but_expired_lease_is(self):
+		self.save_reply_only(self.inbound("hi"))  # the worker dies right after the commit, before the send is queued
+		out = self.outbound()[0]
+		Message.objects.filter(id=out.id).update(status="processing", deliver_after=timezone.now() + timedelta(seconds=60))
+		reply.attempt_delivery(out.id)
+		self.send.assert_not_called()
+		self.make_due(out)  # the worker that held it died
+		reply.attempt_delivery(out.id)
+		assert self.fresh(out).status == "completed"
+		self.send.assert_called_once()
 
 	def test_long_reply_is_split_and_resumes_after_partial_failure(self):
 		self.reply_text = ("word " * 300 + "\n\n") * 2  # ~3000 chars
 		self.send.side_effect = [{"message_id": "m1"}, {}]
-		with mock.patch("channels_app.reply.redeliver.apply_async"):
-			self.run_reply(self.inbound("tell me everything"))
+		self.run_reply(self.inbound("tell me everything"))
 		out = self.outbound()[0]
-		assert out.status == "failed" and out.meta["parts_sent"] == 1
+		assert out.status == "pending" and out.meta["parts_sent"] == 1
 		assert all(len(c.kwargs["text"]) <= 2000 for c in self.send.call_args_list)
 
 		self.send.side_effect = [{"message_id": "m2"}]
-		redeliver_task.apply(args=[str(out.id)])
-		out.refresh_from_db()
+		self.make_due(out)
+		deliver_outbound.apply(args=[str(out.id)])
+		out = self.fresh(out)
 		assert out.status == "completed" and out.meta["parts_sent"] == 2 and out.external_message_id == "m2"
+
+	def crash_during_part_two(self):
+		self.reply_text = ("word " * 300 + "\n\n") * 2
+		self.send.side_effect = [{"message_id": "m1"}, SystemExit()]  # worker killed during part 2
+		with self.assertRaises(SystemExit):
+			self.run_reply(self.inbound("tell me everything"))
+		out = self.outbound()[0]
+		assert out.status == "processing" and out.meta["parts_sent"] == 1 and out.meta["inflight"] == 1
+		self.make_due(out)  # lease expires
+		return out
+
+	def test_crash_mid_part_is_held_unknown_not_resent(self):
+		out = self.crash_during_part_two()
+		deliver_outbound.apply(args=[str(out.id)])
+		assert self.fresh(out).status == "unknown" and self.send.call_count == 2  # part 2 may have gone out
+
+	def test_crash_mid_part_resolved_as_not_delivered_resumes_with_that_part_only(self):
+		out = self.crash_during_part_two()
+		deliver_outbound.apply(args=[str(out.id)])
+		reply.resolve_unknown(out.id, accepted=False)
+		self.send.side_effect = [{"message_id": "m2"}]
+		deliver_outbound.apply(args=[str(out.id)])
+		out = self.fresh(out)
+		assert out.status == "completed" and out.meta["parts_sent"] == 2 and self.send.call_count == 3
+
+	def test_crash_mid_part_resolved_as_delivered_completes_without_sending(self):
+		out = self.crash_during_part_two()
+		deliver_outbound.apply(args=[str(out.id)])
+		reply.resolve_unknown(out.id, accepted=True, provider_id="m2")
+		out = self.fresh(out)
+		assert out.status == "completed" and out.external_message_id == "m2" and self.send.call_count == 2
+
+	def test_accepted_first_part_of_three_continues_with_the_rest(self):
+		out = self.crash_during_part_two()
+		Message.objects.filter(id=out.id).update(meta={**out.meta, "parts_total": 3})
+		deliver_outbound.apply(args=[str(out.id)])
+		reply.resolve_unknown(out.id, accepted=True)
+		out = self.fresh(out)
+		assert out.status == "pending" and out.meta["parts_sent"] == 2
 
 	def test_timeout_sends_fallback_without_retry(self):
 		self.gen.side_effect = SoftTimeLimitExceeded()

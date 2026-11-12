@@ -872,6 +872,7 @@ class Message(models.Model):
 		("processing", "Processing"),
 		("completed", "Completed"),
 		("failed", "Failed"),
+		("unknown", "Unknown"),  # outbound only: a send may or may not have been delivered; needs resolving
 	]
 	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="messages")
 	contact = models.ForeignKey(CustomerContact, on_delete=models.CASCADE, related_name="messages")
@@ -902,12 +903,17 @@ class Message(models.Model):
 	# Raw webhook data
 	meta = models.JSONField(default=dict, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True)
+	# Outbound delivery (direction="out"): status pending = saved, waiting to be sent; processing = a worker holds it
+	# until deliver_after (its lease); completed = the provider accepted it; failed = gave up.
+	deliver_after = models.DateTimeField(default=timezone.now)
+	delivery_attempts = models.PositiveSmallIntegerField(default=0)
 
 	class Meta:
 		indexes = [
 			models.Index(fields=["project", "created_at"]),
 			models.Index(fields=["contact", "created_at"]),
 			models.Index(fields=["conversation", "created_at"]),
+			models.Index(fields=["status", "deliver_after"]),
 			models.Index(fields=["status"]),
 			models.Index(fields=["external_message_id"]),
 		]

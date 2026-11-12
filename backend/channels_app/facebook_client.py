@@ -2,6 +2,8 @@ import re
 from typing import Optional
 import requests
 
+from core.http import never_sent
+
 import logging
 logger = logging.getLogger(__name__)
 
@@ -82,7 +84,7 @@ def send_text_message(page_access_token: str, recipient_psid: str, text: str) ->
 		if resp.status_code != 200:
 			error_data = resp.json() if resp.text else {}
 			logger.error(f"Facebook API error: {resp.status_code} - {error_data}")
-			return {}
+			return {"unknown": True} if resp.status_code >= 500 else {}  # a 5xx may still have delivered
 		
 		resp.raise_for_status()  # Raise exception for bad status codes
 		response_data = resp.json()
@@ -102,7 +104,11 @@ def send_text_message(page_access_token: str, recipient_psid: str, text: str) ->
 				logger.error(f"Error response: {error_data}")
 			except:
 				logger.error(f"Error response text: {e.response.text}")
-		return {}
+		# No response (read timeout, dropped connection): the page may have accepted the message anyway.
+		# A failure while connecting never reached Meta, so it is a plain failure and gets retried.
+		if never_sent(e) or (e.response is not None and e.response.status_code < 500):
+			return {}
+		return {"unknown": True}
 
 
 
@@ -131,22 +137,27 @@ def get_user_name(page_access_token: str, psid: str, fields: str = "name") -> st
 WHATSAPP_MAX_TEXT_CHARS = 4000  # Cloud API rejects text bodies over 4096 chars
 
 
-def send_whatsapp_text(access_token: str, phone_number_id: str, to: str, text: str) -> dict:
-	"""Send a text via the WhatsApp Cloud API. {"message_id": ...} on success, {"error": <Meta's message>} on failure.
+def send_whatsapp_text(access_token: str, phone_number_id: str, to: str, text: str, callback_data: str = "") -> dict:
+	"""Send a text via the WhatsApp Cloud API. {"message_id": ...} on success, {"error": <Meta's message>} on failure;
+	failures that may still have delivered (timeout, 5xx) add "unknown": True. callback_data comes back on the message's
+	status webhooks (biz_opaque_callback_data), which is how a send with an unknown outcome gets resolved.
 	Free-form text only reaches customers within 24h of their last message (error 131047 otherwise)."""
+	payload = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text}}
+	if callback_data:
+		payload["biz_opaque_callback_data"] = callback_data
 	try:
 		resp = requests.post(
 			f"{GRAPH_API_URL}/{phone_number_id}/messages",
 			headers={"Authorization": f"Bearer {access_token}"},
-			json={"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": text}},
+			json=payload,
 			timeout=10,
 		)
 		data = resp.json()
 	except (requests.RequestException, ValueError) as e:
 		logger.error(f"WhatsApp send failed: {type(e).__name__}")
-		return {"error": "whatsapp send failed"}
+		return {"error": "whatsapp send failed", **({} if never_sent(e) else {"unknown": True})}
 	if resp.status_code == 200 and data.get("messages"):
 		return {"message_id": data["messages"][0]["id"]}
 	error = data.get("error") or {}
 	logger.error(f"WhatsApp API error: {resp.status_code} - {error}")
-	return {"error": error.get("message") or "whatsapp send failed"}
+	return {"error": error.get("message") or "whatsapp send failed", **({"unknown": True} if resp.status_code >= 500 else {})}
