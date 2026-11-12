@@ -5,7 +5,7 @@ from channels_app.image_reply import wants_photo_reply
 from channels_app.media import has_storable_media
 from channels_app.media_store import store_message_media
 from channels_app.models import CustomerContact, Message, whatsapp_credentials
-from channels_app.reply import schedule_reply
+from channels_app.reply import resolve_unknown, schedule_reply
 from channels_app.service.conversation_service import ensure_contact_conversation
 from channels_app.service.message_service import create_inbound_message
 
@@ -19,9 +19,21 @@ def handle_whatsapp_message(payload: Dict[str, Any]) -> None:
 			value = change.get("value", {})
 			phone_number_id = value.get("metadata", {}).get("phone_number_id", "")
 			names = {c.get("wa_id"): c.get("profile", {}).get("name", "") for c in value.get("contacts", [])}
-			# ponytail: value["statuses"] (sent/delivered/read/failed) ignored; use "failed" to flag late send errors if needed
+			for status in value.get("statuses", []):
+				_handle_status(status)
 			for message in value.get("messages", []):
 				_handle_message(phone_number_id, message, names.get(message.get("from"), ""))
+
+
+def _handle_status(status: Dict[str, Any]) -> None:
+	"""A status for one of our sends (sent/delivered/read/failed) settles a reply held as unknown.
+	Our reference comes back as biz_opaque_callback_data: "out:<message id>:<part>"."""
+	ref = (status.get("biz_opaque_callback_data") or "").split(":")
+	if len(ref) != 3 or ref[0] != "out" or not ref[2].isdigit():
+		return
+	state = status.get("status")
+	if state in ("sent", "delivered", "read", "failed"):
+		resolve_unknown(ref[1], accepted=state != "failed", part=int(ref[2]), provider_id=status.get("id", ""))
 
 
 def _handle_message(phone_number_id: str, message: Dict[str, Any], name: str) -> None:

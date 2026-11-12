@@ -128,6 +128,7 @@ def create_outbound_message(
 	conversation: Optional[Conversation] = None,
 	id: Optional[uuid.UUID] = None,
 	sender: str = "bot",
+	status: str = "completed",
 ) -> Message:
 	"""
 	Create an outbound message record.
@@ -158,7 +159,7 @@ def create_outbound_message(
 		"contact": contact,
 		"conversation": conversation,
 		"direction": "out",
-		"status": "completed",
+		"status": status,
 		"text": text,
 		"external_message_id": external_message_id,
 		"timestamp": None,

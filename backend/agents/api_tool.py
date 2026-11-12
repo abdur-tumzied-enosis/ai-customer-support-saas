@@ -14,6 +14,8 @@ import requests
 import urllib3
 from urllib3.util import parse_url
 
+from core.http import never_sent
+
 logger = logging.getLogger(__name__)
 
 MAX_CALLS = 5
@@ -124,11 +126,13 @@ def build_call_api_tool(domains: list[dict], log: list) -> Callable[..., str]:
 			finally:
 				resp.close()
 			entry["status"] = resp.status_code
-		except requests.Timeout:
+		except requests.Timeout as e:
 			entry["error"] = "timeout"
-			return "ERROR: timeout"
+			return "ERROR: could not connect" if never_sent(e) else "ERROR: timeout"
 		except (requests.RequestException, urllib3.exceptions.HTTPError) as e:
 			entry["error"] = type(e).__name__
+			if never_sent(e):
+				return "ERROR: could not connect"  # the request never left, so a POST can be tried again
 			return f"ERROR: request failed ({type(e).__name__})"
 		except Exception as e:  # never raise into the agent; langgraph would abort the whole reply
 			logger.warning(f"[Tool: call_api] unexpected {type(e).__name__}", exc_info=True)

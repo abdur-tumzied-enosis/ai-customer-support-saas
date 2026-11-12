@@ -5,6 +5,27 @@ MODEL_CONFIG_CACHE_KEY = "agents:model_config"
 ROLES = ("reply", "fallback", "memory", "transcription")
 
 
+class ToolExecution(models.Model):
+	"""One side-effecting agent tool call for one inbound message. A reply that is retried or recovered after a crash
+	finds the row and reuses the stored result instead of running the tool again (agents.idempotency.once)."""
+	STATUS_CHOICES = [("executing", "Executing"), ("completed", "Completed"), ("failed", "Failed"), ("unknown", "Unknown")]
+	message_id = models.UUIDField()  # the inbound message the reply answers (channels_app.Message)
+	operation_key = models.CharField(max_length=64)  # sha256 of tool name + arguments: same call, same key
+	tool_name = models.CharField(max_length=100)
+	status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="executing")
+	input_payload = models.JSONField(default=dict)
+	result = models.TextField(blank=True)
+	error = models.TextField(blank=True)
+	started_at = models.DateTimeField(auto_now_add=True)
+	completed_at = models.DateTimeField(null=True, blank=True)
+
+	class Meta:
+		constraints = [models.UniqueConstraint(fields=["message_id", "operation_key"], name="unique_tool_operation")]
+
+	def __str__(self):
+		return f"{self.tool_name} {self.status} ({self.message_id})"
+
+
 class AIModel(models.Model):
 	"""A model the admin can pick in ModelConfig. Prices price providers that don't report a charged amount (Google)."""
 	KIND_CHOICES = [("text", "Text"), ("transcription", "Transcription"), ("embedding", "Embedding"), ("rerank", "Rerank")]
