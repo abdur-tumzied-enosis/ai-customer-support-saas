@@ -65,7 +65,19 @@ export default function ProjectSettingsPage() {
 		if (!project || !features) return;
 		setSavingFeatures(true);
 		try {
-			setFeatures(await featuresApi.update(String(project.id), !features.image_search));
+			setFeatures(await featuresApi.update(String(project.id), { image_search: !features.image_search }));
+		} catch (err) {
+			toast.error(formatError(err));
+		} finally {
+			setSavingFeatures(false);
+		}
+	}
+
+	async function toggleVisionFallback() {
+		if (!project || !features) return;
+		setSavingFeatures(true);
+		try {
+			setFeatures(await featuresApi.update(String(project.id), { vision_fallback: !features.vision_fallback }));
 		} catch (err) {
 			toast.error(formatError(err));
 		} finally {
@@ -174,6 +186,35 @@ export default function ProjectSettingsPage() {
 							</Button>
 						) : (
 							<p className="text-sm">Image search: {features.image_search ? "On" : "Off"}</p>
+						)}
+					</CardContent>
+				</Card>
+			)}
+
+			{features?.vision_fallback_available && (
+				<Card>
+					<CardHeader>
+						<CardTitle>Photo help</CardTitle>
+						<CardDescription>
+							When the assistant cannot match a photo to your catalog, it can send the photo to the configured AI provider so it can look at it. Photos may contain personal information. Only photos that need help are sent. Turn on image search per channel too.
+						</CardDescription>
+					</CardHeader>
+					<CardContent className="space-y-4">
+						{isAdmin ? (
+							<Button
+								type="button"
+								variant={features.vision_fallback ? "default" : "outline"}
+								disabled={savingFeatures || !features.image_search}
+								onClick={toggleVisionFallback}
+							>
+								{savingFeatures && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+								Photo help: {features.vision_fallback ? "On" : "Off"}
+							</Button>
+						) : (
+							<p className="text-sm">Photo help: {features.vision_fallback ? "On" : "Off"}</p>
+						)}
+						{!features.image_search && (
+							<p className="text-sm">Turn on Image search first. Photo help cannot run without it.</p>
 						)}
 					</CardContent>
 				</Card>
