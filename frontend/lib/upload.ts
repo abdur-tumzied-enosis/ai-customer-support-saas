@@ -5,6 +5,9 @@ import { ApiError } from "./api";
 export type PresignedUpload = { url: string; headers: Record<string, string> };
 
 const MAX_EDGE = 2048;
+// Mirror backend/knowledge/models.py (MAX_IMAGES_PER_PRODUCT, MAX_PRODUCT_IMAGE_BYTES); the server stays the authority
+export const MAX_PHOTOS_PER_PRODUCT = 10;
+export const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
 /** Shrink a photo so its long edge is at most maxEdge (JPEG). Speeds up phone uploads; the server still
  * validates and resizes, so on any decode problem the original file is returned unchanged. */

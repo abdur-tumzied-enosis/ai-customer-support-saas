@@ -1,4 +1,4 @@
-import { downscaleImage, putToR2, sha256Hex, type PresignedUpload } from "./upload";
+import { downscaleImage, MAX_PHOTO_BYTES, putToR2, sha256Hex, type PresignedUpload } from "./upload";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8251";
 
@@ -1020,6 +1020,14 @@ type ProductUploads = { product: Product; uploads: (PresignedUpload & { image_id
 // Downscale -> presign (`path` creates the product or adds to it) -> parallel PUTs to R2 -> confirm (queues resize + embed)
 async function uploadProductPhotos(path: string, body: Record<string, unknown>, files: File[]): Promise<Product> {
 	const photos = await Promise.all(files.map((f) => downscaleImage(f)));
+	const tooBig = files.filter((_, i) => photos[i].size > MAX_PHOTO_BYTES).map((f) => f.name);
+	if (tooBig.length) {
+		const mb = MAX_PHOTO_BYTES / (1024 * 1024);
+		throw new ApiError({
+			code: "image_too_large",
+			message: `${tooBig.join(", ")} ${tooBig.length === 1 ? "is" : "are"} larger than ${mb} MB even after resizing. Choose a smaller photo.`,
+		});
+	}
 	const specs = photos.map((p, i) => ({ name: files[i].name, size: p.size, content_type: p.type }));
 	const { data } = await apiFetch<ProductUploads>(path, { method: "POST", json: { ...body, files: specs } });
 	await Promise.all(data.uploads.map((u, i) => putToR2(u, photos[i])));

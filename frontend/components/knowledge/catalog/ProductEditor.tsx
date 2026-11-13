@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Plus, Trash2, Upload, X } from "lucide-react";
 import { API_BASE_URL, productApi, productFieldApi, type Product, type ProductField, type ProductImage, type ProductVariant } from "@/lib/api";
 import { formatError } from "@/lib/errors";
+import { MAX_PHOTO_BYTES, MAX_PHOTOS_PER_PRODUCT } from "@/lib/upload";
 import { currencySymbol } from "@/components/knowledge/catalog/ProductTable";
 
 export const KEY_WARNING =
@@ -121,8 +122,14 @@ export default function ProductEditor({ projectId, kbId, product, currency, imag
 
 	const addPhotos = (list: FileList | null) => {
 		if (!list?.length) return;
-		if (savedId === null) return setFiles((f) => [...f, ...Array.from(list)]);
-		photoOp(async () => onSaved(await productApi.addImages(savedId, Array.from(list))));
+		// Copy now: the caller clears the input right after this returns, and a lazy copy would read an empty list
+		const picked = Array.from(list);
+		const have = savedId === null ? files.length : (product?.images ?? []).length;
+		if (have + picked.length > MAX_PHOTOS_PER_PRODUCT) {
+			return toast.error(`A product can have at most ${MAX_PHOTOS_PER_PRODUCT} photos. It has ${have} now.`);
+		}
+		if (savedId === null) return setFiles((f) => [...f, ...picked]);
+		photoOp(async () => onSaved(await productApi.addImages(savedId, picked)));
 	};
 
 	const removePhoto = (img: ProductImage) =>
@@ -183,6 +190,7 @@ export default function ProductEditor({ projectId, kbId, product, currency, imag
 				<p className="text-sm text-muted-foreground">
 					{product || savedId ? "Photos let the assistant recognise this product when a customer sends a picture." : "Photos upload when you add the product."}
 				</p>
+				<p className="text-xs text-muted-foreground">Up to {MAX_PHOTOS_PER_PRODUCT} photos, {MAX_PHOTO_BYTES / (1024 * 1024)} MB each after resizing.</p>
 				{imageSearchOff && (
 					<p className="text-sm text-muted-foreground">
 						Image search is off, so the assistant won&apos;t match customer pictures yet.{" "}
