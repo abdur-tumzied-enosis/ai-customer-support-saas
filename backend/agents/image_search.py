@@ -14,6 +14,7 @@ IMAGE_SEARCH_TOP_K = 3
 DISPLAY_EDGE = 1600
 THUMB_EDGE = 320
 WEBP_QUALITY = 80
+JPEG_QUALITY = 85  # outbound chat photos: Meta's Send API takes JPEG/PNG/GIF, not WebP
 
 IMAGE_KIND = models.FieldCondition(key="kind", match=models.MatchValue(value="image"))  # photo points share the KB collection with text
 
@@ -60,6 +61,20 @@ def make_variants(data: bytes, max_bytes: int = MAX_IMAGE_BYTES) -> tuple[bytes,
 	"""(display, thumb) WebP versions of an uploaded photo, upright and without metadata. Raises NotAnImage."""
 	img = load_image(data, max_bytes)
 	return _webp(img, DISPLAY_EDGE), _webp(img, THUMB_EDGE)
+
+
+def _jpeg(img: Image.Image, edge: int) -> bytes:
+	img = img.copy()
+	img.thumbnail((edge, edge))
+	buf = BytesIO()
+	img.save(buf, "JPEG", quality=JPEG_QUALITY)  # no exif= : metadata is dropped
+	return buf.getvalue()
+
+
+def make_send_variant(data: bytes, max_bytes: int = MAX_IMAGE_BYTES) -> bytes:
+	"""A JPEG of an uploaded photo, for sending to a chat platform (WebP is not accepted there).
+	Raises NotAnImage."""
+	return _jpeg(load_image(data, max_bytes), DISPLAY_EDGE)
 
 
 def image_format(data: bytes) -> str:

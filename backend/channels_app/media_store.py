@@ -10,11 +10,11 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
-from agents.image_search import MAX_IMAGE_BYTES, NotAnImage, make_variants
+from agents.image_search import MAX_IMAGE_BYTES, NotAnImage, make_send_variant, make_variants
 from core.storage import AUDIO_MAX_BYTES, delete_keys, thumb_key
 
 from .media import fetch_attachment, is_photo, is_storable, read_stored
-from .models import Message
+from .models import Conversation, Message
 from .reply import schedule_reply
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,20 @@ def _store(msg: Message, att: dict) -> str:
 	name = default_storage.save(f"{folder}/{uuid4().hex}.webp", ContentFile(display))
 	default_storage.save(thumb_key(name), ContentFile(thumb))
 	delete_keys(tmp)
+	return name
+
+
+def store_outbound_photo(conversation: Conversation, att: dict) -> str:
+	"""Store one staff photo upload right now and return its key: a JPEG (what chat platforms accept, unlike the
+	WebP a customer photo becomes) plus a WebP thumb. The temporary upload is deleted. Raises MediaError (bad or
+	oversized upload) and NotAnImage (not a real photo), so the caller can answer 400 before any message exists.
+
+	Takes the conversation, not a Message: it runs before the row is created, so a failure leaves no row behind."""
+	data = read_stored(att["path"])
+	display = make_send_variant(data)
+	name = default_storage.save(f"chat_media/{conversation.project.slug}/{uuid4().hex}.jpg", ContentFile(display))
+	default_storage.save(thumb_key(name), ContentFile(make_variants(data)[1]))
+	delete_keys(att["path"])
 	return name
 
 
