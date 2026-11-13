@@ -81,9 +81,12 @@ class VisionCapabilityTest(TestCase):
 	def test_aimodel_supports_vision_defaults_false(self):
 		assert AIModel.objects.create(provider="openrouter", name="x").supports_vision is False
 
-	def test_vision_route_env_google_true(self):
+	def test_vision_route_env_google_none(self):
+		# Photo turns are OpenRouter-only: a Google reply model never routes photos, even when it is vision-capable
 		from agents.llm import vision_route
-		assert vision_route() == ("google", "gemini-env")
+		assert vision_route() is None
+		AIModel.objects.create(provider="google", name="gemini-env", kind="text", supports_vision=True)
+		assert vision_route() is None
 
 	@override_settings(LLM_PROVIDER="openrouter", LLM_MODEL="env-or")
 	def test_vision_route_env_openrouter_none(self):

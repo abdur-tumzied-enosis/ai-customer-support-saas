@@ -28,18 +28,19 @@ def active_model(role: str):
 	return config.get(role)
 
 
+VISION_PROVIDER = "openrouter"  # photo turns run on OpenRouter only; Google is never a photo route
+
+
 def capability(provider: str, name: str) -> bool:
-	"""supports_vision of the AIModel row for (provider, name). No row: Google is capable, others are not."""
+	"""supports_vision of the AIModel row for (provider, name). No row: not capable."""
 	from .models import AIModel
 	row = AIModel.objects.filter(provider=provider, name=name).first()
-	if row:
-		return row.supports_vision
-	return (provider or "").lower() == "google"
+	return bool(row and row.supports_vision)
 
 
 def vision_route() -> tuple | None:
-	"""(provider, name) that answers a photo turn, or None. Order: reply model if capable, then
-	ModelConfig.vision_model if set and capable, then None. Uncached: one small read per photo-needing turn.
+	"""(provider, name) that answers a photo turn, or None. Order: reply model if OpenRouter and capable, then
+	ModelConfig.vision_model if OpenRouter and capable, then None. Uncached: one small read per photo-needing turn.
 	A DB error is logged and treated as None (fail closed)."""
 	from .models import ModelConfig
 	try:
@@ -47,9 +48,9 @@ def vision_route() -> tuple | None:
 		reply = row.roles().get("reply") if row else None
 		if reply is None:
 			reply = (settings.LLM_PROVIDER, settings.LLM_MODEL)
-		if capability(*reply):
+		if reply[0] == VISION_PROVIDER and capability(*reply):
 			return reply
-		if row and row.vision_model_id and row.vision_model.supports_vision:
+		if row and row.vision_model_id and row.vision_model.provider == VISION_PROVIDER and row.vision_model.supports_vision:
 			return (row.vision_model.provider, row.vision_model.name)
 		return None
 	except Exception:
@@ -196,7 +197,7 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 		(settings.LLM_FALLBACK_PROVIDER, settings.LLM_FALLBACK_MODEL) if settings.LLM_FALLBACK_MODEL else None
 	)
 	# A text-only backup would receive the photo and hallucinate; on a vision route it must also see images.
-	if backup_model and (route != "vision" or capability(*backup_model)):
+	if backup_model and (route != "vision" or (backup_model[0] == VISION_PROVIDER and capability(*backup_model))):
 		backup = _reply_llm(*backup_model, **llm_kwargs)
 		middleware.append(fallback_to(backup))
 	system_prompt = build_system_prompt(custom_instructions, memory, search_results)
