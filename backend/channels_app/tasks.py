@@ -5,7 +5,7 @@ from typing import Optional
 from knowledge.models import KnowledgeBase, CustomInstruction
 from . import memory  # also registers the memory Celery tasks
 from .models import Message, ChannelCredential, meta_credentials, whatsapp_credentials
-from .facebook_client import send_text_message, send_whatsapp_text
+from .facebook_client import send_image_message, send_text_message, send_whatsapp_image, send_whatsapp_text
 from .service.message_service import create_outbound_message
 from agents.rag import generate_reply, Context, ToolDeps, ChatMessage
 from agents.vector_store import get_retriever

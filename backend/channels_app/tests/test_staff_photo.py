@@ -10,7 +10,8 @@ from accounts.models import Project, ProjectUser
 from agents.image_search import make_send_variant
 from channels_app import media_store
 from channels_app.api import _message_dict
-from channels_app.models import CustomerContact, Message
+from channels_app.models import Conversation, CustomerContact, Message
+from channels_app.reply import _facebook_send, _send_parts, _whatsapp_send
 from channels_app.service.conversation_service import create_conversation, ensure_contact_conversation
 from channels_app.service.message_service import create_outbound_message
 from channels_app.tests.test_widget import png_bytes
@@ -153,3 +154,61 @@ class MessagePhotoViewTest(TestCase):
 		ocontact = CustomerContact.objects.create(project=other, platform="whatsapp", external_id="w9")
 		msg = self.photo_message([{"type": "image", "path": "chat_media/o-photo-view/x.jpg"}], conv=ensure_contact_conversation(ocontact, okb))
 		assert self.get(msg).status_code == 404
+
+
+class DeliverImagePartTest(TestCase):
+	def setUp(self):
+		self.project = Project.objects.create(name="P", slug="p-deliver-img")
+		self.kb = KnowledgeBase.objects.create(project=self.project, name="kb", vector_collection="vc-deliver-img")
+		self.contact = CustomerContact.objects.create(project=self.project, platform="facebook", external_id="psid")
+		self.conv = ensure_contact_conversation(self.contact, self.kb)
+		self.image = mock.patch("channels_app.tasks.send_image_message", return_value={"message_id": "img1"}).start()
+		self.text = mock.patch("channels_app.tasks.send_text_message", return_value={"message_id": "txt1"}).start()
+		cred = mock.Mock()
+		cred.get_credentials.return_value.page_access_token = "tok"
+		mock.patch("channels_app.tasks.get_facebook_credential", return_value=cred).start()
+		self.addCleanup(mock.patch.stopall)
+		self.msg = Message.objects.create(
+			project=self.project, contact=self.contact, conversation=self.conv, direction="out",
+			text="hello", status="pending", attachment_info=[{"type": "image", "path": "chat_media/p/a.jpg"}],
+		)
+
+	def send_parts(self, parts, conv=None):
+		conv = conv or self.conv
+		with mock.patch("channels_app.reply.presign_get", return_value="https://r2.test/a.jpg"):
+			return _send_parts(self.msg, parts, _facebook_send(conv, self.msg), conv.channel)
+
+	def test_image_part_reaches_send_image_message(self):
+		assert self.send_parts([{"image": "chat_media/p/a.jpg"}]) is True
+		assert [c.kwargs["image_url"] for c in self.image.call_args_list] == ["https://r2.test/a.jpg"]
+		assert self.msg.meta["parts_sent"] == 1
+
+	def test_image_then_text_sends_both(self):
+		assert self.send_parts([{"image": "chat_media/p/a.jpg"}, "hello"]) is True
+		assert [c.kwargs["text"] for c in self.text.call_args_list] == ["hello"]
+		assert self.msg.meta["parts_sent"] == 2
+
+	def test_resume_after_the_image_part_skips_it(self):
+		Message.objects.filter(id=self.msg.id).update(meta={"parts_sent": 1, "parts_total": 2})
+		self.msg.refresh_from_db()
+		assert self.send_parts([{"image": "chat_media/p/a.jpg"}, "hello"]) is True
+		self.image.assert_not_called()  # the photo already landed
+		assert self.text.call_count == 1
+
+	def test_whatsapp_image_part_uses_image_link(self):
+		wa = mock.patch("channels_app.tasks.send_whatsapp_image", return_value={"message_id": "w1"}).start()
+		creds = mock.Mock(access_token="tok", phone_number_id="123")
+		cred = mock.Mock()
+		cred.get_credentials.return_value = creds
+		mock.patch("channels_app.tasks.get_whatsapp_credential", return_value=cred).start()
+		CustomerContact.objects.filter(id=self.contact.id).update(platform="whatsapp")  # channel follows contact.platform
+		self.conv.refresh_from_db()
+		self.contact.refresh_from_db()
+		with mock.patch("channels_app.reply.presign_get", return_value="https://r2.test/a.jpg"):
+			assert _send_parts(self.msg, [{"image": "chat_media/p/a.jpg"}], _whatsapp_send(self.conv, self.msg), "whatsapp") is True
+		assert [c.kwargs["image_url"] for c in wa.call_args_list] == ["https://r2.test/a.jpg"]
+
+	def test_unknown_image_send_holds_the_message(self):
+		self.image.return_value = {"unknown": True}
+		assert self.send_parts([{"image": "chat_media/p/a.jpg"}]) is False
+		assert self.msg.meta["inflight"] == 0
