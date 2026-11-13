@@ -6,7 +6,7 @@ from rest_framework.exceptions import ValidationError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
-from .media import PHOTO_ERROR, has_photo, is_own_upload, photo_keys, presign_chat_photo, uploaded_photo_ok
+from .media import PHOTO_ERROR, UPLOAD_PREFIXES, has_photo, is_own_upload, photo_keys, presign_chat_photo, uploaded_photo_ok
 from .media_store import store_message_media
 from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
 from .service.conversation_service import create_conversation
@@ -18,6 +18,8 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import OuterRef, Subquery, Sum
 from billing.models import ACTIONS, CreditTransaction
+from core.storage import presign_get, thumb_key
+from django.http import HttpResponseRedirect
 from django.utils import timezone
 from . import memory
 from .handoff import conversation_event_data, end_handoff, note_staff_activity, start_handoff
@@ -644,6 +646,26 @@ class MessageStatusView(APIView):
 				}
 			}
 		}, status=status.HTTP_200_OK)
+
+
+class MessagePhotoView(APIView):
+	"""Redirects to a short-lived presigned R2 URL for one photo of a message: the browser fetches the bytes from
+	R2, not through Django. `index` picks among the message's photos (a message may carry several)."""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request, message_id):
+		message = Message.objects.filter(id=message_id).select_related("project").first()
+		if not message or not ProjectUser.objects.filter(project=message.project, user=request.user).exists():
+			return _error("not_found", "Message not found", status.HTTP_404_NOT_FOUND)  # other projects look unknown
+		index = request.query_params.get("index")
+		keys = photo_keys(message)
+		if not index or not index.isdigit() or int(index) >= len(keys):
+			return _error("not_found", "Photo not found", status.HTTP_404_NOT_FOUND)
+		key = keys[int(index)]
+		if not key.startswith(UPLOAD_PREFIXES):
+			return _error("not_found", "Photo not found", status.HTTP_404_NOT_FOUND)  # never presign an arbitrary key
+		key = thumb_key(key) if request.query_params.get("size") == "thumb" else key
+		return HttpResponseRedirect(presign_get(key))
 
 
 class ChannelListCreateView(APIView):
