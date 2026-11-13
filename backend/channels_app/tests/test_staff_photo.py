@@ -179,7 +179,7 @@ class DeliverImagePartTest(TestCase):
 	def send_parts(self, parts, conv=None):
 		conv = conv or self.conv
 		with mock.patch("channels_app.reply.presign_get", return_value="https://r2.test/a.jpg"):
-			return _send_parts(self.msg, parts, _facebook_send(conv, self.msg), conv.channel)
+			return _send_parts(self.msg, parts, _facebook_send(conv, self.msg, self.msg), conv.channel)
 
 	def test_image_part_reaches_send_image_message(self):
 		assert self.send_parts([{"image": "chat_media/p/a.jpg"}]) is True
@@ -208,7 +208,7 @@ class DeliverImagePartTest(TestCase):
 		self.conv.refresh_from_db()
 		self.contact.refresh_from_db()
 		with mock.patch("channels_app.reply.presign_get", return_value="https://r2.test/a.jpg"):
-			assert _send_parts(self.msg, [{"image": "chat_media/p/a.jpg"}], _whatsapp_send(self.conv, self.msg), "whatsapp") is True
+			assert _send_parts(self.msg, [{"image": "chat_media/p/a.jpg"}], _whatsapp_send(self.conv, self.msg, self.msg), "whatsapp") is True
 		assert [c.kwargs["image_url"] for c in wa.call_args_list] == ["https://r2.test/a.jpg"]
 
 	def test_unknown_image_send_holds_the_message(self):

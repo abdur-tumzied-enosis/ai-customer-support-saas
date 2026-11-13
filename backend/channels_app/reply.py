@@ -59,16 +59,17 @@ def _complete(messages) -> None:
 	Message.objects.filter(id__in=[m.id for m in messages]).update(status="completed")
 
 
-def _facebook_send(conversation, out_msg: Message):
+def _facebook_send(conversation, out_msg: Message, reference_msg: Message):
 	"""The `send(part, ref)` closure for Messenger/Instagram; a part is text or {"image": <r2 key>}.
 	The image URL is presigned per attempt: the URL is short-lived, so a retry must not reuse a stale one.
+	`reference_msg` is the inbound message the credential is found from (its meta names the receiving account),
+	which for a redelivery may not be `out_msg`.
 	Instagram DMs go through the same Send API (Page token, /me/messages), with a smaller text limit."""
-	cred = tasks.get_facebook_credential(out_msg, conversation.channel)
+	cred = tasks.get_facebook_credential(reference_msg, conversation.channel)
 	if not cred:
 		return None
 	token = cred.get_credentials().page_access_token
 	psid = conversation.contact.external_id
-	max_bytes = INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None
 
 	def send(part, ref):
 		if isinstance(part, dict):
@@ -78,9 +79,9 @@ def _facebook_send(conversation, out_msg: Message):
 	return send
 
 
-def _whatsapp_send(conversation, out_msg: Message):
+def _whatsapp_send(conversation, out_msg: Message, reference_msg: Message):
 	"""The `send(part, ref)` closure for WhatsApp; a part is text or {"image": <r2 key>}. See _facebook_send."""
-	cred = tasks.get_whatsapp_credential(out_msg)
+	cred = tasks.get_whatsapp_credential(reference_msg)
 	creds = cred and cred.get_credentials()
 	if not cred:
 		return None
@@ -97,11 +98,14 @@ def _whatsapp_send(conversation, out_msg: Message):
 
 
 def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bool:
-	return _send_parts(out_msg, split_text(out_msg.text), _facebook_send(conversation, out_msg), conversation.channel)
+	# Instagram rejects text over 1000 bytes; Messenger's limit is chars
+	parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
+	return _send_parts(out_msg, parts, _facebook_send(conversation, out_msg, reference_msg), conversation.channel)
 
 
 def _send_whatsapp(conversation, out_msg: Message, reference_msg: Message) -> bool:
-	return _send_parts(out_msg, split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS), _whatsapp_send(conversation, out_msg), "whatsapp")
+	parts = split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS)
+	return _send_parts(out_msg, parts, _whatsapp_send(conversation, out_msg, reference_msg), "whatsapp")
 
 
 def _send_parts(out_msg: Message, parts: list, send, channel: str) -> bool:
