@@ -10,6 +10,7 @@ import MemoryDialog from "@/components/chat/MemoryDialog";
 import CreateFromChatDialog from "@/components/orders/CreateFromChatDialog";
 import ConversationOrders from "@/components/orders/ConversationOrders";
 import { conversationApi, featuresApi, type Conversation, type ConversationMessage } from "@/lib/api";
+import { downscaleImage, putToR2 } from "@/lib/upload";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
 import { ArrowLeft, Loader2, Bot } from "lucide-react";
@@ -56,11 +57,20 @@ export default function ConversationThreadPage() {
 		const timer = setInterval(async () => {
 			try {
 				const res = await conversationApi.getMessages(conversationId, 20);
-				const latest = res.data.messages.map(toChatMessage);
+				const raw = res.data.messages;
+				const latest = raw.map(toChatMessage);
 				setMessages((prev) => {
+					// A customer photo is stored after its row exists, so photo_urls (and the credits/notes
+					// written during the reply) arrive on a later poll: merge them in, don't only append.
+					const byId = new Map(raw.map((m) => [m.id, m]));
+					const merged = prev.map((m) => {
+						const fresh = byId.get(m.id);
+						return fresh ? { ...m, photoUrls: fresh.photo_urls, credits: fresh.credits } : m;
+					});
 					const known = new Set(prev.map((m) => m.id));
 					const added = latest.filter((m) => !known.has(m.id));
-					return added.length ? [...prev, ...added] : prev;
+					const changed = merged.some((m, i) => m !== prev[i]);
+					return changed || added.length ? [...merged, ...added] : prev;
 				});
 			} catch {
 				// transient; next tick retries
@@ -101,6 +111,7 @@ export default function ConversationThreadPage() {
 			content: msg.text,
 			sender: msg.sender,
 			hasPhoto: msg.has_photo,
+			photoUrls: msg.photo_urls,
 			photoMatches: msg.photo_matches,
 			credits: msg.credits,
 		};
@@ -283,7 +294,7 @@ export default function ConversationThreadPage() {
 				prev.map((m) => {
 					const f = byId.get(m.id);
 					if (!f) return m;
-					return { ...m, credits: f.credits, photoMatches: m.id === messageId && f.photo_matches ? f.photo_matches : m.photoMatches };
+					return { ...m, credits: f.credits, photoUrls: f.photo_urls, photoMatches: m.id === messageId && f.photo_matches ? f.photo_matches : m.photoMatches };
 				})
 			);
 		} catch {
@@ -307,6 +318,21 @@ export default function ConversationThreadPage() {
 		} finally {
 			setSending(false);
 		}
+	}
+
+	// The row is committed before the send finishes, so the 5s poll can already have appended it: append by id.
+	function appendMessage(m: ConversationMessage) {
+		const chat = toChatMessage(m);
+		setMessages((prev) => (prev.some((p) => p.id === chat.id) ? prev : [...prev, chat]));
+	}
+
+	async function handleSendStaffPhoto(file: File, text: string) {
+		const photo = await downscaleImage(file);
+		const presigned = await conversationApi.staffPhotoPresign(conversationId, { content_type: photo.type, size: photo.size });
+		await putToR2(presigned.data, photo);
+		const res = await conversationApi.staffPhotoSend(conversationId, { key: presigned.data.key, text });
+		appendMessage(res.data.message);
+		await fetchConversation();
 	}
 
 	if (loading) {
@@ -449,10 +475,11 @@ export default function ConversationThreadPage() {
 				<MessageComposer
 					conversation={conversation}
 					onConversationChange={setConversation}
-					onStaffMessage={(m) => setMessages((prev) => [...prev, toChatMessage(m)])}
+					onStaffMessage={(m) => appendMessage(m)}
 					onSendAsCustomer={handleSend}
 					sendingAsCustomer={sending}
 					onSendPhoto={imageSearchOn ? handleSendPhoto : undefined}
+					onSendStaffPhoto={handleSendStaffPhoto}
 				/>
 			)}
 		</div>

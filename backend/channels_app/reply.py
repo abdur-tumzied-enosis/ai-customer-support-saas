@@ -18,10 +18,12 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from billing.service import charge_delivered_reply, price_of, shopper_blocked
+from core.storage import presign_get
 
 from . import image_reply, memory, tasks
 from .facebook_client import INSTAGRAM_MAX_TEXT_BYTES, WHATSAPP_MAX_TEXT_CHARS, split_text
 from .handoff import start_handoff, wants_human
+from .media import photo_keys
 from .models import Conversation, Message
 from .service.message_service import create_outbound_message
 
@@ -58,31 +60,67 @@ def _complete(messages) -> None:
 	Message.objects.filter(id__in=[m.id for m in messages]).update(status="completed")
 
 
-def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bool:
-	# Instagram DMs go through the same Send API (Page token, /me/messages), with a smaller text limit
+def _facebook_send(conversation, out_msg: Message, reference_msg: Message):
+	"""The `send(part, ref)` closure for Messenger/Instagram; a part is text or {"image": <r2 key>}.
+	The image URL is presigned per attempt: the URL is short-lived, so a retry must not reuse a stale one.
+	`reference_msg` is the inbound message the credential is found from (its meta names the receiving account),
+	which for a redelivery may not be `out_msg`.
+	Instagram DMs go through the same Send API (Page token, /me/messages), with a smaller text limit."""
 	cred = tasks.get_facebook_credential(reference_msg, conversation.channel)
-	parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
-	send = cred and (lambda text, ref: tasks.send_text_message(
-		page_access_token=cred.get_credentials().page_access_token,
-		recipient_psid=conversation.contact.external_id,
-		text=text,
-	))
-	return _send_parts(out_msg, parts, send, conversation.channel)
+	if not cred:
+		return None
+	token = cred.get_credentials().page_access_token
+	psid = conversation.contact.external_id
+
+	def send(part, ref):
+		if isinstance(part, dict):
+			return tasks.send_image_message(page_access_token=token, recipient_psid=psid, image_url=presign_get(part["image"]))
+		return tasks.send_text_message(page_access_token=token, recipient_psid=psid, text=part)
+
+	return send
+
+
+def _whatsapp_send(conversation, out_msg: Message, reference_msg: Message):
+	"""The `send(part, ref)` closure for WhatsApp; a part is text or {"image": <r2 key>}. See _facebook_send."""
+	cred = tasks.get_whatsapp_credential(reference_msg)
+	creds = cred and cred.get_credentials()
+	if not cred:
+		return None
+
+	def send(part, ref):
+		if isinstance(part, dict):
+			return tasks.send_whatsapp_image(
+				access_token=creds.access_token, phone_number_id=creds.phone_number_id,
+				to=conversation.contact.external_id, image_url=presign_get(part["image"]), callback_data=ref,
+			)
+		return tasks.send_whatsapp_text(creds.access_token, creds.phone_number_id, conversation.contact.external_id, part, callback_data=ref)
+
+	return send
+
+
+def _outbound_parts(out_msg: Message, text_parts: list) -> list:
+	"""What to send, in order: every attached photo, then the text. The platforms take no caption, so a photo
+	with text is two messages. A message with no attachments is unchanged (the bot's normal reply)."""
+	return [{"image": key} for key in photo_keys(out_msg)] + text_parts
+
+
+def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bool:
+	# Instagram rejects text over 1000 bytes; Messenger's limit is chars
+	text_parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
+	parts = _outbound_parts(out_msg, text_parts)
+	return _send_parts(out_msg, parts, _facebook_send(conversation, out_msg, reference_msg), conversation.channel)
 
 
 def _send_whatsapp(conversation, out_msg: Message, reference_msg: Message) -> bool:
-	cred = tasks.get_whatsapp_credential(reference_msg)
-	creds = cred and cred.get_credentials()
-	send = cred and (lambda text, ref: tasks.send_whatsapp_text(
-		creds.access_token, creds.phone_number_id, conversation.contact.external_id, text, callback_data=ref
-	))
-	return _send_parts(out_msg, split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS), send, "whatsapp")
+	parts = _outbound_parts(out_msg, split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS))
+	return _send_parts(out_msg, parts, _whatsapp_send(conversation, out_msg, reference_msg), "whatsapp")
 
 
 def _send_parts(out_msg: Message, parts: list, send, channel: str) -> bool:
-	"""Send `parts` in order with `send(text, ref) -> {"message_id"} | {"error"?, "unknown"?}`; records progress on out_msg.
-	`ref` ("out:<message id>:<part>") is the stable per-part reference. meta["inflight"] is written before each request
-	and cleared once its outcome is known: if it is still set later, that part may or may not have been delivered."""
+	"""Send `parts` in order with `send(part, ref) -> {"message_id"} | {"error"?, "unknown"?}`; records progress on out_msg.
+	A part is text, or `{"image": <r2 key>}` for a photo. `ref` ("out:<message id>:<part>") is the stable per-part
+	reference. meta["inflight"] is written before each request and cleared once its outcome is known: if it is still
+	set later, that part may or may not have been delivered."""
 	sent = out_msg.meta.get("parts_sent", 0)  # resume point when redelivering a partly sent reply
 	response = {}
 	while send and sent < len(parts):
@@ -422,7 +460,8 @@ def _age_unknown_deliveries(now) -> None:
 	only very late the customer gets a duplicate). Messenger and Instagram have no such signal, so staff are told."""
 	stale = Message.objects.filter(
 		direction="out", status="unknown", deliver_after__lt=now - UNKNOWN_REVIEW_AFTER, conversation__isnull=False,
-	).select_related("conversation__contact").order_by("deliver_after")[:100]
+	).exclude(sender="staff").select_related("conversation__contact").order_by("deliver_after")[:100]  # a staff send is
+	# inline and never retried automatically: re-sending one could deliver the same photo or text twice
 	needs_review = 0
 	for out_msg in stale:
 		if out_msg.conversation.channel == "whatsapp":
