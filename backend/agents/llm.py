@@ -28,6 +28,35 @@ def active_model(role: str):
 	return config.get(role)
 
 
+def capability(provider: str, name: str) -> bool:
+	"""supports_vision of the AIModel row for (provider, name). No row: Google is capable, others are not."""
+	from .models import AIModel
+	row = AIModel.objects.filter(provider=provider, name=name).first()
+	if row:
+		return row.supports_vision
+	return (provider or "").lower() == "google"
+
+
+def vision_route() -> tuple | None:
+	"""(provider, name) that answers a photo turn, or None. Order: reply model if capable, then
+	ModelConfig.vision_model if set and capable, then None. Uncached: one small read per photo-needing turn.
+	A DB error is logged and treated as None (fail closed)."""
+	from .models import ModelConfig
+	try:
+		row = ModelConfig.objects.select_related("reply_model", "vision_model").first()
+		reply = row.roles().get("reply") if row else None
+		if reply is None:
+			reply = (settings.LLM_PROVIDER, settings.LLM_MODEL)
+		if capability(*reply):
+			return reply
+		if row and row.vision_model_id and row.vision_model.supports_vision:
+			return (row.vision_model.provider, row.vision_model.name)
+		return None
+	except Exception:
+		logger.exception("Could not resolve a vision model; answering photo turns without photos")
+		return None
+
+
 def resolve_model(provider: Optional[str] = None, model: Optional[str] = None, role: str = "reply"):
 	"""(provider, model): explicit args, then the admin's ModelConfig, then env settings.
 	memory: DB memory → MEMORY_LLM_MODEL → the reply model, like MEMORY_LLM_MODEL → LLM_MODEL before."""
@@ -36,7 +65,7 @@ def resolve_model(provider: Optional[str] = None, model: Optional[str] = None, r
 			return db
 		if role == "memory" and settings.MEMORY_LLM_MODEL:
 			model = settings.MEMORY_LLM_MODEL
-		elif role != "reply" and (db := active_model("reply")):
+		elif role not in ("reply", "vision") and (db := active_model("reply")):  # vision must never resolve to the text reply
 			return db
 	return provider or settings.LLM_PROVIDER, model or settings.LLM_MODEL
 
@@ -131,7 +160,7 @@ def build_system_prompt(custom_instructions: Optional[List[dict]] = None, memory
 	return base_prompt
 
 
-def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = None, memory: str = "", search_results: str = "", provider: Optional[str] = None, model: Optional[str] = None, **llm_kwargs) -> Runnable:
+def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = None, memory: str = "", search_results: str = "", provider: Optional[str] = None, model: Optional[str] = None, route: Optional[str] = None, **llm_kwargs) -> Runnable:
 	"""
 	Create an agent with tools and optional custom instructions.
 	
@@ -146,12 +175,18 @@ def create_basic_agent(tools: list, custom_instructions: Optional[List[dict]] = 
 	llm_kwargs = {"timeout": 30, "max_retries": 1, **llm_kwargs}
 	if settings.LLM_TEMPERATURE is not None:
 		llm_kwargs.setdefault("temperature", settings.LLM_TEMPERATURE)
+	if route == "vision":
+		picked = vision_route()
+		if picked is None:
+			raise ValueError("no vision-capable model is configured for photo turns")
+		provider, model = picked
 	llm = _reply_llm(provider, model, **llm_kwargs)
 	middleware = []
 	backup_model = active_model("fallback") or (
 		(settings.LLM_FALLBACK_PROVIDER, settings.LLM_FALLBACK_MODEL) if settings.LLM_FALLBACK_MODEL else None
 	)
-	if backup_model:
+	# A text-only backup would receive the photo and hallucinate; on a vision route it must also see images.
+	if backup_model and (route != "vision" or capability(*backup_model)):
 		backup = _reply_llm(*backup_model, **llm_kwargs)
 		middleware.append(fallback_to(backup))
 	system_prompt = build_system_prompt(custom_instructions, memory, search_results)

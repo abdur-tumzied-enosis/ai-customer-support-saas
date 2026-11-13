@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest import mock
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings
@@ -9,6 +10,12 @@ from agents.models import AIModel, ModelConfig
 from usage.utils import llm_costs
 
 LOCMEM = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "model-config-tests"}}
+
+
+def fake_response(data):
+	resp = mock.Mock()
+	resp.json.return_value = {"data": data}
+	return resp
 
 
 @override_settings(CACHES=LOCMEM, LLM_PROVIDER="google", LLM_MODEL="env-model", MEMORY_LLM_MODEL=None)
@@ -63,3 +70,115 @@ class EmbeddingPricingTest(TestCase):
 		)
 		m.refresh_from_db()
 		self.assertEqual((m.kind, m.input_price_per_mtok, m.image_price_per_mtok), ("embedding", Decimal("0.08"), Decimal("0.40")))
+
+
+@override_settings(CACHES=LOCMEM, LLM_PROVIDER="google", LLM_MODEL="gemini-env")
+class VisionCapabilityTest(TestCase):
+	def setUp(self):
+		cache.clear()
+		AIModel.objects.all().delete()  # drop the migration's seeded catalog rows so the routes are exact
+
+	def test_aimodel_supports_vision_defaults_false(self):
+		assert AIModel.objects.create(provider="openrouter", name="x").supports_vision is False
+
+	def test_vision_route_env_google_true(self):
+		from agents.llm import vision_route
+		assert vision_route() == ("google", "gemini-env")
+
+	@override_settings(LLM_PROVIDER="openrouter", LLM_MODEL="env-or")
+	def test_vision_route_env_openrouter_none(self):
+		from agents.llm import vision_route
+		assert vision_route() is None
+
+	def test_vision_route_reply_model_config_wins(self):
+		from agents.llm import vision_route
+		m = AIModel.objects.create(provider="openrouter", name="deepseek/x", input_modalities=["text"])
+		ModelConfig.objects.create(reply_model=m)
+		assert vision_route() is None  # reply pick wins over the google env model, and it is text-only
+		m.input_modalities = ["text", "image"]
+		m.save()
+		assert vision_route() == ("openrouter", "deepseek/x")  # save cleared the state; no stale answer
+
+	@mock.patch("agents.pricing.requests.get")
+	def test_sync_stores_modalities_and_derives_flag(self, get):
+		from agents.pricing import sync_openrouter_prices
+		AIModel.objects.create(provider="openrouter", name="vendor/eyes")
+		AIModel.objects.create(provider="openrouter", name="vendor/text")
+		get.return_value = fake_response([
+			{"id": "vendor/eyes", "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+			 "architecture": {"input_modalities": ["text", "image"]}},
+			{"id": "vendor/text", "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+			 "architecture": {"input_modalities": ["text"]}},
+		])
+		assert sync_openrouter_prices(api_key="k")["updated"] == 2
+		eyes, text = AIModel.objects.get(name="vendor/eyes"), AIModel.objects.get(name="vendor/text")
+		assert (eyes.input_modalities, eyes.supports_vision) == (["text", "image"], True)
+		assert (text.input_modalities, text.supports_vision) == (["text"], False)
+		assert sync_openrouter_prices(api_key="k")["unchanged"] == 2  # second run: modalities compared too
+
+	@mock.patch("agents.pricing.requests.get")
+	def test_sync_missing_architecture_is_not_capable(self, get):
+		from agents.pricing import sync_openrouter_prices
+		m = AIModel.objects.create(provider="openrouter", name="vendor/bare", input_modalities=["text", "image"])
+		get.return_value = fake_response([{"id": "vendor/bare", "pricing": {"prompt": "0.000001", "completion": "0.000002"}}])
+		sync_openrouter_prices(api_key="k")
+		m.refresh_from_db()
+		assert (m.input_modalities, m.supports_vision) == ([], False)
+
+	def test_vision_route_uses_vision_model_when_reply_is_text_only(self):
+		from agents.llm import vision_route
+		reply = AIModel.objects.create(provider="openrouter", name="deepseek/x", input_modalities=["text"])
+		eyes = AIModel.objects.create(provider="openrouter", name="vendor/eyes", input_modalities=["text", "image"])
+		ModelConfig.objects.create(reply_model=reply, vision_model=eyes)
+		assert vision_route() == ("openrouter", "vendor/eyes")
+
+	def test_vision_route_none_when_no_capable_model(self):
+		from agents.llm import vision_route
+		reply = AIModel.objects.create(provider="openrouter", name="deepseek/x", input_modalities=["text"])
+		ModelConfig.objects.create(reply_model=reply)
+		assert vision_route() is None
+
+	def test_vision_route_never_resolves_to_text_reply(self):
+		from agents.llm import resolve_model
+		reply = AIModel.objects.create(provider="openrouter", name="deepseek/x", input_modalities=["text"])
+		ModelConfig.objects.create(reply_model=reply)
+		assert resolve_model(role="vision") != ("openrouter", "deepseek/x")
+
+	def test_vision_model_clean_rejects_text_only_model(self):
+		from django.core.exceptions import ValidationError
+		text_only = AIModel.objects.create(provider="openrouter", name="vendor/text", input_modalities=["text"])
+		with self.assertRaises(ValidationError):
+			ModelConfig(vision_model=text_only).clean()
+
+	def test_google_text_model_saves_as_vision_capable(self):
+		m = AIModel.objects.create(provider="google", kind="text", name="gemini-z")
+		assert (m.input_modalities, m.supports_vision) == (["text", "image"], True)
+
+	def test_backfill_marks_google_text_models(self):
+		import importlib
+		from django.apps import apps as django_apps
+		google_text = AIModel.objects.create(provider="google", kind="text", name="gemini-t")
+		openrouter_text = AIModel.objects.create(provider="openrouter", kind="text", name="vendor/t", input_modalities=["text"])
+		google_embed = AIModel.objects.create(provider="google", kind="embedding", name="embed-g")
+		backfill = importlib.import_module("agents.migrations.0006_aimodel_supports_vision").backfill
+		AIModel.objects.update(supports_vision=False, input_modalities=[])  # start from the pre-migration state
+		backfill(django_apps, None)
+		google_text.refresh_from_db(); openrouter_text.refresh_from_db(); google_embed.refresh_from_db()
+		assert google_text.supports_vision is True
+		assert openrouter_text.supports_vision is False
+		assert google_embed.supports_vision is False
+
+	def test_vision_route_builds_agent_on_vision_model(self):
+		reply = AIModel.objects.create(provider="openrouter", name="deepseek/x", input_modalities=["text"])
+		eyes = AIModel.objects.create(provider="openrouter", name="vendor/eyes", input_modalities=["text", "image"])
+		ModelConfig.objects.create(reply_model=reply, vision_model=eyes)
+		with mock.patch("agents.llm._reply_llm") as reply_llm, mock.patch("agents.llm.build_system_prompt", return_value="p"), mock.patch("agents.llm.create_agent") as make:
+			create_basic_agent([], route="vision")
+		assert reply_llm.call_args.args[:2] == ("openrouter", "vendor/eyes")
+		assert make.called
+
+	def test_vision_route_without_capable_model_raises(self):
+		reply = AIModel.objects.create(provider="openrouter", name="deepseek/x", input_modalities=["text"])
+		ModelConfig.objects.create(reply_model=reply)
+		with self.assertRaises(ValueError):
+			create_basic_agent([], route="vision")
