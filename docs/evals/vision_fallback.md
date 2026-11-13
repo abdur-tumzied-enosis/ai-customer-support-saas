@@ -67,6 +67,10 @@ this exact marker is a decision for Task 6 Step 1; it is not made here.
 `ForbiddenResponseError`, message "only available on agentic harnesses". This happened for both the valid PNG and
 the bad mime type, so it says nothing about image handling. It cannot be a test or photo model for this backend.
 
+**`openrouter/auto`: no rejection shape.** Both the valid PNG and the bad mime type returned a normal answer
+(`finish=stop`). The router picks a model that accepts the image, so this can't produce the image-error shape.
+It is not a test model for Task 6's error paths.
+
 **Google: not recorded.** The project's billing is disabled, so every call returns 403 `PERMISSION_DENIED`
 ("requires billing to be enabled") before the image is checked. That is not an image shape. Google's image
 error shape needs a rerun once billing is enabled on the project. The Google image-error path stays off until then.
