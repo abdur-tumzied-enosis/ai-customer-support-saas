@@ -5,6 +5,8 @@ documents/
 backend/products/
 backend/widget_uploads/
 backend/chat_uploads/
+# Collected customer photos for the vision eval: never committed (see docs/evals/vision_fallback.md)
+docs/evals/photos/
 gcp-sa.json
 backend/celerybeat-schedule*
 .playwright-mcp/

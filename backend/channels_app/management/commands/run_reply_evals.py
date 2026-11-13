@@ -8,14 +8,20 @@ File format (JSON):
     {"project": "<project slug>", "knowledge_base": "default",
      "cases": [{"question": "...", "must_include": ["30 days"], "must_not_include": ["guarantee"], "expect_handoff": false}]}
 
+A case may add "image_paths" (relative to the JSON file's folder), "category" (for the report) and "unattached_photos"
+(n photos that the agent must treat as not attached). Photo cases get the same numbered notes as production.
+
 Makes real LLM calls (tokens are not billed to the project). Exits non-zero if any case fails.
 """
 import json
+from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
 from accounts.models import Project
+from agents.llm import vision_route
 from agents.rag import generate_reply
+from channels_app.image_reply import _render_note, encode_vision_image
 from channels_app.tasks import build_reply_context
 from knowledge.models import KnowledgeBase
 
@@ -49,12 +55,33 @@ class Command(BaseCommand):
 		if not kb:
 			raise CommandError(f"Knowledge base {spec.get('knowledge_base', 'default')!r} not found")
 
+		base = Path(path).parent
+		if any(case.get("image_paths") for case in spec["cases"]) and vision_route() is None:
+			self.stdout.write("WARNING: neither the reply model nor ModelConfig.vision_model is vision-capable; photo cases answer without the photo")
 		passed = 0
 		cases = spec["cases"]
 		for case in cases:
 			context, deps = build_reply_context(project, kb)
 			try:
-				reply = generate_reply(case["question"], context, deps, history=[])
+				image_paths = case.get("image_paths", [])
+				context.vision_images = [encode_vision_image((base / p).read_bytes())["uri"] for p in image_paths]
+				question = case["question"]
+				notes = []
+				for i in range(1, len(image_paths) + 1):
+					if case.get("category") in ("damage", "refund"):
+						# Production wording for a damage photo: a matched product plus the damage note
+						entry = {"index": i, "reason": "match", "matches": "(no catalog match checked in this eval)", "score": None,
+							"damage": True, "attached": True, "not_attached": ""}
+					else:
+						entry = {"index": i, "reason": "no_match", "matches": "", "score": None,
+							"damage": False, "attached": True, "not_attached": ""}
+					notes.append(_render_note(entry))
+				for i in range(len(image_paths) + 1, len(image_paths) + 1 + case.get("unattached_photos", 0)):
+					notes.append(_render_note({"index": i, "reason": "no_match", "matches": "", "score": None,
+						"damage": False, "attached": False, "not_attached": "settings"}))
+				if case.get("notes", True) and notes:  # "notes": false is a raw-image baseline only
+					question = f"{question} {' '.join(notes)}"
+				reply = generate_reply(question, context, deps, history=[])
 				failures = score_case(case, reply, context.handoff_reason)
 			except Exception as exc:
 				reply, failures = "", [f"error {type(exc).__name__}: {exc}"]
@@ -62,7 +89,7 @@ class Command(BaseCommand):
 			passed += not failures
 			self.stdout.write(
 				f"{'FAIL' if failures else 'PASS'}  {case['question']}  "
-				f"({t.get('ms', '?')}ms, {t.get('tokens_in', '?')}+{t.get('tokens_out', '?')} tokens)"
+				f"({t.get('ms', '?')}ms, {t.get('tokens_in', '?')}+{t.get('tokens_out', '?')} tokens)  [{case.get('category', 'text')}]"
 			)
 			for reason in failures:
 				self.stdout.write(f"      - {reason}")
