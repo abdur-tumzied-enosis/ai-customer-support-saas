@@ -56,11 +56,20 @@ export default function ConversationThreadPage() {
 		const timer = setInterval(async () => {
 			try {
 				const res = await conversationApi.getMessages(conversationId, 20);
-				const latest = res.data.messages.map(toChatMessage);
+				const raw = res.data.messages;
+				const latest = raw.map(toChatMessage);
 				setMessages((prev) => {
+					// A customer photo is stored after its row exists, so photo_urls (and the credits/notes
+					// written during the reply) arrive on a later poll: merge them in, don't only append.
+					const byId = new Map(raw.map((m) => [m.id, m]));
+					const merged = prev.map((m) => {
+						const fresh = byId.get(m.id);
+						return fresh ? { ...m, photoUrls: fresh.photo_urls, credits: fresh.credits } : m;
+					});
 					const known = new Set(prev.map((m) => m.id));
 					const added = latest.filter((m) => !known.has(m.id));
-					return added.length ? [...prev, ...added] : prev;
+					const changed = merged.some((m, i) => m !== prev[i]);
+					return changed || added.length ? [...merged, ...added] : prev;
 				});
 			} catch {
 				// transient; next tick retries
@@ -101,6 +110,7 @@ export default function ConversationThreadPage() {
 			content: msg.text,
 			sender: msg.sender,
 			hasPhoto: msg.has_photo,
+			photoUrls: msg.photo_urls,
 			photoMatches: msg.photo_matches,
 			credits: msg.credits,
 		};
@@ -283,7 +293,7 @@ export default function ConversationThreadPage() {
 				prev.map((m) => {
 					const f = byId.get(m.id);
 					if (!f) return m;
-					return { ...m, credits: f.credits, photoMatches: m.id === messageId && f.photo_matches ? f.photo_matches : m.photoMatches };
+					return { ...m, credits: f.credits, photoUrls: f.photo_urls, photoMatches: m.id === messageId && f.photo_matches ? f.photo_matches : m.photoMatches };
 				})
 			);
 		} catch {

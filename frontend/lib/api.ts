@@ -662,6 +662,7 @@ export type ConversationMessage = {
 	created_at: string;
 	agent_reply_id: string | null;
 	has_photo?: boolean;
+	photo_urls?: string[];
 	photo_matches?: string;
 	credits?: { action: string; label: string; credits: string }[];
 };
@@ -775,6 +776,18 @@ export const conversationApi = {
 		apiFetch<{ message: ConversationMessage }>(`/api/channels/conversations/${conversationId}/staff-reply`, {
 			method: "POST",
 			json: { text },
+		}),
+
+	staffPhotoPresign: async (conversationId: string, body: { content_type: string; size: number }) =>
+		apiFetch<PresignedUpload & { key: string }>(`/api/channels/conversations/${conversationId}/staff-reply/photo/presign`, {
+			method: "POST",
+			json: body,
+		}),
+
+	staffPhotoSend: async (conversationId: string, body: { key: string; text?: string }) =>
+		apiFetch<{ message: ConversationMessage }>(`/api/channels/conversations/${conversationId}/staff-reply/photo`, {
+			method: "POST",
+			json: body,
 		}),
 
 	getMemory: async (conversationId: string) =>
