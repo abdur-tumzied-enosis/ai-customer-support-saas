@@ -9,6 +9,8 @@ from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 from PIL import Image
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from agents.embeddings_api import Embedded
 from agents.image_search import NotAnImage
 from channels_app import image_reply, tasks
@@ -181,6 +183,62 @@ def png_of_size(width, height):
 	buf = io.BytesIO()
 	Image.new("RGB", (width, height), "blue").save(buf, "PNG")
 	return buf.getvalue()
+
+
+class VisionReplyTest(VisionBase):
+	def setUp(self):
+		super().setUp()
+		self.read = mock.patch.object(image_reply, "read_upload", side_effect=lambda path: png_bytes()).start()
+
+	def test_generate_agent_reply_sets_context_vision_images(self):
+		captured = []
+
+		def capture(question, context, deps=None, history=None, project_id=None):
+			captured.append(list(context.vision_images))
+			return "ok"
+
+		msg = self.inbound("hi")
+		with mock.patch("channels_app.tasks.generate_reply", side_effect=capture):
+			tasks.generate_agent_reply(msg, self.kb, images=["data:image/jpeg;base64,AAA"])
+		assert captured == [["data:image/jpeg;base64,AAA"]]
+
+	def test_reply_passes_images_and_merges_trace(self):
+		msg = self.photo_message()
+		with mock.patch.object(image_reply, "resolve_model", return_value=("google", "gemini-3.8-flash")):
+			self.run_reply(msg)
+		assert len(self.vision_images[-1]) == 1 and self.vision_images[-1][0].startswith("data:image/jpeg;base64,")
+		assert "[Customer sent photo 1. No catalog product looks similar. Photo attached.]" in self.questions[-1]
+		out = self.outbound()[-1]
+		assert out.meta["trace"]["vision_images"] == 1 and out.meta["trace"]["vision_route"] == "reply"
+
+	def test_vision_prep_soft_time_limit_sends_fallback(self):
+		msg = self.photo_message()
+		with mock.patch.object(image_reply, "vision_images", side_effect=SoftTimeLimitExceeded()):
+			self.run_reply(msg)
+		assert self.questions == []
+		out = self.outbound()
+		assert len(out) == 1 and out[0].text == tasks.FALLBACK_REPLY
+
+	def test_vision_prep_error_does_not_block_reply(self):
+		msg = self.photo_message()
+		with mock.patch.object(image_reply, "vision_images", side_effect=RuntimeError("boom")):
+			self.run_reply(msg)
+		assert len(self.questions) == 1 and self.vision_images[-1] == []
+		out = self.outbound()
+		assert len(out) == 1 and out[0].meta["trace"]["vision_skipped"] == "error"
+		msg.refresh_from_db()
+		assert msg.meta["photo_notes"][0]["note"].endswith("Photo not attached (could not be prepared).]")
+		assert msg.meta["photo_vision"] == []
+
+	def test_photo_plus_handoff_keyword_skips_vision_prep(self):
+		msg = self.photo_message("can I talk to a person")
+		with mock.patch.object(image_reply, "vision_images") as prep:
+			self.run_reply(msg)
+		prep.assert_not_called()
+		assert self.outbound()[-1].text == settings.HANDOFF_MESSAGE
+		msg.refresh_from_db()
+		assert msg.meta["photo_notes"][0]["note"].endswith("Photo not attached.]")
+		assert msg.meta["photo_vision"] == []
 
 
 class VisionEncodeTest(SimpleTestCase):

@@ -133,7 +133,7 @@ def build_reply_context(project, knowledge_base: KnowledgeBase, conversation=Non
 	return context, deps
 
 
-def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: Optional[str] = None) -> tuple[str, Context]:
+def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: Optional[str] = None, images: Optional[list] = None) -> tuple[str, Context]:
 	"""Run the RAG agent with history before `msg`. `question` defaults to `msg` formatted.
 	Returns (reply text, Context with api_call_log/handoff_reason). DB reads only; call outside any transaction."""
 	project = msg.project
@@ -142,6 +142,7 @@ def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: 
 	context, deps = build_reply_context(project, knowledge_base, msg.conversation if msg.conversation_id else None)
 	context.conversation_id = str(msg.conversation_id) if msg.conversation_id else None
 	context.message_id = str(msg.id)
+	context.vision_images = list(images or [])  # data URIs of this turn's photos (channels_app.image_reply)
 
 	logger.info(f"Generating reply for message {msg.id} with text: {current_message_text}")
 	logger.info(f"History ({len(history)} msgs): {history[-3:]}")

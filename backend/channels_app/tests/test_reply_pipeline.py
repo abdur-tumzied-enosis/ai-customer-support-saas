@@ -24,11 +24,12 @@ class PipelineBase(TestCase):
 		self.kb = KnowledgeBase.objects.create(project=self.project, name="kb", vector_collection="vc-pipe")
 		self.contact = CustomerContact.objects.create(project=self.project, platform="facebook", external_id="psid")
 		self.conv = ensure_contact_conversation(self.contact, self.kb)
-		self.questions, self.histories = [], []
+		self.questions, self.histories, self.vision_images = [], [], []
 		self.reply_text = "Here you go"
 
 		def fake_generate_reply(question, context, deps=None, history=None, project_id=None):
 			self.questions.append(question)
+			self.vision_images.append(list(getattr(context, "vision_images", [])))
 			self.histories.append([h["content"] for h in history or []])
 			return self.reply_text
 

@@ -196,16 +196,45 @@ def _reply(task, conversation, msg: Message) -> None:
 		logger.warning(f"Out of time checking photos for conversation {conversation.id}; sending the fallback reply")
 		photos_timed_out = True
 	logger.info(f"process_reply: conversation={conversation.id} photos_timed_out={photos_timed_out}")
+	wants_person = any(wants_human(m.text) for m in turn)  # raw text only: quoted bot messages must not trigger it
+	skip_vision = photos_timed_out or out_of_credits or wants_person
+	vision = {"images": [], "marker": "", "trace": {}}
+	if skip_vision:
+		# annotate_turn may have written "Photo attached" already; no image will be sent, so fix the notes.
+		try:
+			image_reply.finalize_notes(turn, set(), reason="settings")
+		except Exception:
+			logger.exception("Could not finalize photo notes for conversation %s", conversation.id)
+	else:
+		try:
+			vision = image_reply.vision_images(turn, conversation)
+		except SoftTimeLimitExceeded:
+			photos_timed_out = True
+			logger.warning(f"Out of time preparing photos for conversation {conversation.id}; sending the fallback reply")
+			try:
+				image_reply.finalize_notes(turn, set(), reason="prepare")
+			except Exception:
+				logger.exception("Could not finalize photo notes for conversation %s", conversation.id)
+		except Exception:
+			# A vision bug must never block the reply: log it and answer from the catalog notes alone.
+			logger.exception("Could not prepare vision images for conversation %s", conversation.id)
+			try:
+				image_reply.finalize_notes(turn, set(), reason="prepare")
+			except Exception:
+				logger.exception("Could not finalize photo notes for conversation %s", conversation.id)
+			vision = {"images": [], "marker": "", "trace": {"vision_skipped": "error"}}
 	question = "\n".join(tasks.format_message_with_context(m) for m in turn)
+	if vision["marker"]:
+		question = f"{question} {vision['marker']}"
 	api_calls: list = []
-	trace: dict = {}
+	trace: dict = dict(vision["trace"])
 	handoff_reason = None
 	agent_replied = False
 	if out_of_credits:
 		logger.info(f"process_reply: conversation={conversation.id} project out of credits, handing off without the agent")
 		reply_text = ""
 		handoff_reason = "out of credits"
-	elif any(wants_human(m.text) for m in turn):  # raw text only: quoted bot messages must not trigger it
+	elif wants_person:  # raw text only: quoted bot messages must not trigger it
 		logger.info(f"process_reply: conversation={conversation.id} customer asked for a person, handing off without the agent")
 		reply_text = ""
 		handoff_reason = "customer asked for a person"
@@ -215,8 +244,9 @@ def _reply(task, conversation, msg: Message) -> None:
 	else:
 		logger.info(f"process_reply: conversation={conversation.id} calling agent, question chars={len(question)}")
 		try:
-			reply_text, ctx = tasks.generate_agent_reply(turn[0], conversation.knowledge_base, question=question)
-			api_calls, handoff_reason, trace = ctx.api_call_log, ctx.handoff_reason, ctx.trace
+			reply_text, ctx = tasks.generate_agent_reply(turn[0], conversation.knowledge_base, question=question, images=vision["images"])
+			api_calls, handoff_reason = ctx.api_call_log, ctx.handoff_reason
+			trace.update(ctx.trace)
 			agent_replied = bool(reply_text)
 			logger.info(
 				f"process_reply: conversation={conversation.id} agent answered: reply chars={len(reply_text or '')}, "
@@ -224,7 +254,7 @@ def _reply(task, conversation, msg: Message) -> None:
 			)
 		except Exception as exc:
 			api_calls = getattr(exc, "api_calls", [])
-			trace = {**getattr(exc, "trace", {}), "error": type(exc).__name__}
+			trace.update(getattr(exc, "trace", {}), error=type(exc).__name__)
 			# A retry re-runs the whole agent; never risk sending a POST (order, booking, ticket) twice
 			sent_post = any(c.get("method") == "POST" for c in api_calls)
 			# Out of time: answer with the fallback now rather than make the customer wait for another full run

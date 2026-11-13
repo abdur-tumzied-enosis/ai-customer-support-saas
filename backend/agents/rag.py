@@ -1,3 +1,4 @@
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional, List, Any, Dict, TypedDict, Literal, Sequence
@@ -25,6 +26,7 @@ class Context:
 	order_submitted: bool = False  # set by submit_order during this reply
 	conversation_id: Optional[str] = None  # usage attribution, set by channels_app.tasks.generate_agent_reply
 	message_id: Optional[str] = None
+	vision_images: List[str] = field(default_factory=list)  # data URIs for this turn's photos (not stored in traces)
 	project_id: Optional[str] = None  # books embed/rerank cost for the reply; set by channels_app.tasks.build_reply_context
 
 
@@ -121,6 +123,14 @@ def _search_query(question: str, history: Sequence[dict]) -> str:
 	return f"{previous[:300]}\n{question}" if previous else question
 
 
+READ_ONLY_ORDER_TOOLS = {"find_products"}  # the only order tool a photo turn may use: catalog lookup, no state change
+
+
+def _tool_name(t) -> str:
+	# LangChain StructuredTool/BaseTool expose .name; plain functions expose __name__
+	return getattr(t, "name", None) or getattr(t, "__name__", "")
+
+
 def _build_tools_from_context(context: Context, deps: ToolDeps, retrievers: Optional[list] = None):
 
 	tools: List[Callable[..., str]] = []
@@ -146,7 +156,7 @@ def _build_tools_from_context(context: Context, deps: ToolDeps, retrievers: Opti
 
 	tools.append(escalate_to_human)
 
-	if context.api_domains:
+	if context.api_domains and not context.vision_images:
 		# POSTs run once per inbound message; a POST that timed out or got a 5xx may still have happened, so it is never repeated
 		tools.append(once(
 			context, build_call_api_tool(context.api_domains, context.api_call_log),
@@ -154,7 +164,17 @@ def _build_tools_from_context(context: Context, deps: ToolDeps, retrievers: Opti
 			unsure=lambda r: r.startswith(("ERROR: timeout", "ERROR: request failed", "HTTP 5")),
 		))
 
-	tools.extend(context.order_tools)
+	if context.vision_images:
+		# A photo is customer data, not permission to act: a GET-only lookup stays, state-changing tools go.
+		if context.api_domains:
+			tools.append(once(
+				context, build_call_api_tool(context.api_domains, context.api_call_log, read_only=True),
+				when=lambda a: str(a.get("method") or "").upper() != "GET",
+				unsure=lambda r: r.startswith(("ERROR: timeout", "ERROR: request failed", "HTTP 5")),
+			))
+		tools.extend(t for t in context.order_tools if _tool_name(t) in READ_ONLY_ORDER_TOOLS)
+	else:
+		tools.extend(context.order_tools)
 	return tools
 
 class ChatMessage(TypedDict):
@@ -248,6 +268,17 @@ def _track_token_usage(
 		logger.warning(f"Failed to track token usage: {e}")
 
 
+_TRACING_ENV = ("LANGCHAIN_TRACING_V2", "LANGSMITH_TRACING", "LANGSMITH_TRACING_V2", "LANGCHAIN_VERBOSE", "LANGCHAIN_DEBUG")
+
+
+def _tracing_enabled() -> bool:
+	"""True when LangChain/LangSmith would record model inputs (env flags or the debug global)."""
+	from langchain_core.globals import get_debug
+	if any(os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on") for name in _TRACING_ENV):
+		return True
+	return bool(get_debug())
+
+
 def generate_reply(
 	question: str, 
 	context: Context, 
@@ -271,7 +302,13 @@ def generate_reply(
 	# Setup
 	deps = deps or ToolDeps()
 	retrievers = _get_retrievers(context, deps)
+	if context.vision_images and _tracing_enabled():
+		# Customer photo bytes must never reach LangSmith/Langfuse. Fail closed: answer text-only.
+		logger.error("Tracing is enabled; dropping customer photos from this reply")
+		context.trace["vision_skipped"] = "tracing"
+		context.vision_images = []
 	tools = _build_tools_from_context(context, deps, retrievers)
+	turn_tools = tools  # the same tools for a text-only retry (agents.rag retry, Task 6)
 
 	start = time.monotonic()
 	try:
@@ -282,11 +319,19 @@ def generate_reply(
 			search_results = f"Query: {query}\n\n{_search(retrievers, query, context)}"
 		agent = create_basic_agent(
 			tools, custom_instructions=context.custom_instructions, memory=context.memory_prompt, search_results=search_results,
+			route="vision" if context.vision_images else None,
 		)
 
 		messages = list(history or [])
-		messages.append({"role": "user", "content": question})
-		result = agent.invoke({"messages": messages})
+		user_content = question
+		if context.vision_images:
+			user_content = [{"type": "text", "text": question}] + [
+				{"type": "image_url", "image_url": {"url": uri}} for uri in context.vision_images
+			]
+			context.trace["vision_images"] = len(context.vision_images)  # count only, never the URIs
+		messages.append({"role": "user", "content": user_content})
+		invoke_kwargs = {"config": {"callbacks": []}} if context.vision_images else {}  # no per-call handlers see the photo
+		result = agent.invoke({"messages": messages}, **invoke_kwargs)
 	finally:
 		context.trace["ms"] = int((time.monotonic() - start) * 1000)
 	logger.info(f"Agent invoked successfully")
