@@ -6,6 +6,8 @@ import Script from "next/script";
 
 const GTM_ID = "GTM-NV47CNFN";
 const GA_MEASUREMENT_ID = "G-VXB2TRJD4C";
+// Create a project at clarity.ms and paste its ID here (empty string disables the script).
+const CLARITY_ID = "zd0sf9g65o";
 // Note: with the GA snippet live below, do NOT also add a GA4 tag inside the GTM container — that would double-count.
 
 const inter = Inter({ subsets: ["latin"] });
@@ -51,6 +53,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 					gtag('js', new Date());
 					gtag('config', '${GA_MEASUREMENT_ID}');`}
 				</Script>
+				{/* Global click tracking -> GA4 'click' event */}
+				<Script id="click-tracking" strategy="afterInteractive">
+					{`document.addEventListener('click', function(e) {
+						var el = e.target.closest('a, button, [role="button"]');
+						if (!el || !window.gtag) return;
+						gtag('event', 'click', {
+							button_text: (el.innerText || el.getAttribute('aria-label') || '').trim().slice(0, 100),
+							link_url: el.tagName === 'A' ? el.href : undefined,
+							page_path: window.location.pathname
+						});
+					}, true);`}
+				</Script>
+				{/* Microsoft Clarity heatmap (renders only when CLARITY_ID is set) */}
+				{CLARITY_ID && (
+					<Script id="clarity-init" strategy="afterInteractive">
+						{`(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+						t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+						y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","${CLARITY_ID}");`}
+					</Script>
+				)}
 
 				<Providers>
 					{children}
