@@ -28,6 +28,14 @@ class Project(models.Model):
 	# per-tenant grant (admin only); `enabled` is the tenant's own switch.
 	image_search_allowed = models.BooleanField(default=True)
 	image_search_enabled = models.BooleanField(default=True)
+	# Vision fallback: separate from image search. `allowed` is the operator grant (admin), `enabled` is the tenant's opt-in.
+	vision_fallback_allowed = models.BooleanField(default=True)
+	vision_fallback_enabled = models.BooleanField(default=False)
+	# Consent audit: who changed the tenant opt-in and when (admin only)
+	vision_fallback_enabled_at = models.DateTimeField(null=True, blank=True)
+	vision_fallback_enabled_by = models.ForeignKey(
+		settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+	)
 	# ISO 4217 code shown with prices (symbols live in the frontend)
 	currency = models.CharField(max_length=3, default="BDT")
 	# Whoever signed up and made this project; the signup bonus goes to their earliest one
@@ -40,6 +48,14 @@ class Project(models.Model):
 	@property
 	def image_search_on(self) -> bool:
 		return self.image_search_available and self.image_search_enabled
+
+	@property
+	def vision_fallback_available(self) -> bool:
+		return bool(settings.VISION_FALLBACK_ENABLED and self.vision_fallback_allowed)
+
+	@property
+	def vision_fallback_on(self) -> bool:
+		return self.vision_fallback_available and self.vision_fallback_enabled
 
 	def __str__(self) -> str:
 		return self.name

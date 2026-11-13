@@ -29,22 +29,35 @@ def get_effective_instructions(project_id: str, knowledge_base_id: str = None) -
 	]
 
 
-def format_message_with_context(message: Message) -> str:
+def photo_note_text(meta, visible: bool = True) -> str:
+	"""The notes of a photo message, one renderer for the agent and the dashboard. Legacy rows keep photo_matches.
+	visible=False is for earlier turns: the photo was seen then, but no image is sent now, so the note must not
+	say it is visible."""
+	notes = (meta or {}).get("photo_notes")
+	if notes:
+		texts = [n.get("note", "") for n in notes if n.get("note")]
+		if not visible:
+			texts = [t.replace("Photo attached", "Photo attached earlier, not visible now") for t in texts]
+		return " ".join(texts)
+	return (meta or {}).get("photo_matches") or ""
+
+
+def format_message_with_context(message: Message, visible: bool = True) -> str:
 	"""
 	Format a message with contextual information (attachments, replies).
-	
+
 	Args:
 		message: The Message instance to format
-		
+
 	Returns:
 		Formatted message text with context annotations
 	"""
 	content = message.text
-	
-	# A photo's catalog matches (channels_app.image_reply) replace the generic attachment note
-	photo_matches = (message.meta or {}).get("photo_matches")
-	if photo_matches:
-		content = f"{content} {photo_matches}" if content else photo_matches
+
+	# A photo's numbered notes (channels_app.image_reply) replace the generic attachment note
+	rendered = photo_note_text(message.meta, visible=visible)
+	if rendered:
+		content = f"{content} {rendered}" if content else rendered
 	elif message.has_attachments:
 		att_types = [att.get("type", "unknown") for att in message.attachment_info]
 		content = f"{content} [Message includes attachments: {', '.join(att_types)}]"
@@ -86,7 +99,7 @@ def build_history(msg: Message, since=None) -> list:
 	)
 	history, used = [], 0
 	for m in recent:  # newest first
-		content = format_message_with_context(m)
+		content = format_message_with_context(m, visible=False)  # earlier turns: photos are not sent again
 		used += estimate_tokens(content)
 		if history and used > HISTORY_TOKEN_BUDGET:
 			break
@@ -125,7 +138,7 @@ def build_reply_context(project, knowledge_base: KnowledgeBase, conversation=Non
 	return context, deps
 
 
-def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: Optional[str] = None) -> tuple[str, Context]:
+def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: Optional[str] = None, images: Optional[list] = None) -> tuple[str, Context]:
 	"""Run the RAG agent with history before `msg`. `question` defaults to `msg` formatted.
 	Returns (reply text, Context with api_call_log/handoff_reason). DB reads only; call outside any transaction."""
 	project = msg.project
@@ -134,6 +147,7 @@ def generate_agent_reply(msg: Message, knowledge_base: KnowledgeBase, question: 
 	context, deps = build_reply_context(project, knowledge_base, msg.conversation if msg.conversation_id else None)
 	context.conversation_id = str(msg.conversation_id) if msg.conversation_id else None
 	context.message_id = str(msg.id)
+	context.vision_images = list(images or [])  # data URIs of this turn's photos (channels_app.image_reply)
 
 	logger.info(f"Generating reply for message {msg.id} with text: {current_message_text}")
 	logger.info(f"History ({len(history)} msgs): {history[-3:]}")

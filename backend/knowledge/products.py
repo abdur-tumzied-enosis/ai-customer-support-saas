@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
 from django.http import HttpResponseRedirect
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -23,7 +24,12 @@ IMAGE_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
 
 
 def _features(project) -> dict:
-	return {"image_search_available": project.image_search_available, "image_search": project.image_search_on}
+	return {
+		"image_search_available": project.image_search_available,
+		"image_search": project.image_search_on,
+		"vision_fallback_available": project.vision_fallback_available,
+		"vision_fallback": project.vision_fallback_on,
+	}
 
 
 def _denied():
@@ -116,13 +122,26 @@ class FeaturesView(APIView):
 		if not pu:
 			return _denied()
 		project = pu.project
-		value = request.data.get("image_search")
-		if not isinstance(value, bool):
-			return _kb_error("invalid_value", "image_search must be a boolean", status.HTTP_400_BAD_REQUEST)
-		if not project.image_search_available:
+		changes = {k: request.data[k] for k in ("image_search", "vision_fallback") if k in request.data}
+		if not changes:
+			return _kb_error("invalid_value", "image_search or vision_fallback must be a boolean", status.HTTP_400_BAD_REQUEST)
+		for key, value in changes.items():  # validate every key before writing any field
+			if not isinstance(value, bool):
+				return _kb_error("invalid_value", f"{key} must be a boolean", status.HTTP_400_BAD_REQUEST)
+		if "image_search" in changes and not project.image_search_available:
 			return _kb_error("not_allowed", "Image search is not available for this project", status.HTTP_403_FORBIDDEN)
-		project.image_search_enabled = value
-		project.save(update_fields=["image_search_enabled"])
+		if "vision_fallback" in changes and not project.vision_fallback_available:
+			return _kb_error("not_allowed", "Photo help is not available for this project", status.HTTP_403_FORBIDDEN)
+		if "image_search" in changes:
+			project.image_search_enabled = changes["image_search"]
+		if "vision_fallback" in changes:
+			project.vision_fallback_enabled = changes["vision_fallback"]
+			project.vision_fallback_enabled_at = timezone.now()
+			project.vision_fallback_enabled_by = request.user
+		fields = [f"{key}_enabled" for key in changes]
+		if "vision_fallback" in changes:
+			fields += ["vision_fallback_enabled_at", "vision_fallback_enabled_by"]
+		project.save(update_fields=fields)
 		return Response({"success": True, "data": _features(project)})
 
 

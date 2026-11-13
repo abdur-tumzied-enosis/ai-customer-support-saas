@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from accounts.models import Project
 from channels_app.handoff import end_handoff, note_staff_activity, start_handoff
-from channels_app.models import Conversation, CustomerContact
+from channels_app.models import Conversation, CustomerContact, Message
 from knowledge.models import KnowledgeBase
 
 
@@ -54,3 +54,42 @@ class HandoffActionsTest(TestCase):
 		self.conv.refresh_from_db()
 		assert self.conv.handoff_reason == "refund request"
 		assert emit.call_count == 1
+
+	def inbound(self, text, photo=False):
+		return Message.objects.create(
+			project=self.conv.project, contact=self.conv.contact, conversation=self.conv, direction="in", text=text,
+			has_attachments=photo, attachment_info=[{"type": "image", "path": "chat_media/x.webp"}] if photo else [],
+		)
+
+	def test_event_includes_last_message_and_photo(self, emit):
+		msg = self.inbound("", photo=True)
+		start_handoff(self.conv, "refund request")
+		data = emit.call_args.args[2]
+		assert data["last_message_id"] == str(msg.id) and data["has_photo"] is True
+		assert data["reason"].endswith("; customer sent a photo")
+
+	def test_photo_then_hello_keeps_photo_context(self, emit):
+		self.inbound("", photo=True)
+		newest = self.inbound("hello??")
+		start_handoff(self.conv, "customer needs help")
+		data = emit.call_args.args[2]
+		assert data["last_message_id"] == str(newest.id) and data["has_photo"] is True
+		assert data["reason"] == "customer needs help; customer sent a photo"
+
+	def test_event_without_photo_has_false(self, emit):
+		self.inbound("hi there")
+		start_handoff(self.conv, "customer needs help")
+		data = emit.call_args.args[2]
+		assert data["has_photo"] is False and data["reason"] == "customer needs help"
+
+	def test_photo_reason_not_duplicated(self, emit):
+		self.inbound("", photo=True)
+		start_handoff(self.conv, "customer sent a photo of a cracked lid")
+		assert emit.call_args.args[2]["reason"] == "customer sent a photo of a cracked lid"
+
+	def test_resume_event_carries_photo_context(self, emit):
+		msg = self.inbound("", photo=True)
+		start_handoff(self.conv, "refund request")
+		end_handoff(self.conv)
+		data = emit.call_args.args[2]
+		assert data["last_message_id"] == str(msg.id) and data["has_photo"] is True

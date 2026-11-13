@@ -81,7 +81,8 @@ def _redact(text: str, secret: str) -> str:
 	return text
 
 
-def build_call_api_tool(domains: list[dict], log: list) -> Callable[..., str]:
+def build_call_api_tool(domains: list[dict], log: list, read_only: bool = False) -> Callable[..., str]:
+	"""read_only: GET only, for a turn that carries a customer photo. Refused before any network call or log entry."""
 	calls = 0
 
 	def call_api(method: str, url: str, body: Optional[dict] = None) -> str:
@@ -93,6 +94,8 @@ def build_call_api_tool(domains: list[dict], log: list) -> Callable[..., str]:
 		method = (method or "").upper()
 		if method not in ("GET", "POST"):
 			return "ERROR: only GET and POST are allowed"
+		if read_only and method != "GET":
+			return "ERROR: only GET is allowed while looking at a photo; ask the customer to confirm the action in a text message"
 
 		try:
 			scheme, host = _parse_target(url or "")

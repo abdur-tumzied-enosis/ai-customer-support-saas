@@ -1013,7 +1013,14 @@ export type ProductPatch = Partial<Pick<Product, "name" | "description" | "sku" 
 	variants?: Omit<ProductVariant, "id">[];
 };
 
-export type Features = { image_search_available: boolean; image_search: boolean };
+export type Features = {
+	image_search_available: boolean;
+	image_search: boolean;
+	vision_fallback_available: boolean;
+	vision_fallback: boolean;
+};
+
+export type FeaturePatch = { image_search?: boolean; vision_fallback?: boolean };
 
 type ProductUploads = { product: Product; uploads: (PresignedUpload & { image_id: string })[] };
 
@@ -1042,10 +1049,10 @@ export const featuresApi = {
 	get: async (projectId: string) =>
 		(await apiFetch<Features>(`/api/kb/features/?project_id=${encodeURIComponent(projectId)}`)).data,
 
-	update: async (projectId: string, imageSearch: boolean) =>
+	update: async (projectId: string, patch: FeaturePatch) =>
 		(await apiFetch<Features>("/api/kb/features/", {
 			method: "PATCH",
-			json: { project_id: projectId, image_search: imageSearch },
+			json: { project_id: projectId, ...patch },
 		})).data,
 };
 

@@ -331,13 +331,13 @@ class ProductApiTests(TestCase):
 		self.project.save()
 		self.assertEqual(self.list_products().status_code, 200)  # the catalog no longer needs image search
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
-		self.assertEqual(r.json()["data"], {"image_search_available": True, "image_search": False})
+		self.assertEqual(r.json()["data"], {"image_search_available": True, "image_search": False, "vision_fallback_available": False, "vision_fallback": False})
 
 	def test_tenant_admin_toggles_feature(self):
 		body = {"project_id": str(self.project.id), "image_search": False}
 		r = self.client.patch("/api/kb/features/", body, format="json")
 		self.assertEqual(r.status_code, 200)
-		self.assertEqual(r.json()["data"], {"image_search_available": True, "image_search": False})
+		self.assertEqual(r.json()["data"], {"image_search_available": True, "image_search": False, "vision_fallback_available": False, "vision_fallback": False})
 		self.project.refresh_from_db()
 		self.assertFalse(self.project.image_search_enabled)
 		r = self.client.patch("/api/kb/features/", {**body, "image_search": True}, format="json")
@@ -363,6 +363,73 @@ class ProductApiTests(TestCase):
 		self.project.refresh_from_db()
 		self.assertFalse(self.project.image_search_enabled)
 
+	@override_settings(VISION_FALLBACK_ENABLED=True)
+	def test_tenant_admin_toggles_vision_fallback(self):
+		body = {"project_id": str(self.project.id), "vision_fallback": True}
+		r = self.client.patch("/api/kb/features/", body, format="json")
+		self.assertEqual(r.status_code, 200)
+		self.assertEqual(r.json()["data"]["vision_fallback"], True)
+		self.project.refresh_from_db()
+		self.assertTrue(self.project.vision_fallback_enabled)
+		r = self.client.patch("/api/kb/features/", {**body, "vision_fallback": False}, format="json")
+		self.assertEqual(r.json()["data"]["vision_fallback"], False)
+		self.project.refresh_from_db()
+		self.assertFalse(self.project.vision_fallback_enabled)
+
+	@override_settings(VISION_FALLBACK_ENABLED=True)
+	def test_vision_toggle_records_actor_and_time(self):
+		self.client.patch("/api/kb/features/", {"project_id": str(self.project.id), "vision_fallback": True}, format="json")
+		self.project.refresh_from_db()
+		self.assertIsNotNone(self.project.vision_fallback_enabled_at)
+		self.assertEqual(self.project.vision_fallback_enabled_by, self.user)
+
+	@override_settings(VISION_FALLBACK_ENABLED=True)
+	def test_vision_and_image_search_in_one_patch(self):
+		r = self.client.patch("/api/kb/features/", {"project_id": str(self.project.id), "image_search": False, "vision_fallback": True}, format="json")
+		self.assertEqual(r.status_code, 200)
+		self.project.refresh_from_db()
+		self.assertFalse(self.project.image_search_enabled)
+		self.assertTrue(self.project.vision_fallback_enabled)
+
+	@override_settings(VISION_FALLBACK_ENABLED=True)
+	def test_tenant_non_admin_cannot_toggle_vision(self):
+		self.pu.role = "member"
+		self.pu.save()
+		r = self.client.patch("/api/kb/features/", {"project_id": str(self.project.id), "vision_fallback": True}, format="json")
+		self.assertEqual(r.status_code, 403)
+		self.project.refresh_from_db()
+		self.assertFalse(self.project.vision_fallback_enabled)
+
+	@override_settings(VISION_FALLBACK_ENABLED=True)
+	def test_vision_not_allowed_when_operator_revoked(self):
+		self.project.vision_fallback_allowed = False
+		self.project.save()
+		r = self.client.patch("/api/kb/features/", {"project_id": str(self.project.id), "vision_fallback": True}, format="json")
+		self.assertEqual(r.status_code, 403)
+		self.assertEqual(r.json()["error"]["code"], "not_allowed")
+		self.project.refresh_from_db()
+		self.assertFalse(self.project.vision_fallback_enabled)
+
+	def test_master_vision_off_reports_unavailable(self):
+		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
+		self.assertFalse(r.json()["data"]["vision_fallback_available"])
+		r = self.client.patch("/api/kb/features/", {"project_id": str(self.project.id), "vision_fallback": True}, format="json")
+		self.assertEqual(r.status_code, 403)
+
+	@override_settings(VISION_FALLBACK_ENABLED=True)
+	def test_invalid_vision_value(self):
+		r = self.client.patch("/api/kb/features/", {"project_id": str(self.project.id), "vision_fallback": "yes"}, format="json")
+		self.assertEqual(r.status_code, 400)
+		self.project.refresh_from_db()
+		self.assertFalse(self.project.vision_fallback_enabled)
+
+	@override_settings(VISION_FALLBACK_ENABLED=True)
+	def test_mixed_invalid_patch_changes_nothing(self):
+		r = self.client.patch("/api/kb/features/", {"project_id": str(self.project.id), "image_search": False, "vision_fallback": "yes"}, format="json")
+		self.assertEqual(r.status_code, 400)
+		self.project.refresh_from_db()
+		self.assertTrue(self.project.image_search_enabled)
+
 	def test_operator_revoke_overrides_tenant(self):
 		self.project.image_search_allowed = False
 		self.project.save()
@@ -371,7 +438,7 @@ class ProductApiTests(TestCase):
 		self.assertEqual(r.status_code, 404)
 		self.assertEqual(r.json()["error"]["code"], "feature_disabled")
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
-		self.assertEqual(r.json()["data"], {"image_search_available": False, "image_search": False})
+		self.assertEqual(r.json()["data"], {"image_search_available": False, "image_search": False, "vision_fallback_available": False, "vision_fallback": False})
 
 	@override_settings(IMAGE_SEARCH_ENABLED=False)
 	def test_master_off_hides_endpoints(self):
@@ -380,7 +447,7 @@ class ProductApiTests(TestCase):
 		self.assertEqual(r.status_code, 404)
 		self.assertEqual(r.json()["error"]["code"], "feature_disabled")
 		r = self.client.get("/api/kb/features/", {"project_id": str(self.project.id)})
-		self.assertEqual(r.json()["data"], {"image_search_available": False, "image_search": False})
+		self.assertEqual(r.json()["data"], {"image_search_available": False, "image_search": False, "vision_fallback_available": False, "vision_fallback": False})
 
 	def test_presign_signs_declared_size(self):
 		self.create(files=[spec(size=4321)])
