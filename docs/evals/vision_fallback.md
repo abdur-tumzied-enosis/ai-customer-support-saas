@@ -51,9 +51,27 @@ to `ModelConfig.vision_model` is priced at that model's row, because usage uses 
 
 ## 6. Provider retry shapes (Task 6)
 
-Not recorded yet. Task 6's real-provider probe sends one test image to OpenRouter and Google. It has to be
-approved before it runs, because it spends money and sends an image to the providers. Until it is recorded,
-the image-error retry stays off for every provider. The safety-refusal and blocked-result retry still works.
+Probe run 2026-11-13 (approved by the owner). A generated 1x1 PNG, no customer data, sent through `_reply_llm`
+with `timeout=30, max_retries=1`. Image bytes were not logged.
+
+**OpenRouter: recorded.** Model `stepfun/step-3.5-flash` (text-only: the provider says no endpoint supports image input).
+Valid PNG and an invalid mime type give the same result:
+- class `openrouter.errors.notfoundresponse_error.NotFoundResponseError`
+- `status_code=404`, `http_status=None`, `code=None`, `response.status_code=None`
+- message `No endpoints found that support image input`
+
+**Gap:** the plan's classifier retries only 400/415/422, so this 404 is NOT retried as written. Adding 404 with
+this exact marker is a decision for Task 6 Step 1; it is not made here.
+
+**Google: not recorded.** The project's billing is disabled, so every call returns 403 `PERMISSION_DENIED`
+("requires billing to be enabled") before the image is checked. That is not an image shape. Google's image
+error shape needs a rerun once billing is enabled on the project. The Google image-error path stays off until then.
+
+**Still unrecorded:** a provider safety refusal (either a raised error or a blocked result). The probe did not
+trigger one. The `_blocked_result` path is tested only with fakes.
+
+Until the Google shape is recorded, the image-error retry stays off for Google. The safety-refusal and
+blocked-result retry still works.
 
 ## 7. Pilot baseline and go/no-go
 
