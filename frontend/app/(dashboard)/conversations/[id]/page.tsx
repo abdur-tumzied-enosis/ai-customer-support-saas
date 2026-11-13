@@ -10,6 +10,7 @@ import MemoryDialog from "@/components/chat/MemoryDialog";
 import CreateFromChatDialog from "@/components/orders/CreateFromChatDialog";
 import ConversationOrders from "@/components/orders/ConversationOrders";
 import { conversationApi, featuresApi, type Conversation, type ConversationMessage } from "@/lib/api";
+import { downscaleImage, putToR2 } from "@/lib/upload";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/lib/errors";
 import { ArrowLeft, Loader2, Bot } from "lucide-react";
@@ -319,6 +320,15 @@ export default function ConversationThreadPage() {
 		}
 	}
 
+	async function handleSendStaffPhoto(file: File, text: string) {
+		const photo = await downscaleImage(file);
+		const presigned = await conversationApi.staffPhotoPresign(conversationId, { content_type: photo.type, size: photo.size });
+		await putToR2(presigned.data, photo);
+		const res = await conversationApi.staffPhotoSend(conversationId, { key: presigned.data.key, text });
+		setMessages((prev) => [...prev, toChatMessage(res.data.message)]);
+		await fetchConversation();
+	}
+
 	if (loading) {
 		return (
 			<div className="flex flex-col h-[calc(100vh-80px)]">
@@ -463,6 +473,7 @@ export default function ConversationThreadPage() {
 					onSendAsCustomer={handleSend}
 					sendingAsCustomer={sending}
 					onSendPhoto={imageSearchOn ? handleSendPhoto : undefined}
+					onSendStaffPhoto={handleSendStaffPhoto}
 				/>
 			)}
 		</div>

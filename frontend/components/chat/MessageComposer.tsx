@@ -31,6 +31,7 @@ export default function MessageComposer({
 	onSendAsCustomer,
 	sendingAsCustomer,
 	onSendPhoto,
+	onSendStaffPhoto,
 }: {
 	conversation: Conversation;
 	onConversationChange: (c: Conversation) => void;
@@ -38,6 +39,7 @@ export default function MessageComposer({
 	onSendAsCustomer: (text: string) => void;
 	sendingAsCustomer: boolean;
 	onSendPhoto?: (file: File, text: string) => void; // set only when image search is on
+	onSendStaffPhoto?: (file: File, text: string) => Promise<void>; // staff reply with a photo, any channel
 }) {
 	// Only test chats can simulate the customer; real channels get their customer messages from the platform
 	const canSimulate = conversation.channel === "self";
@@ -100,7 +102,16 @@ export default function MessageComposer({
 
 	function onPhotoPicked(file: File | undefined) {
 		if (photoInputRef.current) photoInputRef.current.value = "";
-		if (!file || sending || !onSendPhoto) return;
+		if (!file || sending) return;
+		if (mode === "staff" && onSendStaffPhoto) {
+			const value = text.trim();
+			void run(async () => {
+				await onSendStaffPhoto(file, value);
+				setText("");
+			});
+			return;
+		}
+		if (!onSendPhoto) return;
 		onSendPhoto(file, text.trim());
 		setText("");
 	}
@@ -157,7 +168,7 @@ export default function MessageComposer({
 					onKeyDown={onKeyDown}
 					className="min-h-[44px] max-h-[120px] resize-none rounded-2xl bg-background px-4 py-3"
 				/>
-				{canSimulate && mode === "ai" && onSendPhoto && (
+				{((canSimulate && mode === "ai" && onSendPhoto) || (mode === "staff" && onSendStaffPhoto)) && (
 					<>
 						<input
 							ref={photoInputRef}
@@ -175,7 +186,7 @@ export default function MessageComposer({
 							className="h-11 w-11 shrink-0 rounded-full"
 						>
 							<ImagePlus className="h-4 w-4" />
-							<span className="sr-only">Send a photo as customer</span>
+							<span className="sr-only">Send a photo</span>
 						</Button>
 					</>
 				)}
