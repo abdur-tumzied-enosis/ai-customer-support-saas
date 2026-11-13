@@ -6,8 +6,12 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
+from .media import has_photo as message_has_photo
 from .models import Conversation
 from .webhooks import emit_event
+
+HANDOFF_PHOTO_LOOKBACK = 5  # inbound messages checked for a photo: "photo" is often followed by "hello??"
+PHOTO_SUFFIX = "; customer sent a photo"
 
 # Needs explicit intent ("talk to a person", "real person", a bare "human") so FAQ questions like
 # "customer service hours?" or "human hair?" don't silence the bot; the LLM tool covers the rest.
@@ -25,8 +29,15 @@ def wants_human(text) -> bool:
 	return bool(HANDOFF_PATTERN.search(text or ""))
 
 
-def conversation_event_data(conversation) -> dict:
+def recent_inbound(conversation, count=HANDOFF_PHOTO_LOOKBACK) -> list:
+	"""The customer's newest inbound messages first."""
+	return list(conversation.messages.filter(direction="in").order_by("-created_at")[:count])
+
+
+def conversation_event_data(conversation, last_message=None) -> dict:
 	contact = conversation.contact
+	recent = recent_inbound(conversation)
+	last = last_message or (recent[0] if recent else None)
 	return {
 		"conversation_id": str(conversation.id),
 		"channel": conversation.channel,
@@ -37,6 +48,8 @@ def conversation_event_data(conversation) -> dict:
 			"external_id": contact.external_id,
 			"display_name": contact.display_name,
 		} if contact else None,
+		"last_message_id": str(last.id) if last else None,
+		"has_photo": any(message_has_photo(m) for m in recent),
 	}
 
 
@@ -44,12 +57,19 @@ def start_handoff(conversation, reason: str) -> bool:
 	"""Pause the bot. Returns False (no change, no event) if the conversation is already paused."""
 	now = timezone.now()
 	cutoff = now - timedelta(hours=settings.HANDOFF_AUTO_RESUME_HOURS)
+	recent = recent_inbound(conversation)
+	reason = (reason or "").strip()[:255]
+	if any(message_has_photo(m) for m in recent) and "photo" not in reason.lower():
+		# The photo context is appended before truncation, so it survives a long reason
+		head = reason[: 255 - len(PHOTO_SUFFIX)].rstrip(" ;")
+		reason = f"{head}{PHOTO_SUFFIX}" if head else PHOTO_SUFFIX[2:]
+	reason = reason[:255]
 	updated = Conversation.objects.filter(id=conversation.id).filter(
 		Q(handoff_at__isnull=True) | Q(handoff_at__lte=cutoff)
-	).update(handoff_at=now, handoff_reason=(reason or "needs a person").strip()[:255], updated_at=now)
+	).update(handoff_at=now, handoff_reason=reason or "needs a person", updated_at=now)
 	conversation.refresh_from_db(fields=["handoff_at", "handoff_reason", "updated_at"])
 	if updated:
-		emit_event(conversation.project, "conversation.handoff", conversation_event_data(conversation))
+		emit_event(conversation.project, "conversation.handoff", conversation_event_data(conversation, last_message=recent[0] if recent else None))
 	return bool(updated)
 
 
