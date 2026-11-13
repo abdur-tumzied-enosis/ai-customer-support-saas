@@ -39,6 +39,15 @@ def has_photo(msg: Message) -> bool:
 	return any(isinstance(a, dict) and is_photo(a) for a in msg.attachment_info or [])
 
 
+def photo_keys(msg: Message) -> list[str]:
+	"""Stored paths of the photo attachments, in order. A photo whose bytes were never stored (still only on Meta's
+	CDN) has no path and is skipped, which is how the dashboard tells "show this" from "just say Photo"."""
+	return [
+		a["path"] for a in msg.attachment_info or []
+		if isinstance(a, dict) and is_photo(a) and isinstance(a.get("path"), str) and a["path"]
+	]
+
+
 def is_storable(att: dict) -> bool:
 	"""Photos and voice notes/audio are kept in R2 (media_store); stickers, documents, locations... stay metadata."""
 	return is_photo(att) or att.get("type") == "audio"

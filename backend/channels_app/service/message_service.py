@@ -129,10 +129,11 @@ def create_outbound_message(
 	id: Optional[uuid.UUID] = None,
 	sender: str = "bot",
 	status: str = "completed",
+	attachment_info: Optional[List[Dict[str, Any]]] = None,
 ) -> Message:
 	"""
 	Create an outbound message record.
-	
+
 	Args:
 		project: The project this message belongs to
 		contact: The customer contact receiving the message
@@ -142,7 +143,8 @@ def create_outbound_message(
 		conversation: Optional conversation this message belongs to
 		id: Optional UUID to use as message ID (for linking with agent_reply_id)
 		sender: "bot" (default) or "staff"
-		
+		attachment_info: Attachments sent with this message (e.g. a staff photo)
+
 	Returns:
 		Created Message instance
 	"""
@@ -166,8 +168,8 @@ def create_outbound_message(
 		"reply_to_message": None,
 		"agent_reply_id": None,  # Outbound messages don't have agent_reply_id
 		"is_reply": False,
-		"has_attachments": False,
-		"attachment_info": [],
+		"has_attachments": bool(attachment_info),
+		"attachment_info": attachment_info or [],
 		"meta": meta,
 		"sender": sender,
 	}

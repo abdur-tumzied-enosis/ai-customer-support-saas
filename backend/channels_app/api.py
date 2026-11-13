@@ -6,7 +6,7 @@ from rest_framework.exceptions import ValidationError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
-from .media import PHOTO_ERROR, has_photo, is_own_upload, presign_chat_photo, uploaded_photo_ok
+from .media import PHOTO_ERROR, has_photo, is_own_upload, photo_keys, presign_chat_photo, uploaded_photo_ok
 from .media_store import store_message_media
 from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
 from .service.conversation_service import create_conversation
@@ -232,6 +232,7 @@ def _message_dict(msg: Message, credits=()) -> dict:
 		"created_at": msg.created_at.isoformat(),
 		"agent_reply_id": str(msg.agent_reply_id) if msg.agent_reply_id else None,
 		"has_photo": has_photo(msg),
+		"photo_urls": [f"/api/channels/messages/{msg.id}/photo?index={i}" for i, _ in enumerate(photo_keys(msg))],
 		"photo_matches": photo_note_text(msg.meta) if msg.direction == "in" else "",
 		"credits": list(credits),
 	}
