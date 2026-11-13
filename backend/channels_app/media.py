@@ -147,7 +147,7 @@ def read_stored(path: str, cap: int = MAX_IMAGE_BYTES) -> bytes:
 		raise MediaError(f"cannot read upload: {e}") from e
 
 
-def _read_upload(path) -> bytes:
+def read_upload(path) -> bytes:
 	if not isinstance(path, str) or ".." in path or path.startswith("/") or not path.startswith(UPLOAD_PREFIXES):
 		raise MediaError("invalid upload path")
 	return read_stored(path)
@@ -166,7 +166,7 @@ def fetch_attachment(msg: Message, att: dict, cap: int) -> bytes:
 def fetch_photo(msg: Message, att: dict) -> bytes:
 	"""Raw bytes of the photo in `att`: the stored copy when media_store kept one, else from Meta; MediaError on any failure."""
 	if att.get("path"):
-		return _read_upload(att["path"])
+		return read_upload(att["path"])
 	if msg.conversation.channel in ("widget", "self"):
 		raise MediaError("upload has no stored path")
 	return fetch_attachment(msg, att, MAX_IMAGE_BYTES)

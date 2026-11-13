@@ -1,23 +1,26 @@
 """Answer customer photos: match each one against the catalog, number the photos of a turn and leave a note on each
 message for the agent. Photos the reply model needs to see are chosen here (vision_images) and sent by channels_app.reply."""
+import base64
 import logging
 import re
 from datetime import datetime, timedelta
+from io import BytesIO
 
 from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
+from PIL import Image
 
 from agents.embeddings_api import embed_image
 from agents.image_search import load_image, search_products
-from agents.llm import vision_route
+from agents.llm import resolve_model, vision_route
 from billing.service import charge
 from knowledge.models import Product
 from usage.utils import record_image_usage
 
 from . import tasks
-from .media import fetch_photo, is_photo
+from .media import fetch_photo, is_photo, read_upload
 from .models import Widget
 
 logger = logging.getLogger(__name__)
@@ -27,6 +30,7 @@ MAX_PHOTOS_PER_TURN = 5  # WhatsApp sends one photo per message, so an album is 
 PHOTO_NOTES_KEY = "photo_notes"
 PHOTO_VISION_KEY = "photo_vision"
 VISION_DAY_SECONDS = 24 * 60 * 60
+VISION_JPEG_QUALITY = 80
 
 DAMAGE_PATTERN = re.compile(
 	r"\b(damag\w*|broke\w*|broken|crack\w*|torn|rip\w*|defect\w*|fault\w*|leak\w*|stain\w*|"
@@ -66,15 +70,144 @@ def _live_stamps(stamps, cutoff) -> list:
 	return live
 
 
+def _day_stamps(conversation) -> list:
+	"""Live (under 24h old) timestamps of photos sent to the model in this conversation. Raises on a cache error."""
+	cutoff = timezone.now() - timedelta(seconds=VISION_DAY_SECONDS)
+	return _live_stamps(cache.get(f"vision-day:{conversation.id}"), cutoff)
+
+
 def vision_day_remaining(conversation) -> int:
 	"""Photos this conversation may still get in the rolling 24h. 0 when the counter cannot be read (fail closed)."""
 	try:
-		cutoff = timezone.now() - timedelta(seconds=VISION_DAY_SECONDS)
-		live = _live_stamps(cache.get(f"vision-day:{conversation.id}"), cutoff)
-		return max(0, settings.VISION_MAX_IMAGES_PER_CONVERSATION_DAY - len(live))
+		return max(0, settings.VISION_MAX_IMAGES_PER_CONVERSATION_DAY - len(_day_stamps(conversation)))
 	except Exception as e:
 		logger.warning(f"Could not read the photo daily cap for conversation {conversation.id}: {type(e).__name__}")
 		return 0
+
+
+def encode_vision_image(data: bytes) -> dict:
+	"""Downscale to VISION_MAX_EDGE (never upscale), encode JPEG q80, return a data URI plus sizes.
+	{"uri": "data:image/jpeg;base64,...", "original": (w, h), "sent": (w, h), "bytes": n}
+	Raises NotAnImage (from load_image) on bad data."""
+	img = load_image(data)  # upright RGB already
+	original = img.size
+	longest = max(original)
+	if longest > settings.VISION_MAX_EDGE:
+		scale = settings.VISION_MAX_EDGE / longest
+		img = img.resize((max(1, round(original[0] * scale)), max(1, round(original[1] * scale))), Image.LANCZOS)
+	buf = BytesIO()
+	img.save(buf, "JPEG", quality=VISION_JPEG_QUALITY)
+	raw = buf.getvalue()
+	return {"uri": "data:image/jpeg;base64," + base64.b64encode(raw).decode("ascii"), "original": original, "sent": img.size, "bytes": len(raw)}
+
+
+def _names(indices, capital: bool, verb_text: str) -> str:
+	word = ("Photo" if len(indices) == 1 else "Photos") if capital else ("photo" if len(indices) == 1 else "photos")
+	return f"{word} {', '.join(str(i) for i in indices)} {verb_text}"
+
+
+def _shortfall_marker(daily: list, prepare: list) -> str:
+	"""One marker naming every photo that was selected but not sent, with its own reason."""
+	clauses = []
+	if daily:
+		verb = "was not attached (daily limit)" if len(daily) == 1 else "were not attached (daily limit)"
+		clauses.append(_names(daily, not clauses, verb))
+	if prepare:
+		clauses.append(_names(prepare, not clauses, "could not be prepared"))
+	total = len(daily) + len(prepare)
+	return f"[{'; '.join(clauses)}; do not claim to have seen {'it' if total == 1 else 'them'}.]"
+
+
+def finalize_notes(turn, sent_indexes, reason="prepare", reasons=None) -> None:
+	"""Write the post-cap truth: every photo marked attached whose index was not sent becomes not attached, with
+	its own note and reason (reasons maps index -> reason and overrides `reason`). Rewrites photo_vision to the
+	photos actually sent. Saves only messages that changed."""
+	for m in turn:
+		meta = dict(m.meta or {})
+		entries = meta.get(PHOTO_NOTES_KEY) or []
+		changed = False
+		for entry in entries:
+			if entry.get("attached") is True and entry["index"] not in sent_indexes:
+				entry["attached"] = False
+				entry["not_attached"] = (reasons or {}).get(entry["index"], reason)
+				entry["note"] = _render_note(entry)
+				changed = True
+		if changed:
+			meta[PHOTO_VISION_KEY] = [{"index": e["index"], "path": e["path"]} for e in entries if e["attached"]]
+			m.meta = meta
+			m.save(update_fields=["meta"])
+
+
+def vision_images(turn, conversation) -> dict:
+	"""Prepare the attached photos of this turn as JPEG data URIs, within the turn and daily caps. Returns
+	{"images": [...], "marker": str, "trace": {...}}. A text-only turn returns an empty trace, so it looks
+	exactly as before. Never raises except SoftTimeLimitExceeded; any failure fails closed with no images."""
+	quiet = {"images": [], "marker": "", "trace": {}}
+	if not any((m.meta or {}).get("photo_reply") for m in turn):
+		return quiet
+	skipped = vision_readiness(conversation, turn[0])
+	if skipped:
+		finalize_notes(turn, set(), reason="settings")  # the saved notes must not claim an image that is not sent
+		return {"images": [], "marker": "", "trace": {"vision_skipped": skipped}}
+
+	photo_entries = []  # (message, entry, path) for every photo note of the turn, in order
+	for m in turn:
+		vision_paths = {p["index"]: p["path"] for p in (m.meta or {}).get(PHOTO_VISION_KEY) or []}
+		for entry in (m.meta or {}).get(PHOTO_NOTES_KEY) or []:
+			if entry.get("attached"):
+				photo_entries.append((m, entry, vision_paths.get(entry["index"], entry["path"])))
+	selected = photo_entries[:settings.VISION_MAX_IMAGES_PER_TURN]
+	checked = [e for m in turn for e in (m.meta or {}).get(PHOTO_NOTES_KEY) or [] if e.get("reason") != "unchecked"]
+	route = "reply" if vision_route() == resolve_model() else "vision"
+	trace = {"vision_route": route, "vision_triggers": [], "vision_top_scores": [e.get("score") for e in checked]}
+	if not selected:
+		return {"images": [], "marker": "", "trace": {**trace, "vision_images": 0}}
+
+	try:
+		stamps = _day_stamps(conversation)
+		available = settings.VISION_MAX_IMAGES_PER_CONVERSATION_DAY - len(stamps)
+	except Exception as e:
+		logger.warning(f"Could not read the photo daily cap for conversation {conversation.id}: {type(e).__name__}")
+		finalize_notes(turn, set(), reason="daily")
+		return {"images": [], "marker": _shortfall_marker([e["index"] for _, e, _ in selected], []), "trace": {**trace, "vision_skipped": "cap", "vision_images": 0}}
+	chosen = selected[:max(0, available)]
+	daily_missing = [e["index"] for _, e, _ in selected[len(chosen):]]
+
+	prepared, prepare_missing = [], []
+	for m, entry, path in chosen:
+		try:
+			prepared.append((m, entry, encode_vision_image(read_upload(path))))
+		except SoftTimeLimitExceeded:
+			raise
+		except Exception as e:  # type only: the path is a storage key
+			logger.warning(f"Photo {entry['index']} on message {m.id} could not be prepared: {type(e).__name__}")
+			prepare_missing.append(entry["index"])
+
+	if prepared:
+		try:
+			now = timezone.now().isoformat()
+			cache.set(f"vision-day:{conversation.id}", stamps + [now] * len(prepared), timeout=VISION_DAY_SECONDS)
+		except Exception as e:
+			logger.warning(f"Could not record the photo daily cap for conversation {conversation.id}: {type(e).__name__}")
+			daily_missing += [entry["index"] for _, entry, _ in prepared]  # discard: the cap must never be exceeded
+			prepared = []
+
+	sent = {entry["index"] for _, entry, _ in prepared}
+	reasons = {i: "daily" for i in daily_missing} | {i: "prepare" for i in prepare_missing}
+	finalize_notes(turn, sent, reasons=reasons)
+	marker = _shortfall_marker(sorted(daily_missing), sorted(prepare_missing)) if reasons else ""
+	trace.update({
+		"vision_images": len(prepared),
+		"vision_bytes": sum(enc["bytes"] for _, _, enc in prepared),
+		"vision_dimensions": [list(enc["sent"]) for _, _, enc in prepared],
+		"vision_original_dimensions": [list(enc["original"]) for _, _, enc in prepared],
+		"vision_triggers": [entry.get("trigger", "") for _, entry, _ in prepared],
+	})
+	if daily_missing:
+		trace["vision_skipped"] = "cap"
+	if prepare_missing:
+		trace["vision_error"] = "prepare"
+	return {"images": [enc["uri"] for _, _, enc in prepared], "marker": marker, "trace": {k: v for k, v in trace.items() if v != ""}}
 
 
 def vision_readiness(conversation, msg) -> str:

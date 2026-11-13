@@ -1,13 +1,16 @@
+import io
 from datetime import timedelta
 from decimal import Decimal
 from unittest import mock
 
 from django.conf import settings
 from django.core.cache import cache
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
+from PIL import Image
 
 from agents.embeddings_api import Embedded
+from agents.image_search import NotAnImage
 from channels_app import image_reply, tasks
 from channels_app.models import Message
 from channels_app.tests.test_image_reply import png_bytes
@@ -172,3 +175,136 @@ class VisionAnnotateTest(VisionBase):
 		(msg,) = self.annotate(self.photo_message("hello"))
 		formatted = tasks.format_message_with_context(msg)
 		assert "[Customer sent photo 1." in formatted and formatted.startswith("hello ")
+
+
+def png_of_size(width, height):
+	buf = io.BytesIO()
+	Image.new("RGB", (width, height), "blue").save(buf, "PNG")
+	return buf.getvalue()
+
+
+class VisionEncodeTest(SimpleTestCase):
+	def test_tall_image_long_side_is_1568(self):
+		enc = image_reply.encode_vision_image(png_of_size(100, 4000))
+		assert max(enc["sent"]) == settings.VISION_MAX_EDGE
+		assert abs(enc["sent"][0] - round(100 * settings.VISION_MAX_EDGE / 4000)) <= 1
+
+	def test_small_image_is_not_upscaled(self):
+		assert image_reply.encode_vision_image(png_of_size(100, 50))["sent"] == (100, 50)
+
+	def test_returns_jpeg_data_uri(self):
+		enc = image_reply.encode_vision_image(png_of_size(20, 20))
+		assert enc["uri"].startswith("data:image/jpeg;base64,") and enc["bytes"] > 0
+
+	def test_corrupt_bytes_raise_not_an_image(self):
+		with self.assertRaises(NotAnImage):
+			image_reply.encode_vision_image(b"not an image")
+
+
+class VisionImagesTest(VisionBase):
+	def setUp(self):
+		super().setUp()
+		self.read = mock.patch.object(image_reply, "read_upload", side_effect=lambda path: png_bytes()).start()
+
+	def turn_with(self, photos=2, text=""):
+		msg = self.photo_message(text, photos=photos)
+		self.annotate(msg)
+		return msg
+
+	def call(self, msg):
+		return image_reply.vision_images([msg], self.conv)
+
+	def test_two_chosen_images_are_prepared(self):
+		msg = self.turn_with(photos=2)
+		out = self.call(msg)
+		assert len(out["images"]) == 2 and out["marker"] == ""
+		assert out["trace"]["vision_images"] == 2
+		assert len(out["trace"]["vision_dimensions"]) == 2 and len(out["trace"]["vision_original_dimensions"]) == 2
+		assert out["trace"]["vision_triggers"] == ["no_match", "no_match"]
+		assert out["trace"]["vision_top_scores"] == [None, None]
+
+	def test_daily_cap_prefills_and_limits(self):
+		msg = self.turn_with(photos=2)
+		cache.set(f"vision-day:{self.conv.id}", [timezone.now().isoformat()] * 5, timeout=3600)
+		out = self.call(msg)
+		assert len(out["images"]) == 1
+		assert out["marker"] == "[Photo 2 was not attached (daily limit); do not claim to have seen it.]"
+		assert out["trace"]["vision_skipped"] == "cap"
+
+	def test_daily_cap_rewrites_saved_note(self):
+		msg = self.turn_with(photos=2)
+		cache.set(f"vision-day:{self.conv.id}", [timezone.now().isoformat()] * 5, timeout=3600)
+		self.call(msg)
+		msg.refresh_from_db()
+		assert msg.meta["photo_notes"][1]["attached"] is False
+		assert "Photo not attached (daily limit)" in msg.meta["photo_notes"][1]["note"]
+		assert [p["index"] for p in msg.meta["photo_vision"]] == [1]
+
+	def test_daily_cap_zero_prepares_nothing(self):
+		msg = self.turn_with(photos=2)
+		cache.set(f"vision-day:{self.conv.id}", [timezone.now().isoformat()] * 6, timeout=3600)
+		out = self.call(msg)
+		assert out["images"] == []
+		assert out["marker"] == "[Photos 1, 2 were not attached (daily limit); do not claim to have seen them.]"
+		msg.refresh_from_db()
+		assert [n["attached"] for n in msg.meta["photo_notes"]] == [False, False]
+
+	def test_old_timestamps_are_pruned(self):
+		cache.set(f"vision-day:{self.conv.id}", [(timezone.now() - timedelta(hours=25)).isoformat()] * 6, timeout=3600)
+		msg = self.turn_with(photos=2)
+		assert len(self.call(msg)["images"]) == 2
+
+	def test_read_failure_skips_image_and_reports(self):
+		msg = self.turn_with(photos=2)
+		def read(path):
+			if path.endswith("1.webp"):  # photo 2's stored file is gone
+				raise OSError("gone")
+			return png_bytes()
+
+		self.read.side_effect = read
+		out = self.call(msg)
+		assert len(out["images"]) == 1
+		assert out["marker"] == "[Photo 2 could not be prepared; do not claim to have seen it.]"
+		assert out["trace"]["vision_error"] == "prepare"
+		msg.refresh_from_db()
+		assert msg.meta["photo_notes"][1]["note"].endswith("Photo not attached (could not be prepared).]")
+
+	def test_tenant_gate_skips(self):
+		msg = self.turn_with(photos=1)
+		self.conv.project.vision_fallback_enabled = False
+		self.conv.project.save(update_fields=["vision_fallback_enabled"])
+		assert self.call(msg) == {"images": [], "marker": "", "trace": {"vision_skipped": "tenant"}}
+
+	def test_model_gate_skips(self):
+		msg = self.turn_with(photos=1)
+		self.vision_capable.return_value = None
+		assert self.call(msg)["trace"] == {"vision_skipped": "model"}
+
+	def test_vision_model_route_is_traced(self):
+		msg = self.turn_with(photos=1)
+		with mock.patch.object(image_reply, "resolve_model", return_value=("openrouter", "reply/x")):
+			self.vision_capable.return_value = ("openrouter", "vendor/eyes")
+			assert self.call(msg)["trace"]["vision_route"] == "vision"
+			self.vision_capable.return_value = ("openrouter", "reply/x")
+			assert self.call(msg)["trace"]["vision_route"] == "reply"
+
+	def test_text_turn_without_vision_adds_no_trace(self):
+		self.turn_with(photos=1)  # an earlier photo message in the conversation
+		text = self.inbound("ok thanks")
+		assert image_reply.vision_images([text], self.conv) == {"images": [], "marker": "", "trace": {}}
+
+	def test_cache_unavailable_fails_closed(self):
+		msg = self.turn_with(photos=1)
+		with mock.patch.object(image_reply, "cache") as broken:
+			broken.get.side_effect = RuntimeError("redis down")
+			out = self.call(msg)
+		assert out["images"] == [] and out["trace"]["vision_skipped"] == "cap"
+
+	def test_cache_write_failure_fails_closed(self):
+		msg = self.turn_with(photos=2)
+		with mock.patch.object(image_reply, "cache") as flaky:
+			flaky.get.return_value = []
+			flaky.set.side_effect = RuntimeError("redis down")
+			out = self.call(msg)
+		assert out["images"] == []
+		assert out["trace"]["vision_skipped"] == "cap"
