@@ -60,7 +60,11 @@ def store_outbound_photo(conversation: Conversation, att: dict) -> str:
 
 	Takes the conversation, not a Message: it runs before the row is created, so a failure leaves no row behind."""
 	data = read_stored(att["path"])
-	display = make_send_variant(data)
+	try:
+		display = make_send_variant(data)
+	except NotAnImage:
+		delete_keys(att["path"])  # an upload that lied about being a photo: do not leave it in tmp/
+		raise
 	name = default_storage.save(f"chat_media/{conversation.project.slug}/{uuid4().hex}.jpg", ContentFile(display))
 	default_storage.save(thumb_key(name), ContentFile(make_variants(data)[1]))
 	delete_keys(att["path"])

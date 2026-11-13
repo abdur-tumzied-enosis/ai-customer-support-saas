@@ -320,12 +320,18 @@ export default function ConversationThreadPage() {
 		}
 	}
 
+	// The row is committed before the send finishes, so the 5s poll can already have appended it: append by id.
+	function appendMessage(m: ConversationMessage) {
+		const chat = toChatMessage(m);
+		setMessages((prev) => (prev.some((p) => p.id === chat.id) ? prev : [...prev, chat]));
+	}
+
 	async function handleSendStaffPhoto(file: File, text: string) {
 		const photo = await downscaleImage(file);
 		const presigned = await conversationApi.staffPhotoPresign(conversationId, { content_type: photo.type, size: photo.size });
 		await putToR2(presigned.data, photo);
 		const res = await conversationApi.staffPhotoSend(conversationId, { key: presigned.data.key, text });
-		setMessages((prev) => [...prev, toChatMessage(res.data.message)]);
+		appendMessage(res.data.message);
 		await fetchConversation();
 	}
 
@@ -469,7 +475,7 @@ export default function ConversationThreadPage() {
 				<MessageComposer
 					conversation={conversation}
 					onConversationChange={setConversation}
-					onStaffMessage={(m) => setMessages((prev) => [...prev, toChatMessage(m)])}
+					onStaffMessage={(m) => appendMessage(m)}
 					onSendAsCustomer={handleSend}
 					sendingAsCustomer={sending}
 					onSendPhoto={imageSearchOn ? handleSendPhoto : undefined}

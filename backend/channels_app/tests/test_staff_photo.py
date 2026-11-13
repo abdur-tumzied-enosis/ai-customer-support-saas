@@ -10,11 +10,11 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
-from agents.image_search import make_send_variant
+from agents.image_search import NotAnImage, make_send_variant
 from channels_app import media_store
 from channels_app.api import _message_dict
 from channels_app.models import Conversation, CustomerContact, Message
-from channels_app.reply import _facebook_send, _send_parts, _whatsapp_send
+from channels_app.reply import _age_unknown_deliveries, _facebook_send, _send_parts, _whatsapp_send, deliver
 from channels_app.service.conversation_service import create_conversation, ensure_contact_conversation
 from channels_app.service.message_service import create_outbound_message
 from channels_app.tests.test_widget import fake_presign, png_bytes
@@ -94,6 +94,13 @@ class OutboundStoreTest(TestCase):
 	def test_store_outbound_photo_rejects_non_image(self):
 		with self.assertRaises(Exception):
 			media_store.store_outbound_photo(self.conv, self.upload(b"nope, not an image"))
+
+	def test_store_outbound_photo_cleans_up_a_photo_that_will_not_decode(self):
+		# sniffs as PNG (so it passes the upload check) but Pillow cannot decode it
+		broken = b"\x89PNG\r\n\x1a\n" + b"garbage"
+		with self.assertRaises(NotAnImage):
+			media_store.store_outbound_photo(self.conv, self.upload(broken))
+		assert not default_storage.exists(self.tmp)  # the rejected upload is not left in tmp/
 
 
 @fresh_storage
@@ -217,6 +224,48 @@ class DeliverImagePartTest(TestCase):
 		assert self.msg.meta["inflight"] == 0
 
 
+class DeliverOutboundPhotoTest(TestCase):
+	"""Crosses the seam the unit tests mock: the real deliver() must turn attachment_info into an image part."""
+	def setUp(self):
+		self.project = Project.objects.create(name="P", slug="p-deliver-out")
+		self.kb = KnowledgeBase.objects.create(project=self.project, name="kb", vector_collection="vc-deliver-out")
+		self.contact = CustomerContact.objects.create(project=self.project, platform="facebook", external_id="psid")
+		self.conv = ensure_contact_conversation(self.contact, self.kb)
+		self.image = mock.patch("channels_app.tasks.send_image_message", return_value={"message_id": "img1"}).start()
+		self.text = mock.patch("channels_app.tasks.send_text_message", return_value={"message_id": "txt1"}).start()
+		cred = mock.Mock()
+		cred.get_credentials.return_value.page_access_token = "tok"
+		mock.patch("channels_app.tasks.get_facebook_credential", return_value=cred).start()
+		mock.patch("channels_app.reply.presign_get", return_value="https://r2.test/a.jpg").start()
+		self.addCleanup(mock.patch.stopall)
+
+	def outbound(self, text="", info=None):
+		return create_outbound_message(
+			project=self.project, contact=self.contact, conversation=self.conv, text=text, sender="staff",
+			attachment_info=[{"type": "image", "path": "chat_media/p/a.jpg"}] if info is None else info,
+		)
+
+	def test_photo_with_text_sends_the_photo_and_the_text(self):
+		msg = self.outbound(text="this one?")
+		assert deliver(self.conv, msg, msg)
+		assert [c.kwargs["image_url"] for c in self.image.call_args_list] == ["https://r2.test/a.jpg"]
+		assert [c.kwargs["text"] for c in self.text.call_args_list] == ["this one?"]
+		assert msg.meta["parts_sent"] == 2
+
+	def test_photo_without_text_sends_only_the_photo(self):
+		msg = self.outbound(text="")
+		assert deliver(self.conv, msg, msg)
+		assert self.image.call_count == 1
+		self.text.assert_not_called()
+		assert msg.meta["parts_sent"] == 1
+
+	def test_text_only_message_still_sends_no_image(self):
+		msg = self.outbound(text="hello", info=[])
+		assert deliver(self.conv, msg, msg)
+		self.image.assert_not_called()
+		assert self.text.call_count == 1
+
+
 @fresh_storage
 class StaffPhotoApiTest(TestCase):
 	def setUp(self):
@@ -304,13 +353,30 @@ class StaffPhotoApiTest(TestCase):
 		self.deliver.assert_not_called()
 
 	def test_definite_failure_marks_failed_and_deletes_the_photo(self):
+		before = self.stored()
 		self.deliver.return_value = False
 		r = self.client.post(self.url(), {"key": self.uploaded_key(), "text": "x"}, format="json")
 		assert r.status_code == 502 and r.json()["error"]["code"] == "send_failed"
 		msg = Message.objects.get(conversation=self.conv, direction="out")
 		assert msg.status == "failed"
-		key = msg.attachment_info[0]["path"]
-		assert key not in self.stored() and f"{key[:-4]}_thumb.webp" not in self.stored()
+		assert self.stored() == before  # the stored copy is gone
+
+	def test_definite_failure_leaves_no_dangling_photo_reference(self):
+		# the bytes are deleted, so the thread must not keep pointing at them (a broken <img>)
+		self.deliver.return_value = False
+		self.client.post(self.url(), {"key": self.uploaded_key()}, format="json")
+		msg = Message.objects.get(conversation=self.conv, direction="out")
+		msg.refresh_from_db()
+		d = _message_dict(msg)
+		assert d["photo_urls"] == [] and d["has_photo"] is False
+
+	def test_delivery_exception_is_held_not_reported_as_sent(self):
+		self.deliver.side_effect = RuntimeError("boom")
+		r = self.client.post(self.url(), {"key": self.uploaded_key()}, format="json")
+		assert r.status_code == 502 and r.json()["error"]["code"] == "send_unknown"
+		msg = Message.objects.get(conversation=self.conv, direction="out")
+		assert msg.status == "unknown"  # it may have reached the customer: never claim "completed"
+		assert msg.attachment_info[0]["path"] in self.stored()
 
 	def test_unknown_outcome_keeps_the_photo(self):
 		def deliver_and_leave_inflight(conversation, msg, reference_msg):
@@ -328,3 +394,35 @@ class StaffPhotoApiTest(TestCase):
 		ui = create_conversation(project=self.project, knowledge_base=self.kb, user_id=str(self.user.id))
 		key = self.uploaded_key(conv=ui)
 		assert self.client.post(self.url(conv=ui), {"key": key}, format="json").status_code == 201
+
+
+class UnknownStaffSendTest(TestCase):
+	"""A staff send held as unknown must not be auto-resent: it is inline, so a duplicate is the risk and a
+	person decides. The bot's own replies keep the existing WhatsApp auto-resolve."""
+	def setUp(self):
+		self.project = Project.objects.create(name="P", slug="p-unknown-staff")
+		self.kb = KnowledgeBase.objects.create(project=self.project, name="kb", vector_collection="vc-unknown-staff")
+		self.contact = CustomerContact.objects.create(project=self.project, platform="whatsapp", external_id="w1")
+		self.conv = ensure_contact_conversation(self.contact, self.kb)
+
+	def held(self, sender):
+		msg = create_outbound_message(
+			project=self.project, contact=self.contact, conversation=self.conv, text="hi", sender=sender,
+		)
+		Message.objects.filter(id=msg.id).update(
+			status="unknown", deliver_after=timezone.now() - timedelta(minutes=20), meta={"inflight": 0, "parts_total": 1},
+		)
+		msg.refresh_from_db()
+		return msg
+
+	def test_staff_unknown_whatsapp_send_is_left_for_review(self):
+		msg = self.held("staff")
+		_age_unknown_deliveries(timezone.now())
+		msg.refresh_from_db()
+		assert msg.status == "unknown"
+
+	def test_bot_unknown_whatsapp_reply_is_still_resent(self):
+		msg = self.held("bot")
+		_age_unknown_deliveries(timezone.now())
+		msg.refresh_from_db()
+		assert msg.status == "pending"

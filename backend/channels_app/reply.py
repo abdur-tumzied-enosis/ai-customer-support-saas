@@ -23,6 +23,7 @@ from core.storage import presign_get
 from . import image_reply, memory, tasks
 from .facebook_client import INSTAGRAM_MAX_TEXT_BYTES, WHATSAPP_MAX_TEXT_CHARS, split_text
 from .handoff import start_handoff, wants_human
+from .media import photo_keys
 from .models import Conversation, Message
 from .service.message_service import create_outbound_message
 
@@ -97,14 +98,21 @@ def _whatsapp_send(conversation, out_msg: Message, reference_msg: Message):
 	return send
 
 
+def _outbound_parts(out_msg: Message, text_parts: list) -> list:
+	"""What to send, in order: every attached photo, then the text. The platforms take no caption, so a photo
+	with text is two messages. A message with no attachments is unchanged (the bot's normal reply)."""
+	return [{"image": key} for key in photo_keys(out_msg)] + text_parts
+
+
 def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bool:
 	# Instagram rejects text over 1000 bytes; Messenger's limit is chars
-	parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
+	text_parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
+	parts = _outbound_parts(out_msg, text_parts)
 	return _send_parts(out_msg, parts, _facebook_send(conversation, out_msg, reference_msg), conversation.channel)
 
 
 def _send_whatsapp(conversation, out_msg: Message, reference_msg: Message) -> bool:
-	parts = split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS)
+	parts = _outbound_parts(out_msg, split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS))
 	return _send_parts(out_msg, parts, _whatsapp_send(conversation, out_msg, reference_msg), "whatsapp")
 
 
@@ -452,7 +460,8 @@ def _age_unknown_deliveries(now) -> None:
 	only very late the customer gets a duplicate). Messenger and Instagram have no such signal, so staff are told."""
 	stale = Message.objects.filter(
 		direction="out", status="unknown", deliver_after__lt=now - UNKNOWN_REVIEW_AFTER, conversation__isnull=False,
-	).select_related("conversation__contact").order_by("deliver_after")[:100]
+	).exclude(sender="staff").select_related("conversation__contact").order_by("deliver_after")[:100]  # a staff send is
+	# inline and never retried automatically: re-sending one could deliver the same photo or text twice
 	needs_review = 0
 	for out_msg in stale:
 		if out_msg.conversation.channel == "whatsapp":

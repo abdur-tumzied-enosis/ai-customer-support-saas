@@ -3,6 +3,9 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
+import logging
+
+logger = logging.getLogger(__name__)
 from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
@@ -1107,7 +1110,15 @@ class ConversationStaffPhotoView(APIView):
 			conversation=conversation, sender="staff", meta=answered_marker(last_in),
 			attachment_info=[att],
 		)
-		if not deliver(conversation, msg, last_in):
+		try:
+			delivered = deliver(conversation, msg, last_in)
+		except Exception:
+			# It may have reached the customer (a timeout mid-request, or a presign failure): hold it rather than
+			# report a failure that already happened, and keep the bytes.
+			logger.exception(f"Staff photo delivery raised for message {msg.id}")
+			delivered = False
+			msg.meta = {**msg.meta, "inflight": msg.meta.get("inflight", 0)}
+		if not delivered:
 			# "inflight" means a part may have reached the customer: hold the row and keep the stored photo,
 			# since the customer may already have it. Otherwise the send definitely failed and the bytes go.
 			unknown = "inflight" in msg.meta
@@ -1115,6 +1126,10 @@ class ConversationStaffPhotoView(APIView):
 			msg.save(update_fields=["status"])
 			if not unknown:
 				delete_keys(att["path"], thumb_key(att["path"]))
+				# the bytes are gone, so the row must stop pointing at them (otherwise the thread shows a broken image)
+				msg.attachment_info = []
+				msg.has_attachments = False
+				msg.save(update_fields=["attachment_info", "has_attachments"])
 				return _error("send_failed", "The message could not be delivered to the customer", status.HTTP_502_BAD_GATEWAY)
 			return _error("send_unknown", "The photo may or may not have reached the customer", status.HTTP_502_BAD_GATEWAY)
 		note_staff_activity(conversation)
