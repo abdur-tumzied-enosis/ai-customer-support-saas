@@ -1,9 +1,12 @@
 from unittest import mock
 
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
@@ -14,7 +17,7 @@ from channels_app.models import Conversation, CustomerContact, Message
 from channels_app.reply import _facebook_send, _send_parts, _whatsapp_send
 from channels_app.service.conversation_service import create_conversation, ensure_contact_conversation
 from channels_app.service.message_service import create_outbound_message
-from channels_app.tests.test_widget import png_bytes
+from channels_app.tests.test_widget import fake_presign, png_bytes
 from core.tests.utils import fresh_storage, stored_files
 from knowledge.models import KnowledgeBase
 
@@ -212,3 +215,116 @@ class DeliverImagePartTest(TestCase):
 		self.image.return_value = {"unknown": True}
 		assert self.send_parts([{"image": "chat_media/p/a.jpg"}]) is False
 		assert self.msg.meta["inflight"] == 0
+
+
+@fresh_storage
+class StaffPhotoApiTest(TestCase):
+	def setUp(self):
+		self.user = get_user_model().objects.create_user(username="sp@x.com", email="sp@x.com", password="pw123456")
+		self.project = Project.objects.create(name="P", slug="p-staff-api", image_search_allowed=True)
+		ProjectUser.objects.create(project=self.project, user=self.user, role="admin")
+		self.kb = KnowledgeBase.objects.create(project=self.project, name="kb", vector_collection="vc-staff-api")
+		self.contact = CustomerContact.objects.create(project=self.project, platform="facebook", external_id="psid")
+		self.conv = ensure_contact_conversation(self.contact, self.kb)
+		self.client = APIClient()
+		self.client.force_authenticate(self.user)
+		mock.patch("channels_app.media.presign_put", side_effect=fake_presign).start()
+		self.deliver = mock.patch("channels_app.api.deliver", return_value=True).start()
+		self.addCleanup(mock.patch.stopall)
+		# a recent customer message: staff may only send free-form inside the 24h window
+		self.last_in = Message.objects.create(
+			project=self.project, contact=self.contact, conversation=self.conv, direction="in", text="hi")
+
+	def url(self, presign=False, conv=None):
+		return f"/api/channels/conversations/{(conv or self.conv).id}/staff-reply/photo" + ("/presign" if presign else "")
+
+	def uploaded_key(self, conv=None, data=None):
+		key = self.client.post(self.url(presign=True, conv=conv), {"content_type": "image/jpeg", "size": 100}, format="json").json()["data"]["key"]
+		default_storage.save(key, ContentFile(png_bytes() if data is None else data))
+		return key
+
+	def test_presign_issues_conversation_scoped_key(self):
+		r = self.client.post(self.url(presign=True), {"content_type": "image/jpeg", "size": 100}, format="json")
+		assert r.status_code == 200, r.content
+		assert r.json()["data"]["key"].startswith(f"tmp/chat/p-staff-api/{self.conv.id}/")
+
+	def test_presign_rejects_bad_type_and_size(self):
+		for body in ({"content_type": "image/gif", "size": 100}, {"content_type": "image/jpeg", "size": 6 * 1024 * 1024}):
+			r = self.client.post(self.url(presign=True), body, format="json")
+			assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
+
+	def test_send_creates_a_stored_jpeg_outbound_message(self):
+		r = self.client.post(self.url(), {"key": self.uploaded_key(), "text": "this one?"}, format="json")
+		assert r.status_code == 201, r.content
+		data = r.json()["data"]["message"]
+		assert data["photo_urls"] == [f"/api/channels/messages/{data['id']}/photo?index=0"]
+		assert data["text"] == "this one?"
+		msg = Message.objects.get(id=data["id"])
+		assert msg.sender == "staff" and msg.direction == "out"
+		assert msg.attachment_info[0]["path"].startswith("chat_media/p-staff-api/") and msg.attachment_info[0]["path"].endswith(".jpg")
+		self.deliver.assert_called_once()
+
+	def test_send_without_text_is_allowed(self):
+		r = self.client.post(self.url(), {"key": self.uploaded_key()}, format="json")
+		assert r.status_code == 201 and r.json()["data"]["message"]["text"] == ""
+
+	def stored(self, path="chat_media/p-staff-api/"):
+		"""Files under `path`; a directory that was never created counts as empty (stored_files raises)."""
+		try:
+			return stored_files(path)
+		except FileNotFoundError:
+			return []
+
+	def test_send_rejects_foreign_key(self):
+		other = ensure_contact_conversation(
+			CustomerContact.objects.create(project=self.project, platform="facebook", external_id="psid2"), self.kb)
+		# inside the window, so the upload check is what refuses it and not the messaging window
+		Message.objects.create(project=self.project, contact=other.contact, conversation=other, direction="in", text="hi")
+		r = self.client.post(self.url(conv=other), {"key": self.uploaded_key()}, format="json")
+		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_upload"
+		self.deliver.assert_not_called()
+
+	def test_send_rejects_non_image_body_and_leaves_no_message(self):
+		before = self.stored()
+		r = self.client.post(self.url(), {"key": self.uploaded_key(data=b"nope")}, format="json")
+		assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_image"
+		assert not Message.objects.filter(conversation=self.conv, direction="out").exists()
+		assert self.stored() == before  # this request stored nothing
+
+	def test_send_outside_24h_window_refused(self):
+		Message.objects.filter(conversation=self.conv, direction="in").update(created_at=timezone.now() - timedelta(hours=25))
+		r = self.client.post(self.url(), {"key": self.uploaded_key()}, format="json")
+		assert r.status_code == 400 and r.json()["error"]["code"] == "outside_messaging_window"
+		self.deliver.assert_not_called()
+
+	def test_send_without_any_inbound_message_refused(self):
+		Message.objects.filter(conversation=self.conv, direction="in").delete()
+		r = self.client.post(self.url(), {"key": self.uploaded_key()}, format="json")
+		assert r.status_code == 400 and r.json()["error"]["code"] == "outside_messaging_window"
+		self.deliver.assert_not_called()
+
+	def test_definite_failure_marks_failed_and_deletes_the_photo(self):
+		self.deliver.return_value = False
+		r = self.client.post(self.url(), {"key": self.uploaded_key(), "text": "x"}, format="json")
+		assert r.status_code == 502 and r.json()["error"]["code"] == "send_failed"
+		msg = Message.objects.get(conversation=self.conv, direction="out")
+		assert msg.status == "failed"
+		key = msg.attachment_info[0]["path"]
+		assert key not in self.stored() and f"{key[:-4]}_thumb.webp" not in self.stored()
+
+	def test_unknown_outcome_keeps_the_photo(self):
+		def deliver_and_leave_inflight(conversation, msg, reference_msg):
+			msg.meta = {**msg.meta, "inflight": 0}
+			msg.save(update_fields=["meta"])
+			return False
+		self.deliver.side_effect = deliver_and_leave_inflight
+		r = self.client.post(self.url(), {"key": self.uploaded_key()}, format="json")
+		assert r.status_code == 502 and r.json()["error"]["code"] == "send_unknown"
+		msg = Message.objects.get(conversation=self.conv, direction="out")
+		assert msg.status == "unknown"
+		assert msg.attachment_info[0]["path"] in self.stored()  # the customer may already have it
+
+	def test_test_conversation_can_send_staff_photo(self):
+		ui = create_conversation(project=self.project, knowledge_base=self.kb, user_id=str(self.user.id))
+		key = self.uploaded_key(conv=ui)
+		assert self.client.post(self.url(conv=ui), {"key": key}, format="json").status_code == 201
