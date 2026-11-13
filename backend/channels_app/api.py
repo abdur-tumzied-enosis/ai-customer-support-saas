@@ -10,6 +10,7 @@ from .media import PHOTO_ERROR, has_photo, is_own_upload, presign_chat_photo, up
 from .media_store import store_message_media
 from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
 from .service.conversation_service import create_conversation
+from .tasks import photo_note_text
 from .service.message_service import create_ui_message
 from datetime import timedelta
 import requests
@@ -231,7 +232,7 @@ def _message_dict(msg: Message, credits=()) -> dict:
 		"created_at": msg.created_at.isoformat(),
 		"agent_reply_id": str(msg.agent_reply_id) if msg.agent_reply_id else None,
 		"has_photo": has_photo(msg),
-		"photo_matches": (msg.meta or {}).get("photo_matches", "") if msg.direction == "in" else "",
+		"photo_matches": photo_note_text(msg.meta) if msg.direction == "in" else "",
 		"credits": list(credits),
 	}
 

@@ -20,8 +20,8 @@ from knowledge.models import KnowledgeBase, Product
 from usage.models import UsageEvent
 
 PHOTO_URL = "https://scontent.xx.fbcdn.net/p.jpg"
-UNCHECKED = "[Customer sent a photo, but it could not be checked against the catalog.]"
-NO_MATCH = "[Customer sent a photo. No catalog product looks similar.]"
+UNCHECKED = "could not be checked against the catalog."
+NO_MATCH = "No catalog product looks similar."
 
 
 def png_bytes():
@@ -106,7 +106,7 @@ class ImageReplyTest(PipelineBase):
 		assert event.metadata == {"op": "search", "matched": True}
 		assert (event.message_id, event.conversation_id) == (msg.id, msg.conversation_id)
 		msg.refresh_from_db()
-		assert msg.status == "completed" and "Red Kurta" in msg.meta["photo_matches"]
+		assert msg.status == "completed" and "Red Kurta" in msg.meta["photo_notes"][0]["note"]
 		assert len(self.outbound()) == 1
 		self.send.assert_called_once()
 
@@ -125,7 +125,7 @@ class ImageReplyTest(PipelineBase):
 		handle_facebook_message(fb_payload("m1"))
 		self.answer_all()
 		assert "Blue Saree" not in self.questions[0]
-		assert '[Customer sent a photo. Closest catalog products: "Red Kurta" (similarity 0.90): ' in self.questions[0]
+		assert '[Customer sent photo 1. Closest catalog products: "Red Kurta" (similarity 0.90): ' in self.questions[0]
 
 	def test_matches_keep_score_order(self):
 		second = Product.objects.create(kb=self.kb, name="Green Kurta", price=100, status="active", description="x" * 400)
@@ -133,8 +133,8 @@ class ImageReplyTest(PipelineBase):
 		handle_facebook_message(fb_payload("m1"))
 		self.answer_all()
 		note = (
-			f'[Customer sent a photo. Closest catalog products: "Green Kurta" (similarity 0.91): {"x" * 300}; '
-			'"Red Kurta" (similarity 0.88): Cotton kurta in red, sizes S to XL]'
+			f'[Customer sent photo 1. Closest catalog products: "Green Kurta" (similarity 0.91): {"x" * 300}; '
+			'"Red Kurta" (similarity 0.88): Cotton kurta in red, sizes S to XL. Photo not attached.]'
 		)
 		assert note in self.questions[0], self.questions[0]
 
@@ -302,7 +302,7 @@ class ImageReplyTest(PipelineBase):
 	def test_photo_with_text_is_answered_when_on(self):
 		handle_facebook_message(fb_payload("m1", text="how much?"))
 		self.answer_all()
-		assert self.questions[0].startswith("how much? [Customer sent a photo.")
+		assert self.questions[0].startswith("how much? [Customer sent photo 1.")
 
 	def test_photo_with_text_is_not_answered_when_off(self):
 		self.cred.image_search_enabled = False

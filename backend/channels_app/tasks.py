@@ -29,22 +29,30 @@ def get_effective_instructions(project_id: str, knowledge_base_id: str = None) -
 	]
 
 
+def photo_note_text(meta) -> str:
+	"""The notes of a photo message, one renderer for the agent and the dashboard. Legacy rows keep photo_matches."""
+	notes = (meta or {}).get("photo_notes")
+	if notes:
+		return " ".join(n.get("note", "") for n in notes if n.get("note"))
+	return (meta or {}).get("photo_matches") or ""
+
+
 def format_message_with_context(message: Message) -> str:
 	"""
 	Format a message with contextual information (attachments, replies).
-	
+
 	Args:
 		message: The Message instance to format
-		
+
 	Returns:
 		Formatted message text with context annotations
 	"""
 	content = message.text
-	
-	# A photo's catalog matches (channels_app.image_reply) replace the generic attachment note
-	photo_matches = (message.meta or {}).get("photo_matches")
-	if photo_matches:
-		content = f"{content} {photo_matches}" if content else photo_matches
+
+	# A photo's numbered notes (channels_app.image_reply) replace the generic attachment note
+	rendered = photo_note_text(message.meta)
+	if rendered:
+		content = f"{content} {rendered}" if content else rendered
 	elif message.has_attachments:
 		att_types = [att.get("type", "unknown") for att in message.attachment_info]
 		content = f"{content} [Message includes attachments: {', '.join(att_types)}]"

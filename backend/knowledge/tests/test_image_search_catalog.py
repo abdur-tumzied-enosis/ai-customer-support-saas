@@ -20,7 +20,7 @@ class ImageSearchCatalogTests(TestCase):
 		with mock.patch.object(image_reply, "search_products", return_value=hits), \
 			mock.patch.object(image_reply, "embed_image"), mock.patch.object(image_reply, "load_image"), \
 			mock.patch.object(image_reply, "fetch_photo"), mock.patch.object(image_reply, "record_image_usage"):
-			note = image_reply._photo_note(conv, msg, {})
+			note = image_reply._render_note(image_reply._photo_note(conv, msg, {}, 1))
 		self.assertIn('"active"', note)
 		self.assertNotIn('"hidden"', note)
 		self.assertNotIn('"needs_info"', note)
