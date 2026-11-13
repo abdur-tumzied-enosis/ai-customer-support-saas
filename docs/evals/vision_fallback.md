@@ -63,6 +63,10 @@ Valid PNG and an invalid mime type give the same result:
 **Gap:** the plan's classifier retries only 400/415/422, so this 404 is NOT retried as written. Adding 404 with
 this exact marker is a decision for Task 6 Step 1; it is not made here.
 
+**Test model `thinkingmachines/inkling-2-small:free`: not usable.** Direct API calls return 403
+`ForbiddenResponseError`, message "only available on agentic harnesses". This happened for both the valid PNG and
+the bad mime type, so it says nothing about image handling. It cannot be a test or photo model for this backend.
+
 **Google: not recorded.** The project's billing is disabled, so every call returns 403 `PERMISSION_DENIED`
 ("requires billing to be enabled") before the image is checked. That is not an image shape. Google's image
 error shape needs a rerun once billing is enabled on the project. The Google image-error path stays off until then.
