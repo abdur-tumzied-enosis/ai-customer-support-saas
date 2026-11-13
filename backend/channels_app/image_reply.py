@@ -15,6 +15,7 @@ from PIL import Image
 from agents.embeddings_api import embed_image
 from agents.image_search import load_image, search_products
 from agents.llm import resolve_model, vision_route
+from agents.rag import tracing_enabled
 from billing.service import charge
 from knowledge.models import Product
 from usage.utils import record_image_usage
@@ -146,6 +147,8 @@ def vision_images(turn, conversation) -> dict:
 	if not any((m.meta or {}).get("photo_reply") for m in turn):
 		return quiet
 	skipped = vision_readiness(conversation, turn[0])
+	if not skipped and tracing_enabled():
+		skipped = "tracing"  # photos would reach a tracing backend: decide before any note or cap slot is used
 	if skipped:
 		finalize_notes(turn, set(), reason="settings")  # the saved notes must not claim an image that is not sent
 		return {"images": [], "marker": "", "trace": {"vision_skipped": skipped}}

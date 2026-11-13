@@ -29,15 +29,20 @@ def get_effective_instructions(project_id: str, knowledge_base_id: str = None) -
 	]
 
 
-def photo_note_text(meta) -> str:
-	"""The notes of a photo message, one renderer for the agent and the dashboard. Legacy rows keep photo_matches."""
+def photo_note_text(meta, visible: bool = True) -> str:
+	"""The notes of a photo message, one renderer for the agent and the dashboard. Legacy rows keep photo_matches.
+	visible=False is for earlier turns: the photo was seen then, but no image is sent now, so the note must not
+	say it is visible."""
 	notes = (meta or {}).get("photo_notes")
 	if notes:
-		return " ".join(n.get("note", "") for n in notes if n.get("note"))
+		texts = [n.get("note", "") for n in notes if n.get("note")]
+		if not visible:
+			texts = [t.replace("Photo attached", "Photo attached earlier, not visible now") for t in texts]
+		return " ".join(texts)
 	return (meta or {}).get("photo_matches") or ""
 
 
-def format_message_with_context(message: Message) -> str:
+def format_message_with_context(message: Message, visible: bool = True) -> str:
 	"""
 	Format a message with contextual information (attachments, replies).
 
@@ -50,7 +55,7 @@ def format_message_with_context(message: Message) -> str:
 	content = message.text
 
 	# A photo's numbered notes (channels_app.image_reply) replace the generic attachment note
-	rendered = photo_note_text(message.meta)
+	rendered = photo_note_text(message.meta, visible=visible)
 	if rendered:
 		content = f"{content} {rendered}" if content else rendered
 	elif message.has_attachments:
@@ -94,7 +99,7 @@ def build_history(msg: Message, since=None) -> list:
 	)
 	history, used = [], 0
 	for m in recent:  # newest first
-		content = format_message_with_context(m)
+		content = format_message_with_context(m, visible=False)  # earlier turns: photos are not sent again
 		used += estimate_tokens(content)
 		if history and used > HISTORY_TOKEN_BUDGET:
 			break

@@ -271,7 +271,7 @@ def _track_token_usage(
 _TRACING_ENV = ("LANGCHAIN_TRACING_V2", "LANGSMITH_TRACING", "LANGSMITH_TRACING_V2", "LANGCHAIN_VERBOSE", "LANGCHAIN_DEBUG")
 
 
-def _tracing_enabled() -> bool:
+def tracing_enabled() -> bool:
 	"""True when LangChain/LangSmith would record model inputs (env flags or the debug global)."""
 	from langchain_core.globals import get_debug
 	if any(os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on") for name in _TRACING_ENV):
@@ -302,7 +302,7 @@ def generate_reply(
 	# Setup
 	deps = deps or ToolDeps()
 	retrievers = _get_retrievers(context, deps)
-	if context.vision_images and _tracing_enabled():
+	if context.vision_images and tracing_enabled():
 		# Customer photo bytes must never reach LangSmith/Langfuse. Fail closed: answer text-only.
 		logger.error("Tracing is enabled; dropping customer photos from this reply")
 		context.trace["vision_skipped"] = "tracing"

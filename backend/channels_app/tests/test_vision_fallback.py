@@ -1,4 +1,5 @@
 import io
+import os
 from datetime import timedelta
 from decimal import Decimal
 from unittest import mock
@@ -172,6 +173,12 @@ class VisionAnnotateTest(VisionBase):
 		assert legacy.meta["photo_matches"] == "Red shirt"
 		self.fetch.assert_not_called()
 		assert "Red shirt" in tasks.format_message_with_context(legacy)
+
+	def test_earlier_attached_photo_is_not_shown_as_visible_in_history(self):
+		self.annotate(self.photo_message(photos=1))  # attached on its own turn
+		later = self.inbound("what is the total on that receipt?")
+		joined = " ".join(h["content"] for h in tasks.build_history(later))
+		assert "Photo attached." not in joined and "not visible now" in joined
 
 	def test_photo_notes_render_in_history(self):
 		(msg,) = self.annotate(self.photo_message("hello"))
@@ -350,6 +357,15 @@ class VisionImagesTest(VisionBase):
 		self.turn_with(photos=1)  # an earlier photo message in the conversation
 		text = self.inbound("ok thanks")
 		assert image_reply.vision_images([text], self.conv) == {"images": [], "marker": "", "trace": {}}
+
+	def test_tracing_skips_photos_before_they_are_counted(self):
+		msg = self.turn_with(photos=1)
+		with mock.patch.dict(os.environ, {"LANGSMITH_TRACING": "true"}):
+			out = self.call(msg)
+		assert out == {"images": [], "marker": "", "trace": {"vision_skipped": "tracing"}}
+		msg.refresh_from_db()
+		assert msg.meta["photo_notes"][0]["note"].endswith("Photo not attached.]")
+		assert cache.get(f"vision-day:{self.conv.id}") is None
 
 	def test_cache_unavailable_fails_closed(self):
 		msg = self.turn_with(photos=1)

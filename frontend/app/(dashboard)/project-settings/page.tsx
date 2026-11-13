@@ -196,7 +196,7 @@ export default function ProjectSettingsPage() {
 					<CardHeader>
 						<CardTitle>Photo help</CardTitle>
 						<CardDescription>
-							When the assistant cannot match a photo to your catalog, it can send the photo to the configured AI provider so it can look at it. Photos may contain personal information. Only photos that need help are sent. Turn on image search per channel too.
+							When the assistant cannot match a photo to your catalog, or a customer message reports damage, a return or a complaint, it can send the photo to the configured AI provider so it can look at it. Photos may contain personal information. Only photos that need help are sent. Turn on image search per channel too.
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="space-y-4">
@@ -204,7 +204,7 @@ export default function ProjectSettingsPage() {
 							<Button
 								type="button"
 								variant={features.vision_fallback ? "default" : "outline"}
-								disabled={savingFeatures || !features.image_search}
+								disabled={savingFeatures || (!features.image_search && !features.vision_fallback)}
 								onClick={toggleVisionFallback}
 							>
 								{savingFeatures && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
