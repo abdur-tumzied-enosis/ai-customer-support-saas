@@ -78,6 +78,10 @@ error shape needs a rerun once billing is enabled on the project. The Google ima
 **Still unrecorded:** a provider safety refusal (either a raised error or a blocked result). The probe did not
 trigger one. The `_blocked_result` path is tested only with fakes.
 
+**Classifier decision (2026-11-13):** the recorded OpenRouter 404 marker `no endpoints found that support image
+input` is in the classifier (`agents/rag.py::IMAGE_MARKERS`) and counts as an image error. A 404 without that
+marker is still not retried.
+
 Until the Google shape is recorded, the image-error retry stays off for Google. The safety-refusal and
 blocked-result retry still works.
 
