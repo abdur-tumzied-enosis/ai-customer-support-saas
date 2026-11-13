@@ -279,6 +279,55 @@ def tracing_enabled() -> bool:
 	return bool(get_debug())
 
 
+IMAGE_ERROR_STATUSES = {400, 415, 422}
+IMAGE_WORDS = ("image", "media", "content type", "content_type", "mime", "unsupported")
+# OpenRouter answers 404 when a text-only model gets an image (probe 2026-11-13, stepfun/step-3.5-flash)
+IMAGE_MARKERS = ("no endpoints found that support image input",)
+SAFETY_WORDS = ("safety", "blocked", "content policy", "responsible ai", "prohibited", "refus")
+BLOCKED_FINISH = ("safety", "blocked", "content_filter", "content policy", "responsible_ai", "prohibited")
+TEXT_ONLY_NOTE = "[The photo could not be viewed.]"
+
+
+def _status_code(exc) -> int | None:
+	code = (getattr(exc, "status_code", None)
+		or getattr(exc, "http_status", None)
+		or getattr(getattr(exc, "response", None), "status_code", None))
+	if code is None:
+		candidate = getattr(exc, "code", None)  # Google/grpc exceptions expose an int code
+		code = candidate if isinstance(candidate, int) else None
+	return code
+
+
+def vision_retry_kind(exc) -> str:
+	"""'image_error' for an image rejection, 'refusal' for a provider safety block, '' for everything else
+	(401/403/429/5xx, timeouts, plain 400). Safety wins over image words. A 404 counts only with the exact marker."""
+	code = _status_code(exc)
+	msg = str(exc).lower()
+	if code in (401, 403, 429) or (code is not None and code >= 500):
+		return ""
+	if any(word in msg for word in SAFETY_WORDS):
+		return "refusal"
+	if any(marker in msg for marker in IMAGE_MARKERS):
+		return "image_error"
+	if code in IMAGE_ERROR_STATUSES and any(word in msg for word in IMAGE_WORDS):
+		return "image_error"
+	return ""
+
+
+def _blocked_result(result) -> bool:
+	"""A provider can return a safety block as a normal result instead of raising: an explicit blocked finish
+	reason, or an empty final message with no tool calls."""
+	messages = result.get("messages") if isinstance(result, dict) else None
+	if not messages:
+		return False
+	last = messages[-1]
+	meta = getattr(last, "response_metadata", {}) or {}
+	reason = str(meta.get("finish_reason") or meta.get("stop_reason") or "").lower()
+	if any(word in reason for word in BLOCKED_FINISH):
+		return True
+	return not getattr(last, "content", "") and not getattr(last, "tool_calls", None)
+
+
 def generate_reply(
 	question: str, 
 	context: Context, 
@@ -331,7 +380,31 @@ def generate_reply(
 			context.trace["vision_images"] = len(context.vision_images)  # count only, never the URIs
 		messages.append({"role": "user", "content": user_content})
 		invoke_kwargs = {"config": {"callbacks": []}} if context.vision_images else {}  # no per-call handlers see the photo
-		result = agent.invoke({"messages": messages}, **invoke_kwargs)
+
+		def retry_text_only():
+			# Same instructions, memory, search results and tools; no images, so a failing vision model is not called twice
+			retry_messages = list(history or [])
+			retry_messages.append({"role": "user", "content": f"{question} {TEXT_ONLY_NOTE}"})
+			text_agent = create_basic_agent(
+				turn_tools, custom_instructions=context.custom_instructions, memory=context.memory_prompt, search_results=search_results,
+			)
+			return retry_messages, text_agent.invoke({"messages": retry_messages})
+
+		try:
+			result = agent.invoke({"messages": messages}, **invoke_kwargs)
+		except Exception as exc:
+			kind = vision_retry_kind(exc) if context.vision_images else ""
+			if not kind:
+				raise
+			context.trace["vision_retry"] = kind
+			context.trace["vision_error"] = type(exc).__name__
+			logger.warning(f"Vision call failed ({kind}: {type(exc).__name__}); retrying once text-only")
+			messages, result = retry_text_only()
+		else:
+			if context.vision_images and _blocked_result(result):
+				context.trace["vision_retry"] = "refusal"
+				logger.warning("Vision call was blocked; retrying once text-only")
+				messages, result = retry_text_only()
 	finally:
 		context.trace["ms"] = int((time.monotonic() - start) * 1000)
 	logger.info(f"Agent invoked successfully")
