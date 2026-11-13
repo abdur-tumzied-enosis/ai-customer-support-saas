@@ -13,15 +13,21 @@ const money = (n: number) => `৳${n.toLocaleString(undefined, { maximumFraction
 const perReplyText = (n: number) => `৳${n.toFixed(2)}`;
 
 // Plain-language explanation of when each action costs credits, keyed by billing action.
-const ACTION_HELP: Record<string, string> = {
+// A function takes the live credit price, so the text follows the price the owner set.
+const ACTION_HELP: Record<string, string | ((credits: number) => string)> = {
 	reply: "Each AI reply sent to a customer.",
 	photo_search: "Each time a customer's photo is matched against your products.",
 	product_import: "Each product the AI pulls from a crawled website page creates a candidate and costs credits. Products you add by hand or import from a file are free.",
 	order_setup: "Setting up orders from your documents.",
-	photo_index: "Adding a product photo to image search is free.",
+	photo_index: (credits) => `Each product photo you add to image search costs ${formatCredits(credits)} ${credits === 1 ? "credit" : "credits"}.`,
 	product_suggest: "Column mapping suggestions when you import a file are free.",
 	instruction_improve: "Improving your instructions is free.",
 };
+
+function helpFor(action: string, credits: number): string | undefined {
+	const help = ACTION_HELP[action];
+	return typeof help === "function" ? help(credits) : help;
+}
 
 export default function PricingSection() {
 	const [data, setData] = useState<PublicPricing | null>(null);
@@ -139,7 +145,9 @@ export default function PricingSection() {
 							<div key={a.action} className="flex items-center justify-between gap-4 px-4 py-3">
 								<dt>
 									{a.label}
-									{ACTION_HELP[a.action] && <span className="block text-xs text-muted-foreground mt-0.5 max-w-prose">{ACTION_HELP[a.action]}</span>}
+									{helpFor(a.action, Number(a.credits)) && (
+										<span className="block text-xs text-muted-foreground mt-0.5 max-w-prose">{helpFor(a.action, Number(a.credits))}</span>
+									)}
 								</dt>
 
 								<dd className="tabular-nums font-medium whitespace-nowrap">
