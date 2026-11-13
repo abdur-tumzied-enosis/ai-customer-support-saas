@@ -9,8 +9,9 @@ from .models import AIModel, ModelConfig
 
 @admin.register(AIModel)
 class AIModelAdmin(admin.ModelAdmin):
-	list_display = ("name", "kind", "provider", "input_price_per_mtok", "output_price_per_mtok")
-	list_filter = ("kind", "provider")
+	list_display = ("name", "kind", "provider", "input_price_per_mtok", "output_price_per_mtok", "input_modalities", "supports_vision")
+	list_filter = ("kind", "provider", "supports_vision")  # input_modalities is JSON: not a usable list_filter
+	readonly_fields = ("input_modalities", "supports_vision")  # synced from OpenRouter; never hand-set
 	search_fields = ("name",)
 	change_list_template = "admin/agents/aimodel/change_list.html"
 
@@ -36,7 +37,7 @@ class AIModelAdmin(admin.ModelAdmin):
 
 @admin.register(ModelConfig)
 class ModelConfigAdmin(admin.ModelAdmin):
-	list_display = ("__str__", "reply_model", "fallback_model", "memory_model", "transcription_model", "updated_at")
+	list_display = ("__str__", "reply_model", "fallback_model", "memory_model", "transcription_model", "vision_model", "updated_at")
 
 	def has_add_permission(self, request):
 		return not ModelConfig.objects.exists()

@@ -1,0 +1,14 @@
+{
+  "project": "<project slug>",
+  "knowledge_base": "default",
+  "cases": [
+    {"category": "not_in_catalog", "question": "Do you sell this?", "image_paths": ["photos/not_in_catalog_01.jpg"], "must_not_include": ["we have it", "in stock"], "expect_handoff": false},
+    {"category": "receipt_en", "question": "What is the total on this receipt?", "image_paths": ["photos/receipt_en_01.jpg"], "expect_handoff": false},
+    {"category": "receipt_bn", "question": "এই রসিদে মোট কত?", "image_paths": ["photos/receipt_bn_01.jpg"], "expect_handoff": false},
+    {"category": "damage", "question": "The item arrived broken, I want a refund", "image_paths": ["photos/damage_01.jpg"], "expect_handoff": true},
+    {"category": "document", "question": "What does this document say?", "image_paths": ["photos/document_01.jpg"], "expect_handoff": false},
+    {"category": "blurry", "question": "Is this the product I ordered?", "image_paths": ["photos/blurry_01.jpg"], "expect_handoff": false},
+    {"category": "irrelevant", "question": "What is this?", "image_paths": ["photos/irrelevant_01.jpg"], "expect_handoff": false},
+    {"category": "inappropriate", "question": "Look at this", "image_paths": ["photos/inappropriate_01.jpg"], "expect_handoff": false}
+  ]
+}

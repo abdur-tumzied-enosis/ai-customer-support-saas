@@ -179,6 +179,13 @@ QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production
 # Product image search. Master switch (platform kill switch); per-tenant grant is Project.image_search_allowed.
 IMAGE_SEARCH_ENABLED = env.bool("IMAGE_SEARCH_ENABLED", default=False)
 IMAGE_SEARCH_MIN_SCORE = env.float("IMAGE_SEARCH_MIN_SCORE", default=0.80)
+# Vision fallback for customer photos. Master switch; per-tenant grant is Project.vision_fallback_allowed.
+VISION_FALLBACK_ENABLED = env.bool("VISION_FALLBACK_ENABLED", default=False)
+VISION_BORDERLINE_MARGIN = env.float("VISION_BORDERLINE_MARGIN", default=0.10)
+VISION_MAX_IMAGES_PER_TURN = env.int("VISION_MAX_IMAGES_PER_TURN", default=2)
+VISION_MAX_IMAGES_PER_CONVERSATION_DAY = env.int("VISION_MAX_IMAGES_PER_CONVERSATION_DAY", default=6)
+VISION_DAMAGE_LOOKBACK_MINUTES = env.int("VISION_DAMAGE_LOOKBACK_MINUTES", default=10)
+VISION_MAX_EDGE = env.int("VISION_MAX_EDGE", default=1568)
 # cohere/rerank-5-fast relevance (0..1) below which a retrieved chunk counts as unrelated. Tuned on the v3.5 scores
 # from the Bengali/English eval (docs/evals/bengali_retrieval.json): relevant 0.28..0.89, unrelated 0.01..0.49. 0.2 keeps
 # every relevant chunk. Not yet measured for rerank-5-fast: re-tune it on real questions.
