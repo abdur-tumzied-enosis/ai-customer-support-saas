@@ -119,9 +119,21 @@ class PricingTest(TestCase):
 		data = res.json()["data"]
 		self.assertEqual([p["name"] for p in data["packages"]], ["Starter"])
 		self.assertEqual(set(data["packages"][0]), {"id", "name", "credits", "bonus_credits", "price", "currency", "features", "highlighted"})
-		self.assertEqual([a["action"] for a in data["actions"]], ["reply", "photo_search", "product_import", "order_setup"])
+		self.assertEqual([a["action"] for a in data["actions"]], ["reply", "photo_search", "product_import", "order_setup", "transcription"])
 		self.assertEqual(data["actions"][0], {"action": "reply", "label": "AI reply", "credits": "1.00"})
 		self.assertEqual(data["signup_credits"], f"{PricingSettings.get().signup_credits:.2f}")
+
+
+class TranscriptionPriceTest(BillingApiBase):
+	def test_action_row_seeded_at_one_credit(self):
+		row = ActionPrice.objects.get(action="transcription")
+		assert row.credits == Decimal("1")
+
+	def test_pricing_row_carries_per_seconds(self):
+		res = self.client.get("/api/billing/pricing/")
+		row = next(a for a in res.json()["data"]["actions"] if a["action"] == "transcription")
+		assert row["per_seconds"] == 5
+		assert row["credits"] == "1.00"
 
 
 class ConversationCreditsTest(BillingApiBase):
