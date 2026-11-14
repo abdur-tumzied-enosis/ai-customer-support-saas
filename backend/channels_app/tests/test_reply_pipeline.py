@@ -4,7 +4,7 @@ from unittest import mock
 from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from accounts.models import Project
@@ -566,6 +566,7 @@ class RecoverStuckRepliesTest(PipelineBase):
 		delay.assert_called_once_with(str(self.conv.id), str(new_b.id))
 
 
+@override_settings(TRANSCRIPTION_ENABLED=True)
 class AudioTurnTest(PipelineBase):
 	def audio_message(self, text="", meta=None):
 		return Message.objects.create(
@@ -650,7 +651,17 @@ class AudioTurnTest(PipelineBase):
 		with mock.patch.object(media_store, "transcription_on", return_value=False), 			mock.patch.object(media_store, "transcribe") as provider, 			mock.patch.object(media_store, "charge_if_affordable") as charge:
 			media_store.transcribe_attachment(str(msg.id), 0)
 		assert not provider.called and not charge.called
+		msg.refresh_from_db()
+		assert "transcription" not in msg.meta
 		assert not CreditTransaction.objects.filter(action="transcription").exists()
+
+	@override_settings(TRANSCRIPTION_ENABLED=False)
+	def test_audio_is_skipped_while_transcription_is_off(self):
+		msg = self.audio_message()
+		with mock.patch("channels_app.media_store.transcribe_attachment") as enqueued:
+			process_reply.apply(args=[str(self.conv.id), str(msg.id)])
+		assert not enqueued.delay.called
+		assert self.gen.called
 
 	def test_young_voice_note_without_path_waits_for_storage(self):
 		msg = self.audio_message()

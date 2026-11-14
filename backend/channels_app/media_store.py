@@ -298,7 +298,7 @@ def store_message_media(message_id: str, reply: bool) -> None:
 	finally:
 		if reply:
 			audio = [i for i, a in enumerate(msg.attachment_info or []) if _is_audio(a)]
-			if audio and transcription_on(msg.project):
+			if audio and (msg.meta or {}).get("audio_reply") and transcription_on(msg.project):
 				for i in audio:  # stored or not: an unstored one fails in the task, which then drives the reply
 					transcribe_attachment.delay(str(msg.id), i)
 			else:

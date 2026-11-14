@@ -170,7 +170,7 @@ class TranscribeSuccessTest(TestCase):
 
 	def test_two_attachments_charge_separately_and_join_in_order(self):
 		att = list(self.msg.attachment_info) + [dict(self.msg.attachment_info[0])]
-		Message.objects.filter(id=self.msg.id).update(attachment_info=att)
+		Message.objects.filter(id=self.msg.id).update(attachment_info=att, meta={"audio_reply": True})
 		texts = iter(["first", "second"])
 		with mock.patch.object(media_store, "transcribe", side_effect=lambda *a, **k: tr(next(texts), 5)), \
 		     mock.patch.object(media_store, "schedule_reply") as scheduled:
@@ -183,7 +183,7 @@ class TranscribeSuccessTest(TestCase):
 
 	def _two_voice_notes(self):
 		att = [{"type": "audio", "path": self.msg.attachment_info[0]["path"]}, {"type": "audio", "url": "https://x/a.mp4"}]
-		Message.objects.filter(id=self.msg.id).update(attachment_info=att)
+		Message.objects.filter(id=self.msg.id).update(attachment_info=att, meta={"audio_reply": True})
 
 	@override_settings(TRANSCRIPTION_ENABLED=True)
 	def test_store_message_media_queues_one_task_per_voice_note(self):
@@ -192,6 +192,15 @@ class TranscribeSuccessTest(TestCase):
 			media_store.store_message_media(str(self.msg.id), True)
 		assert [c.args for c in delay.call_args_list] == [(str(self.msg.id), 0), (str(self.msg.id), 1)]
 		scheduled.assert_not_called()
+
+	@override_settings(TRANSCRIPTION_ENABLED=True)
+	def test_store_message_media_ignores_audio_without_audio_reply(self):
+		self._two_voice_notes()
+		Message.objects.filter(id=self.msg.id).update(meta={})
+		with mock.patch.object(media_store.transcribe_attachment, "delay") as delay, mock.patch.object(media_store, "schedule_reply") as scheduled:
+			media_store.store_message_media(str(self.msg.id), True)
+		delay.assert_not_called()
+		assert scheduled.called
 
 	@override_settings(TRANSCRIPTION_ENABLED=False)
 	def test_store_message_media_replies_directly_when_the_flag_is_off(self):

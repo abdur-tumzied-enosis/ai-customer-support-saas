@@ -23,7 +23,7 @@ from core.storage import presign_get
 from . import image_reply, memory, tasks
 from .facebook_client import INSTAGRAM_MAX_TEXT_BYTES, WHATSAPP_MAX_TEXT_CHARS, split_text
 from .handoff import start_handoff, wants_human
-from .media import photo_keys
+from .media import photo_keys, transcription_on
 from .models import Conversation, Message
 from .service.message_service import create_outbound_message
 
@@ -179,6 +179,8 @@ def _newer_text_message(conversation, after) -> bool:
 
 def _audio_states(turn) -> list:
 	"""The transcription state of every audio attachment in the turn (None: no entry written yet)."""
+	if not turn or not transcription_on(turn[0].project):  # kill switch: audio drives no decision
+		return []
 	return [
 		((m.meta or {}).get("transcription") or {}).get(str(i), {}).get("status")
 		for m in turn if (m.meta or {}).get("audio_reply")  # set only when transcription is on for the project
@@ -209,6 +211,8 @@ def _queue_untranscribed_audio(turn) -> bool:
 	The inbound rows are left pending so recovery re-runs the turn."""
 	from .media_store import TERMINAL_STATES, transcribe_attachment  # media_store imports this module
 	waiting = False
+	if not turn or not transcription_on(turn[0].project):
+		return False
 	for m in turn:
 		if not (m.meta or {}).get("audio_reply"):
 			continue
