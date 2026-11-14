@@ -128,6 +128,7 @@ CELERY_TASK_ROUTES = {
     "channels_app.reply.deliver_outbound": {"queue": "replies"},
     "channels_app.reply.recover_pending_deliveries": {"queue": "replies"},
     "channels_app.media_store.store_message_media": {"queue": "replies"},  # on the reply path for photos
+    "channels_app.media_store.transcribe_attachment": {"queue": "replies"},  # on the reply path for voice notes
 }
 STUCK_JOB_THRESHOLD_MINUTES =env.int("STUCK_JOB_THRESHOLD_MINUTES", default=120)
 CELERY_BEAT_SCHEDULE = {
@@ -179,6 +180,11 @@ QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production
 # Product image search. Master switch (platform kill switch); per-tenant grant is Project.image_search_allowed.
 IMAGE_SEARCH_ENABLED = env.bool("IMAGE_SEARCH_ENABLED", default=False)
 IMAGE_SEARCH_MIN_SCORE = env.float("IMAGE_SEARCH_MIN_SCORE", default=0.80)
+# Voice-note transcription. Master switch; TRANSCRIPTION_PROJECTS (project slugs) limits a pilot, empty means every project.
+TRANSCRIPTION_ENABLED = env.bool("TRANSCRIPTION_ENABLED", default=False)
+TRANSCRIPTION_PROJECTS = env.list("TRANSCRIPTION_PROJECTS", default=[])
+TRANSCRIPTION_MODEL = env("TRANSCRIPTION_MODEL", default="")
+TRANSCRIPTION_MAX_SECONDS = env.int("TRANSCRIPTION_MAX_SECONDS", default=300)
 # Vision fallback for customer photos. Master switch; per-tenant grant is Project.vision_fallback_allowed.
 VISION_FALLBACK_ENABLED = env.bool("VISION_FALLBACK_ENABLED", default=False)
 VISION_BORDERLINE_MARGIN = env.float("VISION_BORDERLINE_MARGIN", default=0.10)

@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import requests
 from celery.exceptions import SoftTimeLimitExceeded
+from django.conf import settings
 from django.core.files.storage import default_storage
 
 from agents.image_search import MAX_IMAGE_BYTES
@@ -32,6 +33,14 @@ class MediaError(Exception):
 
 def is_photo(att: dict) -> bool:
 	return att.get("type") == "image" and not (att.get("payload") or {}).get("sticker_id")
+
+
+def transcription_on(project) -> bool:
+	return bool(settings.TRANSCRIPTION_ENABLED and (not settings.TRANSCRIPTION_PROJECTS or project.slug in settings.TRANSCRIPTION_PROJECTS))
+
+
+def wants_audio_reply(project, attachment_info) -> bool:
+	return transcription_on(project) and any(isinstance(a, dict) and a.get("type") == "audio" for a in attachment_info or [])
 
 
 def has_photo(msg: Message) -> bool:

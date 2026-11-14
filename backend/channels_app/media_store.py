@@ -1,6 +1,7 @@
 """Keep customer photos and voice notes in R2 before the reply runs: Meta media is downloaded (Meta's own URLs expire),
 widget/test-chat uploads are moved out of tmp/. Photos become display + thumb WebP variants; audio is stored as is."""
 import logging
+import math
 import os
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -8,17 +9,27 @@ from uuid import uuid4
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 from django.core.files.base import ContentFile
+from django.conf import settings
+from django.core.cache import cache
 from django.core.files.storage import default_storage
+from django.db import transaction
 
 from agents.image_search import MAX_IMAGE_BYTES, NotAnImage, make_send_variant, make_variants
+from agents.transcription import TranscriptionError, audio_format, audio_seconds, resolve_transcription_model, transcribe
+from billing.models import CreditTransaction, PricingSettings
+from billing.service import InsufficientCredits, charge_if_affordable, grant
 from core.storage import AUDIO_MAX_BYTES, delete_keys, thumb_key
 
-from .media import fetch_attachment, is_photo, is_storable, read_stored
+from usage.utils import finish_attempt, start_attempt
+
+from .media import fetch_attachment, is_photo, is_storable, read_stored, transcription_on
 from .models import Conversation, Message
-from .reply import schedule_reply
+from .reply import pending_turn, schedule_reply
 
 logger = logging.getLogger(__name__)
 
+TRANSCRIPTION_LOCK_SECONDS = 180
+TERMINAL_STATES = {"transcribed", "failed", "failed_uncertain", "empty", "unmeasurable", "over_cap", "unaffordable"}
 AUDIO_EXTS = {"audio/ogg": "ogg", "audio/opus": "ogg", "audio/mp4": "m4a", "audio/aac": "aac", "audio/mpeg": "mp3", "audio/amr": "amr"}
 
 
@@ -69,6 +80,115 @@ def store_outbound_photo(conversation: Conversation, att: dict) -> str:
 	default_storage.save(thumb_key(name), ContentFile(make_variants(data)[1]))
 	delete_keys(att["path"])
 	return name
+
+
+def _is_audio(att) -> bool:
+	return isinstance(att, dict) and att.get("type") == "audio"
+
+
+def update_message(message_id: str, change) -> Message:
+	"""Lock the row, let `change(msg)` mutate meta/text, save both."""
+	with transaction.atomic():
+		msg = Message.objects.select_for_update().get(id=message_id)
+		change(msg)
+		msg.save(update_fields=["meta", "text"])
+		return msg
+
+
+def _set_state(message_id: str, index: int, status: str, **fields) -> None:
+	def change(msg):
+		states = msg.meta.setdefault("transcription", {})
+		states[str(index)] = {**states.get(str(index), {}), "status": status, **fields}
+	update_message(message_id, change)
+
+
+def refund_transcription(project, message_id: str, index: int, reason: str) -> None:
+	"""Give back what the charge row took (none if never charged). Never raises."""
+	try:
+		txn = CreditTransaction.objects.filter(idempotency_key=f"transcription:{message_id}:{index}").first()
+		if txn:
+			grant(project, -txn.amount, "adjust", key=f"transcription_refund:{message_id}:{index}", note=f"Transcription refund: {reason}")
+	except Exception as e:
+		logger.error(f"Transcription refund of message {message_id} attachment {index} failed: {type(e).__name__}")
+
+
+def maybe_schedule_reply(message_id: str) -> None:
+	"""Once every voice note has settled, answer the newest pending message (not necessarily this one)."""
+	msg = Message.objects.select_related("conversation").filter(id=message_id).first()
+	if msg is None:
+		return
+	states = (msg.meta or {}).get("transcription", {})
+	if any(_is_audio(a) and states.get(str(i), {}).get("status") not in TERMINAL_STATES for i, a in enumerate(msg.attachment_info or [])):
+		return
+	turn = pending_turn(msg.conversation)
+	if turn and cache.add(f"transcribe-done:{message_id}", 1, timeout=3600):
+		schedule_reply(turn[-1])
+
+
+@shared_task(soft_time_limit=60, time_limit=90)
+def transcribe_attachment(message_id: str, index: int) -> None:
+	"""Transcribe one voice note: charge first, call the provider once, refund on any failure."""
+	if not cache.add(f"transcribe:{message_id}:{index}", 1, timeout=TRANSCRIPTION_LOCK_SECONDS):
+		return
+	msg = Message.objects.select_related("project", "conversation").filter(id=message_id).first()
+	atts = (msg.attachment_info or []) if msg else []
+	if not (0 <= index < len(atts) and _is_audio(atts[index])):
+		return
+	project = msg.project
+	try:
+		status = update_message(message_id, lambda m: None).meta.get("transcription", {}).get(str(index), {}).get("status")
+		if status in TERMINAL_STATES:
+			return
+		if status == "processing":  # a dead run: the provider may have been called, never call it again
+			_set_state(message_id, index, "failed_uncertain")
+			refund_transcription(project, message_id, index, "interrupted")
+			return
+		path = atts[index].get("path")
+		if not path:
+			_set_state(message_id, index, "failed")
+			return
+		data = read_stored(path, AUDIO_MAX_BYTES)
+		fmt = audio_format(data)
+		seconds = audio_seconds(data, fmt) if fmt else None
+		if seconds is None:
+			_set_state(message_id, index, "unmeasurable")
+			return
+		if seconds > settings.TRANSCRIPTION_MAX_SECONDS:
+			_set_state(message_id, index, "over_cap", seconds=seconds)
+			return
+		units = max(1, math.ceil(seconds / PricingSettings.get().transcription_seconds_per_credit))  # the charge applies the price
+		try:
+			charge_if_affordable(project, "transcription", key=f"transcription:{message_id}:{index}", units=units, conversation=msg.conversation, trigger_message=msg)
+		except InsufficientCredits:
+			_set_state(message_id, index, "unaffordable", seconds=seconds, units=units)
+			return
+		model = resolve_transcription_model()
+		_set_state(message_id, index, "processing", model=model, seconds=seconds, units=units)
+		attempt = start_attempt(str(project.id), model, seconds=seconds, conversation_id=str(msg.conversation_id), message_id=message_id, attachment_index=index)
+		try:
+			out = transcribe(data, fmt, model)
+		except TranscriptionError:
+			finish_attempt(attempt, tokens=0, cost_usd=None, status="failed")
+			_set_state(message_id, index, "failed")
+			refund_transcription(project, message_id, index, "provider error")
+			return
+		finish_attempt(attempt, status="reported", tokens=out.tokens, cost_usd=out.cost_usd, usage=out.usage)
+		text = out.text.strip()
+		if not text:
+			_set_state(message_id, index, "empty")
+			refund_transcription(project, message_id, index, "empty transcript")
+			return
+
+		def done(m):
+			m.text = " ".join(filter(None, [m.text, text]))
+			m.meta.setdefault("transcription", {})[str(index)] = {**m.meta["transcription"].get(str(index), {}), "status": "transcribed", "attempt": attempt}
+		update_message(message_id, done)
+	except Exception as e:
+		logger.warning(f"Transcription of message {message_id} attachment {index} failed: {type(e).__name__}")
+		_set_state(message_id, index, "failed")
+		refund_transcription(project, message_id, index, "error")
+	finally:
+		maybe_schedule_reply(message_id)
 
 
 @shared_task(soft_time_limit=60, time_limit=90)
