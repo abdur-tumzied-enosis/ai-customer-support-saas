@@ -46,13 +46,13 @@ These are the conditions most likely to reach real customers and are not obvious
 The spec requires one real response per model **before coding**. Task 2's parser is written against these files, not against a guessed shape.
 
 **Files:**
-- Create: `backend/agents/tests/fixtures/voice.ogg`, `backend/agents/tests/fixtures/voice_messenger.mp4`
-- Create: `backend/agents/tests/fixtures/openrouter_scribe-v2.json`, `openrouter_grok-stt-2.0.json`, `openrouter_gemini-3.5-transcribe.json`
+- Create (done 2026-11-14): `backend/agents/tests/fixtures/voice.ogg`, `backend/agents/tests/fixtures/voice_messenger.mp3` (the Messenger sample is MP3; no MP4 was supplied)
+- Create (done): `backend/agents/tests/fixtures/openrouter_scribe-v2.json`, `openrouter_grok-stt-2.0.json`, `openrouter_gemini-3.5-transcribe.json`, plus `_messenger` variants for the MP3 sample
 
 - [ ] **Step 1: Record the audio.** From your own phone, send a 3–8 second voice note to the dev WhatsApp number and one to the dev Messenger page. Say a short neutral sentence. Download the two stored files from dev R2 (`chat_media/<dev project slug>/…`) and save them under the names above. These are your recordings, so they may be committed. **Do not use any other file from `chat_media/`.**
-- [ ] **Step 2: Note the containers.** `xxd -l 16 voice_messenger.mp4` — record the `ftyp` brand (bytes 8–11) in the commit message. If it is not `M4A `, that confirms why Task 2 sniffs the bytes itself.
-- [ ] **Step 3: Capture one response per model.** For each of the three supported models, POST `voice.ogg` to `https://openrouter.ai/api/v1/audio/transcriptions` with `{"model": ..., "input_audio": {"data": <base64>, "format": "ogg"}}` (one `curl` with the dev key), and save the raw JSON body. Repeat once with `voice_messenger.mp4` as `"format": "m4a"` and note whether each model accepts it.
-- [ ] **Step 4: Fix the field names.** Read the three JSON files. Write down, in the commit message, where the text, the cost, the token count and (if present) the duration live. If they differ from `text` / `usage.cost` / `usage.prompt_tokens`, change Task 2's tests and parser to match **before** starting Task 2. If an endpoint or model id does not exist, stop and update the spec.
+- [ ] **Step 2: Note the containers.** Done: `voice.ogg` starts `OggS`; `voice_messenger.mp3` starts `ID3`. Still needed for the format matrix: one MP4/M4A voice note (for example, record a voice note through the Messenger flow in a format that is not MP3, or send one from an Instagram DM), with its `ftyp` brand noted. Until it exists, the M4A row of the matrix is open and Task 2 stays on the MP3 and Ogg paths.
+- [x] **Step 3: Capture one response per model.** Done 2026-11-14 with the project's configured key, run inside the container so the key was never printed. Six calls, all HTTP 200.
+- [x] **Step 4: Fix the field names.** Done. Findings (also in the spec's Constraints): `text` at top level on all three; `usage.cost` on all three; tokens are `input_tokens`/`output_tokens`/`total_tokens` on Gemini only, and absent on scribe and grok; `usage.seconds` on scribe and grok. Task 2's parser and tests are corrected below to match.
 - [ ] **Step 5: Commit.**
 
 ```bash
@@ -257,7 +257,7 @@ def wav_bytes(seconds: float, rate: int = 8000) -> bytes:
 class AudioFormatTest(TestCase):
 	def test_recorded_fixtures(self):
 		assert transcription.audio_format((FIXTURES / "voice.ogg").read_bytes()) == "ogg"
-		assert transcription.audio_format((FIXTURES / "voice_messenger.mp4").read_bytes()) == "m4a"
+		assert transcription.audio_format((FIXTURES / "voice_messenger.mp3").read_bytes()) == "mp3"
 
 	def test_any_mp4_brand_is_m4a(self):
 		# tinytag's own sniff only knows the M4A brand; a Messenger clip may say isom/mp42
@@ -278,7 +278,7 @@ class AudioFormatTest(TestCase):
 
 class AudioSecondsTest(TestCase):
 	def test_reads_recorded_fixtures(self):
-		for name, fmt in (("voice.ogg", "ogg"), ("voice_messenger.mp4", "m4a")):
+		for name, fmt in (("voice.ogg", "ogg"), ("voice_messenger.mp3", "mp3")):
 			seconds = transcription.audio_seconds((FIXTURES / name).read_bytes(), fmt)
 			assert seconds is not None, name
 			assert 1 <= seconds <= 10, name
@@ -382,7 +382,7 @@ def audio_format(data: bytes) -> str | None:
 
 - `audio_seconds`: `TinyTag.get(filename=f"audio.{fmt}", file_obj=io.BytesIO(data))` (verified against tinytag 2.1.1: the bytes go in `file_obj=`, the filename only picks the parser), `duration = tag.duration or 0`, return `math.ceil(duration)` when `duration > 0` else `None`; any exception → `None`.
 - `resolve_transcription_model`: `agents.llm.active_model("transcription")` → `(provider, name)`, else `settings.TRANSCRIPTION_MODEL`, else `DEFAULT`; return the name only when it is in `SUPPORTED_TRANSCRIPTION_MODELS`, otherwise log a warning (name only) and return `DEFAULT`.
-- `transcribe`: `model = model or resolve_transcription_model()`; POST `{"model", "input_audio": {"data": b64, "format": fmt}}` with the bearer key; non-200 or invalid JSON → `TranscriptionError` carrying the status code only; read `text` (default `""`), `usage` (default `{}`), `tokens = usage.get("prompt_tokens", usage.get("total_tokens", 0)) or 0`, `cost_usd = Decimal(str(usage["cost"])) if usage.get("cost") is not None else None`; return `Transcript(text, int(tokens), cost_usd, model, usage)`. Field names as confirmed in Task 0.
+- `transcribe`: `model = model or resolve_transcription_model()`; POST `{"model", "input_audio": {"data": b64, "format": fmt}}` with the bearer key; non-200 or invalid JSON → `TranscriptionError` carrying the status code only; read `text` (default `""`) and `usage` (default `{}`); `tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or usage.get("total_tokens") or 0` (scribe and grok return none, so 0; Gemini returns `input_tokens`); `cost_usd = Decimal(str(usage["cost"])) if usage.get("cost") is not None else None`; return `Transcript(text, int(tokens), cost_usd, model, usage)`. The provider's `usage.seconds` stays inside `usage` for reconciliation and is never used for the charge.
 - Log only the status code and exception type; never the body.
 
 - [ ] **Step 4: Run to verify they pass**
@@ -686,11 +686,11 @@ class TranscribeSuccessTest(TestCase):
 
 	def test_bin_extension_is_transcribed_from_its_bytes(self):
 		# Messenger/Instagram audio is stored as .bin; the format must come from the bytes
-		key = default_storage.save("chat_media/p/x.bin", ContentFile((FIXTURES / "voice_messenger.mp4").read_bytes()))
+		key = default_storage.save("chat_media/p/x.bin", ContentFile((FIXTURES / "voice_messenger.mp3").read_bytes()))
 		Message.objects.filter(id=self.msg.id).update(attachment_info=[{"type": "audio", "path": key}])
 		with mock.patch.object(media_store, "transcribe", return_value=Transcript("hi", 3, None, "m", {})) as call:
 			media_store.transcribe_attachment(str(self.msg.id), 0)
-		assert call.call_args.args[1] == "m4a"
+		assert call.call_args.args[1] == "mp3"
 
 	def test_unstored_audio_fails_without_a_charge(self):
 		Message.objects.filter(id=self.msg.id).update(attachment_info=[{"type": "audio", "url": "https://x/a.mp4"}])

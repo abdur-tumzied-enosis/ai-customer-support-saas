@@ -179,9 +179,18 @@ produced usable text.
 - Catalogue prices, 2026-11-14: `elevenlabs/scribe-v2` ≈ $0.000061/s ($0.22/h);
   `x-ai/grok-stt-2.0` $0.000028/s; `google/gemini-3.5-transcribe` $2/M input tokens, $12/M output
   tokens. Sizing only — every recorded figure comes from `usage.cost`.
-- The transcription response's `usage` object is documented to carry cost and token counts, and the
-  review reports it also carries audio duration. **Capture one real response per model as a fixture
-  before coding**; use the duration field only if the fixture has it.
+- Captured 2026-11-14 for each model from our own WhatsApp-style Ogg sample and Messenger-style MP3
+  sample (all six calls HTTP 200):
+  - `usage.cost` is present on all three models, and the values match the catalogue rates (Gemini:
+    83 input + 6 output tokens = $0.000238, which is exactly $2/M input + $12/M output).
+  - Token fields differ by model: `scribe-v2` and `grok-stt-2.0` return **no token count**; Gemini
+    returns `input_tokens`, `output_tokens`, `total_tokens`. `tokens` is therefore the first of
+    `input_tokens`, `prompt_tokens`, `total_tokens` that exists, else 0. Tokens feed only the usage
+    record, never a charge.
+  - `scribe-v2` and `grok-stt-2.0` also return `seconds`, the provider's own duration. It is kept in
+    `usage` for reconciliation only; local measurement still decides the charge.
+  - Format: all three accepted Ogg and MP3. No MP4/M4A sample is recorded yet, so the M4A/MP4 row of
+    the format matrix is open (see Tests).
 - Local duration: `tinytag` (MIT, pure Python), covering Ogg/Opus, MP4/M4A, MP3 and WAV. AMR is not in
   its list and is rejected as unmeasurable. Verified in the container on 2026-11-14: `tinytag==2.1.1`
   exists, `TinyTag.get(filename=None, file_obj=None, ...)` takes the bytes as `file_obj=`, a
@@ -588,7 +597,7 @@ enabled model's expected payload:
 | input | local duration | accepted by |
 |---|---|---|
 | Ogg/Opus | yes | scribe, grok, gemini — verified per model before enabling |
-| M4A/MP4 | yes | verified per model before enabling |
+| M4A/MP4 | yes | **open**: no MP4/M4A sample recorded yet; the Messenger sample is MP3. Record one and verify per model before enabling |
 | MP3 | yes | verified per model before enabling |
 | AMR | no | rejected, no provider call |
 
