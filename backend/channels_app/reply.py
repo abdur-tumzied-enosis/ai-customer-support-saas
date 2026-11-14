@@ -184,7 +184,7 @@ def _audio_states(turn) -> list:
 	return [
 		((m.meta or {}).get("transcription") or {}).get(str(i), {}).get("status")
 		for m in turn if (m.meta or {}).get("audio_reply")  # set only when transcription is on for the project
-		for i, att in enumerate(m.attachment_info or []) if att.get("type") == "audio"
+		for i, att in enumerate(m.attachment_info or []) if isinstance(att, dict) and att.get("type") == "audio"
 	]
 
 
@@ -218,7 +218,7 @@ def _queue_untranscribed_audio(turn) -> bool:
 			continue
 		old = timezone.now() - m.created_at > timedelta(minutes=3)  # store_message_media's limit is 90s: older and pathless means storage failed
 		for i, att in enumerate(m.attachment_info or []):
-			if att.get("type") != "audio":
+			if not isinstance(att, dict) or att.get("type") != "audio":
 				continue
 			state = ((m.meta or {}).get("transcription") or {}).get(str(i), {}).get("status")
 			if state not in TERMINAL_STATES:

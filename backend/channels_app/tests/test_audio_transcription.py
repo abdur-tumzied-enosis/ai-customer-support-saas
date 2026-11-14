@@ -7,6 +7,7 @@ from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.test import TestCase, override_settings
+from django.utils import timezone
 
 import agents.tests
 from accounts.models import Project
@@ -209,3 +210,13 @@ class TranscribeSuccessTest(TestCase):
 			media_store.store_message_media(str(self.msg.id), True)
 		delay.assert_not_called()
 		assert scheduled.called
+
+
+class NonDictAttachmentTest(TestCase):
+	def test_non_dict_attachment_entries_are_ignored(self):
+		from channels_app import reply
+		project = Project.objects.create(name="P", slug="p-nd")
+		m = Message(project=project, attachment_info=["junk", None, 3], meta={"audio_reply": True}, created_at=timezone.now())
+		with override_settings(TRANSCRIPTION_ENABLED=True):
+			assert reply._audio_states([m]) == []
+			assert reply._queue_untranscribed_audio([m]) is False

@@ -62,7 +62,7 @@ class PricingView(APIView):
 		cfg = PricingSettings.get()
 		rows = []
 		for a, c in actions:
-			if not c:
+			if not c or (a == "transcription" and not settings.TRANSCRIPTION_ENABLED):
 				continue
 			row = {"action": a, "label": ACTIONS[a][0], "credits": money(c)}
 			if a == "transcription":

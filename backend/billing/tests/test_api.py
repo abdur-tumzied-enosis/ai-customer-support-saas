@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 
@@ -105,6 +105,7 @@ class TransactionsTest(BillingApiBase):
 
 
 class PricingTest(TestCase):
+	@override_settings(TRANSCRIPTION_ENABLED=True)
 	def test_public_and_clean(self):
 		ActionPrice.objects.update_or_create(action="reply", defaults={"credits": Decimal("1"), "notes": "secret cost note"})
 		ActionPrice.objects.update_or_create(action="photo_index", defaults={"credits": Decimal("0")})
@@ -129,6 +130,18 @@ class TranscriptionPriceTest(BillingApiBase):
 		row = ActionPrice.objects.get(action="transcription")
 		assert row.credits == Decimal("1")
 
+	@override_settings(TRANSCRIPTION_ENABLED=False)
+	def test_pricing_hides_transcription_while_off(self):
+		res = self.client.get("/api/billing/pricing/")
+		assert "transcription" not in [a["action"] for a in res.json()["data"]["actions"]]
+
+	def test_rejects_seconds_per_credit_below_one(self):
+		cfg = PricingSettings.get()
+		cfg.transcription_seconds_per_credit = Decimal("0")
+		with self.assertRaises(ValueError):
+			cfg.save()
+
+	@override_settings(TRANSCRIPTION_ENABLED=True)
 	def test_pricing_row_carries_per_seconds(self):
 		res = self.client.get("/api/billing/pricing/")
 		row = next(a for a in res.json()["data"]["actions"] if a["action"] == "transcription")

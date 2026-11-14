@@ -49,6 +49,8 @@ class PricingSettings(models.Model):
 		return "Pricing settings"
 
 	def save(self, *args, **kwargs):
+		if self.transcription_seconds_per_credit < 1:
+			raise ValueError("transcription_seconds_per_credit must be at least 1")
 		self.pk = 1
 		kwargs.pop("force_insert", None)
 		super().save(*args, **kwargs)
