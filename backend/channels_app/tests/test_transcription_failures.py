@@ -6,7 +6,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from accounts.models import Project
@@ -26,6 +26,7 @@ def age(msg, **delta):
 
 
 @fresh_storage
+@override_settings(TRANSCRIPTION_ENABLED=True)
 class TranscriptionFailureTest(TestCase):
 	def setUp(self):
 		self.project = Project.objects.create(name="P", slug="p-fail")

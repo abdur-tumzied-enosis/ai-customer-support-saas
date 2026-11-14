@@ -46,6 +46,7 @@ def tr(text="hi", seconds=3):
 
 
 @fresh_storage
+@override_settings(TRANSCRIPTION_ENABLED=True)
 class TranscribeSuccessTest(TestCase):
 	def setUp(self):
 		self.project = Project.objects.create(name="P", slug="p-tr")
@@ -192,6 +193,7 @@ class TranscribeSuccessTest(TestCase):
 		assert [c.args for c in delay.call_args_list] == [(str(self.msg.id), 0), (str(self.msg.id), 1)]
 		scheduled.assert_not_called()
 
+	@override_settings(TRANSCRIPTION_ENABLED=False)
 	def test_store_message_media_replies_directly_when_the_flag_is_off(self):
 		self._two_voice_notes()
 		with mock.patch.object(media_store.transcribe_attachment, "delay") as delay, 		     mock.patch.object(media_store, "schedule_reply") as scheduled:

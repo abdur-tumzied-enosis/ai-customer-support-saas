@@ -181,7 +181,8 @@ def _audio_states(turn) -> list:
 	"""The transcription state of every audio attachment in the turn (None: no entry written yet)."""
 	return [
 		((m.meta or {}).get("transcription") or {}).get(str(i), {}).get("status")
-		for m in turn for i, att in enumerate(m.attachment_info or []) if att.get("type") == "audio"
+		for m in turn if (m.meta or {}).get("audio_reply")  # set only when transcription is on for the project
+		for i, att in enumerate(m.attachment_info or []) if att.get("type") == "audio"
 	]
 
 
@@ -209,12 +210,16 @@ def _queue_untranscribed_audio(turn) -> bool:
 	from .media_store import TERMINAL_STATES, transcribe_attachment  # media_store imports this module
 	waiting = False
 	for m in turn:
-		audio = [i for i, att in enumerate(m.attachment_info or []) if att.get("type") == "audio"]
-		for i in audio:
+		if not (m.meta or {}).get("audio_reply"):
+			continue
+		old = timezone.now() - m.created_at > timedelta(minutes=3)  # store_message_media's limit is 90s: older and pathless means storage failed
+		for i, att in enumerate(m.attachment_info or []):
+			if att.get("type") != "audio":
+				continue
 			state = ((m.meta or {}).get("transcription") or {}).get(str(i), {}).get("status")
 			if state not in TERMINAL_STATES:
 				waiting = True
-				if state is None:
+				if state is None and (att.get("path") or old):  # a young pathless note: store_message_media will enqueue it
 					transcribe_attachment.delay(str(m.id), i)
 	return waiting
 

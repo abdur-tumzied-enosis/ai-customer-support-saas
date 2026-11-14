@@ -170,6 +170,8 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 	if not (0 <= index < len(atts) and _is_audio(atts[index])):
 		return
 	project = msg.project
+	if not transcription_on(project):  # the kill switch stops spend even for notes already queued
+		return
 	claimed = False
 	try:
 		status = (msg.meta or {}).get("transcription", {}).get(str(index), {}).get("status")

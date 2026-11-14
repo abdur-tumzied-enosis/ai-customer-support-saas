@@ -606,9 +606,12 @@ class AudioTurnTest(PipelineBase):
 
 	def test_failed_voice_note_sends_canned_reply_without_the_agent(self):
 		msg = self.audio_message(meta=self.FAILED)
-		process_reply.apply(args=[str(self.conv.id), str(msg.id)])
+		with self.captureOnCommitCallbacks(execute=True):
+			process_reply.apply(args=[str(self.conv.id), str(msg.id)])
 		self.gen.assert_not_called()
-		assert Message.objects.filter(direction="out").last().text == settings.TRANSCRIPTION_FAILED_MESSAGE
+		out = Message.objects.filter(direction="out").last()
+		assert out.text == settings.TRANSCRIPTION_FAILED_MESSAGE
+		assert "billable" not in out.meta
 		assert CreditTransaction.objects.filter(action="reply").count() == 0
 
 	def test_unaffordable_voice_note_hands_off(self):
@@ -631,3 +634,49 @@ class AudioTurnTest(PipelineBase):
 		msg.meta["transcription"] = {"0": {"status": "transcribed"}}
 		msg.save(update_fields=["text", "meta"])
 		assert "Message includes attachments" not in tasks.format_message_with_context(msg)
+
+	def test_voice_note_without_audio_reply_is_ignored(self):
+		old = self.audio_message()
+		old.meta = {}
+		old.save(update_fields=["meta"])
+		text = self.inbound("price?")
+		with mock.patch("channels_app.media_store.transcribe_attachment") as enqueued:
+			process_reply.apply(args=[str(self.conv.id), str(text.id)])
+		assert not enqueued.delay.called
+		assert self.gen.called
+
+	def test_transcription_off_means_no_charge_and_no_provider_call(self):
+		msg = self.audio_message()
+		with mock.patch.object(media_store, "transcription_on", return_value=False), 			mock.patch.object(media_store, "transcribe") as provider, 			mock.patch.object(media_store, "charge_if_affordable") as charge:
+			media_store.transcribe_attachment(str(msg.id), 0)
+		assert not provider.called and not charge.called
+		assert not CreditTransaction.objects.filter(action="transcription").exists()
+
+	def test_young_voice_note_without_path_waits_for_storage(self):
+		msg = self.audio_message()
+		msg.attachment_info = [{"type": "audio"}]
+		msg.save(update_fields=["attachment_info"])
+		text = self.inbound("price?")
+		with mock.patch("channels_app.media_store.transcribe_attachment") as enqueued:
+			process_reply.apply(args=[str(self.conv.id), str(text.id)])
+		assert not enqueued.delay.called
+		assert not Message.objects.filter(direction="out").exists()
+		Message.objects.filter(id=msg.id).update(created_at=timezone.now() - timedelta(minutes=4))
+		with mock.patch("channels_app.media_store.transcribe_attachment") as enqueued:
+			process_reply.apply(args=[str(self.conv.id), str(text.id)])
+		enqueued.delay.assert_called_once_with(str(msg.id), 0)
+
+	def test_processing_voice_note_is_not_re_enqueued(self):
+		msg = self.audio_message(meta={"transcription": {"0": {"status": "processing"}}})
+		with mock.patch("channels_app.media_store.transcribe_attachment") as enqueued:
+			process_reply.apply(args=[str(self.conv.id), str(msg.id)])
+		assert not enqueued.delay.called
+		assert not Message.objects.filter(direction="out").exists()
+
+	def test_failed_voice_note_after_bengali_text_gets_the_bengali_message(self):
+		earlier = self.inbound("আপনার দাম কত?")
+		Message.objects.filter(id=earlier.id).update(status="completed")
+		out = Message.objects.create(project=self.project, contact=self.contact, conversation=self.conv, direction="out", text="x", status="completed", meta=reply.answered_marker(earlier))
+		msg = self.audio_message(meta=self.FAILED)
+		process_reply.apply(args=[str(self.conv.id), str(msg.id)])
+		assert Message.objects.filter(direction="out").order_by("created_at").last().text == settings.TRANSCRIPTION_FAILED_MESSAGE_BN
