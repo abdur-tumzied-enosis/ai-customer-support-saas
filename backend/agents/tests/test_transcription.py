@@ -81,7 +81,7 @@ class ResolveModelTest(TestCase):
 		assert transcription.resolve_transcription_model() == "elevenlabs/scribe-v2"
 
 	def test_model_config_wins(self):
-		row = AIModel.objects.create(provider="openrouter", name="x-ai/grok-stt-2.0", kind="transcription")
+		row = AIModel.objects.get(provider="openrouter", name="x-ai/grok-stt-2.0")
 		ModelConfig.objects.update_or_create(pk=1, defaults={"transcription_model": row})
 		assert transcription.resolve_transcription_model() == "x-ai/grok-stt-2.0"
 

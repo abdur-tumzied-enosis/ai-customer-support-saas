@@ -95,6 +95,18 @@ class SyncOpenRouterPricesTest(TestCase):
 		self.cheap.refresh_from_db()
 		assert self.cheap.input_price_per_mtok == Decimal("9")
 
+	@mock.patch("agents.pricing.requests.get")
+	def test_transcription_only_model_is_priced(self, get):
+		asr = AIModel.objects.create(provider="openrouter", name="elevenlabs/scribe-v2", kind="transcription")
+		get.side_effect = [
+			fake_response([{"id": "vendor/cheap", "pricing": {"prompt": "0.0000005", "completion": "0.0000015"}}]),
+			fake_response([{"id": "elevenlabs/scribe-v2", "pricing": {"prompt": "0.0000611111111111", "completion": "0"}}]),
+		]
+		result = sync_openrouter_prices()
+		asr.refresh_from_db()
+		assert asr.input_price_per_mtok == Decimal("61.111111")
+		assert "elevenlabs/scribe-v2" not in result["not_found"]
+
 
 class SyncTaskTest(TestCase):
 	def test_beat_runs_the_task_daily(self):

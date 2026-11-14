@@ -2,6 +2,8 @@ from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import models
 
+from .transcription import SUPPORTED_TRANSCRIPTION_MODELS
+
 MODEL_CONFIG_CACHE_KEY = "agents:model_config"
 ROLES = ("reply", "fallback", "memory", "transcription", "vision")
 
@@ -75,7 +77,8 @@ class ModelConfig(models.Model):
 	reply_model = _role_model("text")
 	fallback_model = _role_model("text")
 	memory_model = _role_model("text")
-	transcription_model = _role_model("transcription")  # not read anywhere yet: audio messages come later
+	transcription_model = _role_model("transcription")
+	transcription_model.help_text = "One of: " + ", ".join(SUPPORTED_TRANSCRIPTION_MODELS)
 	vision_model = models.ForeignKey(
 		AIModel, null=True, blank=True, on_delete=models.PROTECT, related_name="+",
 		limit_choices_to={"kind": "text", "supports_vision": True},
@@ -93,6 +96,8 @@ class ModelConfig(models.Model):
 		super().clean()
 		if self.vision_model_id and not self.vision_model.supports_vision:
 			raise ValidationError({"vision_model": "Pick a model whose input modalities include image."})
+		if self.transcription_model_id and self.transcription_model.name not in SUPPORTED_TRANSCRIPTION_MODELS:
+			raise ValidationError({"transcription_model": "Pick a supported transcription model: " + ", ".join(SUPPORTED_TRANSCRIPTION_MODELS)})
 
 	def save(self, *args, **kwargs):
 		self.pk = 1  # singleton: a second create() updates the one row

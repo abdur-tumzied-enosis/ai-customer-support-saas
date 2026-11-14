@@ -38,9 +38,12 @@ def sync_openrouter_prices(api_key=None, timeout=30):
 	"""Update existing openrouter AIModel rows (prices, modalities, vision flag) from OpenRouter's model list.
 	Creates no rows; a failed fetch writes nothing."""
 	key = settings.OPENROUTER_API_KEY if api_key is None else api_key
-	resp = requests.get(OPENROUTER_MODELS_URL, headers={"Authorization": f"Bearer {key}"}, timeout=timeout)
-	resp.raise_for_status()
-	entries = {m["id"]: m for m in resp.json()["data"]}
+	entries = {}
+	# transcription-only models are absent from the default list; a duplicate id takes the transcription entry
+	for url in (OPENROUTER_MODELS_URL, f"{OPENROUTER_MODELS_URL}?output_modalities=transcription"):
+		resp = requests.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=timeout)
+		resp.raise_for_status()
+		entries.update({m["id"]: m for m in resp.json()["data"]})
 	updated = unchanged = 0
 	not_found = []
 	with transaction.atomic():
