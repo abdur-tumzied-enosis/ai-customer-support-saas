@@ -1,0 +1,9 @@
+{
+  "text": "This is a test recording.",
+  "usage": {
+    "total_tokens": 89,
+    "input_tokens": 83,
+    "output_tokens": 6,
+    "cost": 0.000238
+  }
+}

@@ -597,7 +597,7 @@ enabled model's expected payload:
 | input | local duration | accepted by |
 |---|---|---|
 | Ogg/Opus | yes | scribe, grok, gemini — verified per model before enabling |
-| M4A/MP4 | yes | **open**: no MP4/M4A sample recorded yet; the Messenger sample is MP3. Record one and verify per model before enabling |
+| M4A/MP4 | yes | verified: `voic_m4a.m4a` (`ftyp` brand `mp42`, not `M4A`) accepted by all three models, HTTP 200, cost present. This is why the container is sniffed for `ftyp` and not for the brand |
 | MP3 | yes | verified per model before enabling |
 | AMR | no | rejected, no provider call |
 
