@@ -132,6 +132,10 @@ CELERY_TASK_ROUTES = {
 }
 STUCK_JOB_THRESHOLD_MINUTES =env.int("STUCK_JOB_THRESHOLD_MINUTES", default=120)
 CELERY_BEAT_SCHEDULE = {
+    'reconcile-transcriptions': {
+        'task': 'channels_app.media_store.reconcile_transcriptions',
+        'schedule': 600,
+    },
     'recover-stuck-ingestion-jobs': {
         'task': 'knowledge.tasks.recover_stuck_jobs',
         'schedule': 600,  # every 10 minutes

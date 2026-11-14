@@ -3,6 +3,7 @@ widget/test-chat uploads are moved out of tmp/. Photos become display + thumb We
 import logging
 import math
 import os
+from datetime import timedelta
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import transaction
+from django.utils import timezone
 
 from agents.image_search import MAX_IMAGE_BYTES, NotAnImage, make_send_variant, make_variants
 from agents.transcription import TranscriptionError, audio_format, audio_seconds, resolve_transcription_model, transcribe
@@ -112,6 +114,22 @@ def refund_transcription(project, message_id: str, index: int, reason: str) -> N
 		logger.error(f"Transcription refund of message {message_id} attachment {index} failed: {type(e).__name__}")
 
 
+def _claim_processing(message_id: str, index: int, **fields) -> bool:
+	"""Compare-and-set under the row lock: move to `processing` only from no state. The cache claim is best-effort,
+	this is what stops a second provider call."""
+	claimed = False
+
+	def change(msg):
+		nonlocal claimed
+		states = msg.meta.setdefault("transcription", {})
+		if str(index) in states:
+			return
+		states[str(index)] = {"status": "processing", "started_at": timezone.now().isoformat(), **fields}
+		claimed = True
+	update_message(message_id, change)
+	return claimed
+
+
 def maybe_schedule_reply(message_id: str) -> None:
 	"""Once every voice note has settled, answer the newest pending message (not necessarily this one)."""
 	msg = Message.objects.select_related("conversation").filter(id=message_id).first()
@@ -136,7 +154,7 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 		return
 	project = msg.project
 	try:
-		status = update_message(message_id, lambda m: None).meta.get("transcription", {}).get(str(index), {}).get("status")
+		status = (msg.meta or {}).get("transcription", {}).get(str(index), {}).get("status")
 		if status in TERMINAL_STATES:
 			return
 		if status == "processing":  # a dead run: the provider may have been called, never call it again
@@ -157,13 +175,14 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 			_set_state(message_id, index, "over_cap", seconds=seconds)
 			return
 		units = max(1, math.ceil(seconds / PricingSettings.get().transcription_seconds_per_credit))  # the charge applies the price
+		model = resolve_transcription_model()
+		if not _claim_processing(message_id, index, model=model, seconds=seconds, units=units):
+			return  # another run holds it, or it already settled: no charge, no provider call
 		try:
 			charge_if_affordable(project, "transcription", key=f"transcription:{message_id}:{index}", units=units, conversation=msg.conversation, trigger_message=msg)
 		except InsufficientCredits:
 			_set_state(message_id, index, "unaffordable", seconds=seconds, units=units)
 			return
-		model = resolve_transcription_model()
-		_set_state(message_id, index, "processing", model=model, seconds=seconds, units=units)
 		attempt = start_attempt(str(project.id), model, seconds=seconds, conversation_id=str(msg.conversation_id), message_id=message_id, attachment_index=index)
 		try:
 			out = transcribe(data, fmt, model)
@@ -181,6 +200,7 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 
 		def done(m):
 			m.text = " ".join(filter(None, [m.text, text]))
+			m.meta.setdefault("transcript_texts", {})[str(index)] = out.text
 			m.meta.setdefault("transcription", {})[str(index)] = {**m.meta["transcription"].get(str(index), {}), "status": "transcribed", "attempt": attempt}
 		update_message(message_id, done)
 	except Exception as e:
@@ -189,6 +209,40 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 		refund_transcription(project, message_id, index, "error")
 	finally:
 		maybe_schedule_reply(message_id)
+
+
+SWEEP_FAILED = {"failed", "failed_uncertain", "empty"}
+
+
+@shared_task
+def reconcile_transcriptions() -> None:
+	"""Refund charges stranded by a dead run (`processing`) and failures whose refund never landed. Never raises."""
+	now = timezone.now()
+	try:
+		batch = list(Message.objects.select_related("project").filter(
+			meta__has_key="transcription", created_at__range=(now - timedelta(hours=2), now - timedelta(minutes=10)),
+		).order_by("created_at")[:100])
+	except Exception as e:
+		logger.error(f"Transcription sweep query failed: {type(e).__name__}")
+		return
+	for msg in batch:
+		try:
+			touched = False
+			for i, entry in list((msg.meta.get("transcription") or {}).items()):
+				status = entry.get("status")
+				if status == "processing":
+					refund_transcription(msg.project, str(msg.id), i, "interrupted")
+					_set_state(str(msg.id), int(i), "failed_uncertain")
+					touched = True
+				elif status in SWEEP_FAILED:
+					charged = CreditTransaction.objects.filter(idempotency_key=f"transcription:{msg.id}:{i}").exists()
+					refunded = CreditTransaction.objects.filter(idempotency_key=f"transcription_refund:{msg.id}:{i}").exists()
+					if charged and not refunded:
+						refund_transcription(msg.project, str(msg.id), i, "retried refund")
+			if touched:
+				maybe_schedule_reply(str(msg.id))
+		except Exception as e:
+			logger.error(f"Transcription sweep of message {msg.id} failed: {type(e).__name__}")
 
 
 @shared_task(soft_time_limit=60, time_limit=90)

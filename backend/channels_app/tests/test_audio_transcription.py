@@ -65,6 +65,8 @@ class TranscribeSuccessTest(TestCase):
 		self.msg.refresh_from_db()
 		seconds = self.msg.meta["transcription"]["0"]["seconds"]
 		assert self.msg.text == "hello there"
+		assert self.msg.meta["transcript_texts"]["0"] == "hello there"
+		assert self.msg.meta["transcription"]["0"]["started_at"]
 		assert self.msg.meta["transcription"]["0"]["status"] == "transcribed"
 		txn = CreditTransaction.objects.get(idempotency_key=f"transcription:{self.msg.id}:0")
 		assert txn.amount == Decimal(-((seconds + 4) // 5))  # ceil(seconds / 5), 1 credit each
