@@ -15,6 +15,7 @@ from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from agents.image_search import MAX_IMAGE_BYTES, NotAnImage, make_send_variant, make_variants
 from agents.transcription import TranscriptionError, audio_format, audio_seconds, resolve_transcription_model, transcribe
@@ -114,6 +115,22 @@ def refund_transcription(project, message_id: str, index: int, reason: str) -> N
 		logger.error(f"Transcription refund of message {message_id} attachment {index} failed: {type(e).__name__}")
 
 
+def _move_if_processing(message_id: str, index: int, new_status: str, allow_absent: bool = False, **fields) -> bool:
+	"""Under the row lock, change the entry to `new_status` only if it is still `processing` (or absent, when
+	allowed). Returns whether it moved: the caller refunds only then, so a settled entry is never overwritten."""
+	moved = False
+
+	def change(msg):
+		nonlocal moved
+		states = msg.meta.setdefault("transcription", {})
+		entry = states.get(str(index))
+		if (entry is None and allow_absent) or (entry or {}).get("status") == "processing":
+			states[str(index)] = {**(entry or {}), "status": new_status, **fields}
+			moved = True
+	update_message(message_id, change)
+	return moved
+
+
 def _claim_processing(message_id: str, index: int, **fields) -> bool:
 	"""Compare-and-set under the row lock: move to `processing` only from no state. The cache claim is best-effort,
 	this is what stops a second provider call."""
@@ -153,13 +170,14 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 	if not (0 <= index < len(atts) and _is_audio(atts[index])):
 		return
 	project = msg.project
+	claimed = False
 	try:
 		status = (msg.meta or {}).get("transcription", {}).get(str(index), {}).get("status")
 		if status in TERMINAL_STATES:
 			return
 		if status == "processing":  # a dead run: the provider may have been called, never call it again
-			_set_state(message_id, index, "failed_uncertain")
-			refund_transcription(project, message_id, index, "interrupted")
+			if _move_if_processing(message_id, index, "failed_uncertain"):
+				refund_transcription(project, message_id, index, "interrupted")
 			return
 		path = atts[index].get("path")
 		if not path:
@@ -178,9 +196,10 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 		model = resolve_transcription_model()
 		if not _claim_processing(message_id, index, model=model, seconds=seconds, units=units):
 			return  # another run holds it, or it already settled: no charge, no provider call
+		claimed = True
 		try:
 			charge_if_affordable(project, "transcription", key=f"transcription:{message_id}:{index}", units=units, conversation=msg.conversation, trigger_message=msg)
-		except InsufficientCredits:
+		except InsufficientCredits:  # shortcut: a crash between processing and unaffordable makes this note failed_uncertain with no charge, so the customer gets the failure reply instead of a handoff; upgrade by writing unaffordable before the claim
 			_set_state(message_id, index, "unaffordable", seconds=seconds, units=units)
 			return
 		attempt = start_attempt(str(project.id), model, seconds=seconds, conversation_id=str(msg.conversation_id), message_id=message_id, attachment_index=index)
@@ -188,29 +207,33 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 			out = transcribe(data, fmt, model)
 		except TranscriptionError:
 			finish_attempt(attempt, tokens=0, cost_usd=None, status="failed")
-			_set_state(message_id, index, "failed")
-			refund_transcription(project, message_id, index, "provider error")
+			if _move_if_processing(message_id, index, "failed"):
+				refund_transcription(project, message_id, index, "provider error")
 			return
 		finish_attempt(attempt, status="reported", tokens=out.tokens, cost_usd=out.cost_usd, usage=out.usage)
 		text = out.text.strip()
 		if not text:
-			_set_state(message_id, index, "empty")
-			refund_transcription(project, message_id, index, "empty transcript")
+			if _move_if_processing(message_id, index, "empty"):
+				refund_transcription(project, message_id, index, "empty transcript")
 			return
 
 		def done(m):
+			entry = m.meta.setdefault("transcription", {}).get(str(index), {})
+			if entry.get("status") != "processing":  # swept and refunded meanwhile: never turn that into a free transcript
+				return
 			m.text = " ".join(filter(None, [m.text, text]))
-			m.meta.setdefault("transcript_texts", {})[str(index)] = out.text
-			m.meta.setdefault("transcription", {})[str(index)] = {**m.meta["transcription"].get(str(index), {}), "status": "transcribed", "attempt": attempt}
+			m.meta.setdefault("transcript_texts", {})[str(index)] = text
+			m.meta["transcription"][str(index)] = {**entry, "status": "transcribed", "attempt": attempt}
 		update_message(message_id, done)
 	except Exception as e:
 		logger.warning(f"Transcription of message {message_id} attachment {index} failed: {type(e).__name__}")
-		_set_state(message_id, index, "failed")
-		refund_transcription(project, message_id, index, "error")
+		if _move_if_processing(message_id, index, "failed", allow_absent=not claimed):
+			refund_transcription(project, message_id, index, "error")
 	finally:
 		maybe_schedule_reply(message_id)
 
 
+HARD_TIME_LIMIT = 90
 SWEEP_FAILED = {"failed", "failed_uncertain", "empty"}
 
 
@@ -231,9 +254,12 @@ def reconcile_transcriptions() -> None:
 			for i, entry in list((msg.meta.get("transcription") or {}).items()):
 				status = entry.get("status")
 				if status == "processing":
-					refund_transcription(msg.project, str(msg.id), i, "interrupted")
-					_set_state(str(msg.id), int(i), "failed_uncertain")
-					touched = True
+					started = parse_datetime(entry.get("started_at") or "")
+					if started and started > now - timedelta(seconds=HARD_TIME_LIMIT + 300):
+						continue  # a live run may still be inside its time limit
+					if _move_if_processing(str(msg.id), int(i), "failed_uncertain"):
+						refund_transcription(msg.project, str(msg.id), i, "interrupted")
+						touched = True
 				elif status in SWEEP_FAILED:
 					charged = CreditTransaction.objects.filter(idempotency_key=f"transcription:{msg.id}:{i}").exists()
 					refunded = CreditTransaction.objects.filter(idempotency_key=f"transcription_refund:{msg.id}:{i}").exists()

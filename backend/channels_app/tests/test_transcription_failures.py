@@ -173,3 +173,23 @@ class TranscriptionFailureTest(TestCase):
 		assert CreditTransaction.objects.filter(kind="adjust").count() == 1
 		media_store.reconcile_transcriptions()  # the failed refund is retried by the failure branch
 		assert CreditTransaction.objects.filter(kind="adjust").count() == 2
+
+	def test_sweep_skips_a_processing_entry_with_a_fresh_started_at(self):
+		self.charge(self.msg)
+		self.msg.meta = {"transcription": {"0": {"status": "processing", "units": 3, "started_at": timezone.now().isoformat()}}}
+		self.msg.save(update_fields=["meta"])
+		age(self.msg)
+		with mock.patch.object(media_store, "refund_transcription") as refund:
+			media_store.reconcile_transcriptions()
+		refund.assert_not_called()
+		assert self.state() == "processing"
+
+	def test_catch_all_does_not_overwrite_a_transcribed_entry(self):
+		def other_run_wins(*a, **k):
+			media_store._move_if_processing(str(self.msg.id), 0, "transcribed")
+			raise RuntimeError("boom")
+
+		with mock.patch.object(media_store, "transcribe", side_effect=other_run_wins):
+			media_store.transcribe_attachment(str(self.msg.id), 0)
+		assert self.state() == "transcribed"
+		assert not CreditTransaction.objects.filter(kind="adjust").exists()

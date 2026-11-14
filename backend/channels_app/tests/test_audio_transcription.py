@@ -143,9 +143,11 @@ class TranscribeSuccessTest(TestCase):
 	def test_charge_happens_before_the_provider_call(self):
 		order = []
 		with mock.patch.object(media_store, "charge_if_affordable", side_effect=lambda *a, **k: order.append("charge")), \
-		     mock.patch.object(media_store, "transcribe", side_effect=lambda *a, **k: order.append("call")):
+		     mock.patch.object(media_store, "transcribe", side_effect=lambda *a, **k: (order.append("call"), tr())[1]):
 			media_store.transcribe_attachment(str(self.msg.id), 0)
 		assert order == ["charge", "call"]
+		self.msg.refresh_from_db()
+		assert self.msg.meta["transcription"]["0"]["status"] == "transcribed"
 
 	def test_second_run_does_not_recharge_or_recall(self):
 		with mock.patch.object(media_store, "transcribe", return_value=tr()) as call:
