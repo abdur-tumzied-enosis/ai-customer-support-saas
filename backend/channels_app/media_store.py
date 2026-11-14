@@ -214,4 +214,9 @@ def store_message_media(message_id: str, reply: bool) -> None:
 			Message.objects.filter(id=msg.id).update(attachment_info=msg.attachment_info)
 	finally:
 		if reply:
-			schedule_reply(msg)
+			audio = [i for i, a in enumerate(msg.attachment_info or []) if _is_audio(a)]
+			if audio and transcription_on(msg.project):
+				for i in audio:  # stored or not: an unstored one fails in the task, which then drives the reply
+					transcribe_attachment.delay(str(msg.id), i)
+			else:
+				schedule_reply(msg)

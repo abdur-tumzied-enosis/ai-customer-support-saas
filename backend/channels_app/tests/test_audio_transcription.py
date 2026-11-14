@@ -108,11 +108,14 @@ class TranscribeSuccessTest(TestCase):
 
 	def test_unaffordable_ends_without_a_call(self):
 		with mock.patch.object(media_store, "charge_if_affordable", side_effect=media_store.InsufficientCredits(Decimal("3"), Decimal("-50"))), \
+		     mock.patch.object(media_store, "schedule_reply") as scheduled, \
 		     mock.patch.object(media_store, "transcribe") as call:
 			media_store.transcribe_attachment(str(self.msg.id), 0)
 		call.assert_not_called()
 		self.msg.refresh_from_db()
 		assert self.msg.meta["transcription"]["0"]["status"] == "unaffordable"
+		assert not CreditTransaction.objects.filter(idempotency_key=f"transcription:{self.msg.id}:0").exists()
+		assert scheduled.called
 
 	def test_unexpected_error_ends_failed_refunded_and_replied(self):
 		with mock.patch.object(media_store, "start_attempt", side_effect=RuntimeError("db down")), \
@@ -172,3 +175,22 @@ class TranscribeSuccessTest(TestCase):
 		assert self.msg.text == "first second"
 		assert CreditTransaction.objects.filter(action="transcription").count() == 2
 		assert scheduled.call_count == 1
+
+	def _two_voice_notes(self):
+		att = [{"type": "audio", "path": self.msg.attachment_info[0]["path"]}, {"type": "audio", "url": "https://x/a.mp4"}]
+		Message.objects.filter(id=self.msg.id).update(attachment_info=att)
+
+	@override_settings(TRANSCRIPTION_ENABLED=True)
+	def test_store_message_media_queues_one_task_per_voice_note(self):
+		self._two_voice_notes()
+		with mock.patch.object(media_store.transcribe_attachment, "delay") as delay, 		     mock.patch.object(media_store, "schedule_reply") as scheduled:
+			media_store.store_message_media(str(self.msg.id), True)
+		assert [c.args for c in delay.call_args_list] == [(str(self.msg.id), 0), (str(self.msg.id), 1)]
+		scheduled.assert_not_called()
+
+	def test_store_message_media_replies_directly_when_the_flag_is_off(self):
+		self._two_voice_notes()
+		with mock.patch.object(media_store.transcribe_attachment, "delay") as delay, 		     mock.patch.object(media_store, "schedule_reply") as scheduled:
+			media_store.store_message_media(str(self.msg.id), True)
+		delay.assert_not_called()
+		assert scheduled.called
