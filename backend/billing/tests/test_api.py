@@ -141,6 +141,15 @@ class TranscriptionPriceTest(BillingApiBase):
 		with self.assertRaises(ValueError):
 			cfg.save()
 
+	def test_seconds_per_credit_must_be_whole(self):
+		cfg = PricingSettings.get()
+		cfg.transcription_seconds_per_credit = Decimal("2.5")
+		with self.assertRaises(ValueError):
+			cfg.save()
+		assert PricingSettings.get().transcription_seconds_per_credit == Decimal("5")
+		cfg.transcription_seconds_per_credit = Decimal("5")
+		cfg.save()
+
 	@override_settings(TRANSCRIPTION_ENABLED=True)
 	def test_pricing_row_carries_per_seconds(self):
 		res = self.client.get("/api/billing/pricing/")

@@ -51,6 +51,8 @@ class PricingSettings(models.Model):
 	def save(self, *args, **kwargs):
 		if self.transcription_seconds_per_credit < 1:
 			raise ValueError("transcription_seconds_per_credit must be at least 1")
+		if self.transcription_seconds_per_credit != self.transcription_seconds_per_credit.to_integral_value():
+			raise ValueError("transcription_seconds_per_credit must be a whole number")
 		self.pk = 1
 		kwargs.pop("force_insert", None)
 		super().save(*args, **kwargs)

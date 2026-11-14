@@ -172,6 +172,8 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 	project = msg.project
 	if not transcription_on(project):  # the kill switch stops spend even for notes already queued
 		return
+	if msg.conversation.is_paused():  # staff handle this turn: no spend
+		return
 	claimed = False
 	try:
 		status = (msg.meta or {}).get("transcription", {}).get(str(index), {}).get("status")
@@ -298,7 +300,7 @@ def store_message_media(message_id: str, reply: bool) -> None:
 	finally:
 		if reply:
 			audio = [i for i, a in enumerate(msg.attachment_info or []) if _is_audio(a)]
-			if audio and (msg.meta or {}).get("audio_reply") and transcription_on(msg.project):
+			if audio and (msg.meta or {}).get("audio_reply") and transcription_on(msg.project) and not msg.conversation.is_paused():
 				for i in audio:  # stored or not: an unstored one fails in the task, which then drives the reply
 					transcribe_attachment.delay(str(msg.id), i)
 			else:

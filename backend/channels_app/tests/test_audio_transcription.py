@@ -203,6 +203,25 @@ class TranscribeSuccessTest(TestCase):
 		delay.assert_not_called()
 		assert scheduled.called
 
+	@override_settings(TRANSCRIPTION_ENABLED=True)
+	def test_store_message_media_skips_transcription_while_paused(self):
+		self._two_voice_notes()
+		Conversation.objects.filter(id=self.msg.conversation_id).update(handoff_at=timezone.now())
+		with mock.patch.object(media_store.transcribe_attachment, "delay") as delay, mock.patch.object(media_store, "schedule_reply") as scheduled:
+			media_store.store_message_media(str(self.msg.id), True)
+		delay.assert_not_called()
+		assert scheduled.called
+
+	@override_settings(TRANSCRIPTION_ENABLED=True)
+	def test_transcribe_attachment_does_nothing_while_paused(self):
+		Conversation.objects.filter(id=self.msg.conversation_id).update(handoff_at=timezone.now())
+		with mock.patch.object(media_store, "transcribe") as call, mock.patch.object(media_store, "schedule_reply"):
+			media_store.transcribe_attachment(str(self.msg.id), 0)
+		call.assert_not_called()
+		self.msg.refresh_from_db()
+		assert "transcription" not in (self.msg.meta or {})
+		assert not CreditTransaction.objects.exists()
+
 	@override_settings(TRANSCRIPTION_ENABLED=False)
 	def test_store_message_media_replies_directly_when_the_flag_is_off(self):
 		self._two_voice_notes()
