@@ -247,8 +247,16 @@ def _message_dict(msg: Message, credits=()) -> dict:
 def _message_credits(conversation) -> dict:
 	"""{message id: [credit entries]} from one query: replies attach to the reply message, photo searches to the customer message."""
 	out = {}
-	rows = CreditTransaction.objects.filter(conversation=conversation, kind="charge", action__in=("reply", "photo_search"))
-	for t in rows.order_by("created_at"):
+	rows = list(CreditTransaction.objects.filter(
+		conversation=conversation, kind="charge", action__in=("reply", "photo_search", "transcription")
+	).order_by("created_at"))
+	# A refunded voice note shows no charge; its refund key is derived from the charge key.
+	refunded = set(CreditTransaction.objects.filter(idempotency_key__in=[
+		t.idempotency_key.replace("transcription:", "transcription_refund:", 1) for t in rows if t.action == "transcription"
+	]).values_list("idempotency_key", flat=True))
+	for t in rows:
+		if t.action == "transcription" and t.idempotency_key.replace("transcription:", "transcription_refund:", 1) in refunded:
+			continue
 		msg_id = t.result_message_id if t.action == "reply" else t.trigger_message_id
 		if msg_id:
 			out.setdefault(msg_id, []).append({"action": t.action, "label": ACTIONS[t.action][0], "credits": f"{-t.amount:.2f}"})

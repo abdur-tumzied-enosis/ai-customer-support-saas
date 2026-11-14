@@ -20,6 +20,7 @@ const ACTION_HELP: Record<string, string | ((credits: number) => string)> = {
 	product_import: "Each product the AI pulls from a crawled website page creates a candidate and costs credits. Products you add by hand or import from a file are free.",
 	order_setup: "Setting up orders from your documents.",
 	photo_index: (credits) => `Each product photo you add to image search costs ${formatCredits(credits)} ${credits === 1 ? "credit" : "credits"}.`,
+	transcription: (credits) => `Each voice note costs ${formatCredits(credits)} ${credits === 1 ? "credit" : "credits"} for each started 5 seconds of audio, minimum one. Nothing is charged if we cannot transcribe it.`,
 	product_suggest: "Column mapping suggestions when you import a file are free.",
 	instruction_improve: "Improving your instructions is free.",
 };
@@ -151,7 +152,7 @@ export default function PricingSection() {
 								</dt>
 
 								<dd className="tabular-nums font-medium whitespace-nowrap">
-									{formatCredits(a.credits)} {Number(a.credits) === 1 ? "credit" : "credits"}
+									{formatCredits(a.credits)} {Number(a.credits) === 1 ? "credit" : "credits"}{a.per_seconds ? ` per ${a.per_seconds} seconds` : ""}
 								</dd>
 							</div>
 						))}

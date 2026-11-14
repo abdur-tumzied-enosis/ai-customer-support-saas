@@ -14,7 +14,7 @@ export type CreditTxn = {
 };
 export type PublicPricing = {
 	packages: { id: number; name: string; credits: number; bonus_credits: number; price: string; currency: string; features: string[]; highlighted: boolean }[];
-	actions: { action: string; label: string; credits: string }[];
+	actions: { action: string; label: string; credits: string; per_seconds?: number }[];
 	signup_credits: string;
 };
 
