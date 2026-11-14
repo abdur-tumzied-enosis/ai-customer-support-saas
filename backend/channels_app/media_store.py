@@ -115,16 +115,16 @@ def refund_transcription(project, message_id: str, index: int, reason: str) -> N
 		logger.error(f"Transcription refund of message {message_id} attachment {index} failed: {type(e).__name__}")
 
 
-def _move_if_processing(message_id: str, index: int, new_status: str, allow_absent: bool = False, **fields) -> bool:
-	"""Under the row lock, change the entry to `new_status` only if it is still `processing` (or absent, when
-	allowed). Returns whether it moved: the caller refunds only then, so a settled entry is never overwritten."""
+def _move_if_processing(message_id: str, index: int, new_status: str, require_absent: bool = False, **fields) -> bool:
+	"""Under the row lock, change the entry to `new_status` only if it is still `processing` (or, with
+	`require_absent`, only if there is no entry: a run that lost the claim must not touch another run's). Returns whether it moved: the caller refunds only then, so a settled entry is never overwritten."""
 	moved = False
 
 	def change(msg):
 		nonlocal moved
 		states = msg.meta.setdefault("transcription", {})
 		entry = states.get(str(index))
-		if (entry is None and allow_absent) or (entry or {}).get("status") == "processing":
+		if entry is None if require_absent else (entry or {}).get("status") == "processing":
 			states[str(index)] = {**(entry or {}), "status": new_status, **fields}
 			moved = True
 	update_message(message_id, change)
@@ -220,6 +220,7 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 		def done(m):
 			entry = m.meta.setdefault("transcription", {}).get(str(index), {})
 			if entry.get("status") != "processing":  # swept and refunded meanwhile: never turn that into a free transcript
+				logger.warning(f"Late transcript dropped for message {message_id} attachment {index}: provider was paid, note already refunded")
 				return
 			m.text = " ".join(filter(None, [m.text, text]))
 			m.meta.setdefault("transcript_texts", {})[str(index)] = text
@@ -227,7 +228,7 @@ def transcribe_attachment(message_id: str, index: int) -> None:
 		update_message(message_id, done)
 	except Exception as e:
 		logger.warning(f"Transcription of message {message_id} attachment {index} failed: {type(e).__name__}")
-		if _move_if_processing(message_id, index, "failed", allow_absent=not claimed):
+		if _move_if_processing(message_id, index, "failed", require_absent=not claimed):
 			refund_transcription(project, message_id, index, "error")
 	finally:
 		maybe_schedule_reply(message_id)

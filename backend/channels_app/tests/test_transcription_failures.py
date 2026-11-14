@@ -193,3 +193,37 @@ class TranscriptionFailureTest(TestCase):
 			media_store.transcribe_attachment(str(self.msg.id), 0)
 		assert self.state() == "transcribed"
 		assert not CreditTransaction.objects.filter(kind="adjust").exists()
+
+	def swept_during(self, effect):
+		"""Run the task; inside the provider call the sweep marks the note failed_uncertain and refunds it."""
+		def call(*a, **k):
+			media_store._move_if_processing(str(self.msg.id), 0, "failed_uncertain")
+			media_store.refund_transcription(self.project, str(self.msg.id), 0, "interrupted")
+			return effect()
+
+		with mock.patch.object(media_store, "transcribe", side_effect=call):
+			media_store.transcribe_attachment(str(self.msg.id), 0)
+		assert self.state() == "failed_uncertain"
+		assert CreditTransaction.objects.filter(kind="adjust").count() == 1
+		assert service.balance_of(self.project) == Decimal("0.00")
+
+	def test_late_success_after_a_sweep_is_dropped(self):
+		self.swept_during(lambda: Transcript("late words", 3, None, "m", {}))
+		assert "late words" not in self.msg.text
+		assert "0" not in self.msg.meta.get("transcript_texts", {})
+
+	def test_late_provider_error_after_a_sweep_does_not_refund_again(self):
+		def boom():
+			raise TranscriptionError("500")
+		self.swept_during(boom)
+
+	def test_a_run_that_lost_the_claim_does_not_move_anothers_processing_entry(self):
+		def other_run_claims_then_this_one_fails(*a, **k):
+			media_store._claim_processing(str(self.msg.id), 0)
+			self.charge(self.msg)
+			raise RuntimeError("boom")
+
+		with mock.patch.object(media_store, "read_stored", side_effect=other_run_claims_then_this_one_fails):
+			media_store.transcribe_attachment(str(self.msg.id), 0)
+		assert self.state() == "processing"
+		assert not CreditTransaction.objects.filter(kind="adjust").exists()
