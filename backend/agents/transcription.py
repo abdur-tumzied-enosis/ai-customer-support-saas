@@ -83,7 +83,11 @@ def transcribe(data: bytes, fmt: str, model: str | None = None) -> Transcript:
 	except ValueError as exc:
 		logger.warning("Transcription returned invalid JSON (HTTP %s)", resp.status_code)
 		raise TranscriptionError(f"HTTP {resp.status_code}: invalid JSON") from exc
-	usage = body.get("usage") or {}
-	tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or usage.get("total_tokens") or 0
-	cost = Decimal(str(usage["cost"])) if usage.get("cost") is not None else None
-	return Transcript(body.get("text") or "", int(tokens), cost, model, usage)
+	try:
+		usage = body.get("usage") or {}
+		tokens = usage.get("input_tokens") or usage.get("prompt_tokens") or usage.get("total_tokens") or 0
+		cost = Decimal(str(usage["cost"])) if usage.get("cost") is not None else None
+		return Transcript(body.get("text") or "", int(tokens), cost, model, usage)
+	except Exception as exc:  # malformed 200 reply: report the type only, never the body
+		logger.warning("Transcription reply malformed: %s", type(exc).__name__)
+		raise TranscriptionError(f"malformed reply: {type(exc).__name__}") from exc
