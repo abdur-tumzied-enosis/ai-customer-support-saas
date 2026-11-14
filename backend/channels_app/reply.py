@@ -173,8 +173,50 @@ def _newer_text_message(conversation, after) -> bool:
 	"""A newer inbound message with its own reply task: plain text, or a photo flagged for a reply
 	(other attachment messages never get one)."""
 	return Message.objects.filter(conversation=conversation, direction="in", created_at__gt=after).filter(
-		(Q(has_attachments=False) & ~Q(text="")) | Q(meta__photo_reply=True)
+		(Q(has_attachments=False) & ~Q(text="")) | Q(meta__photo_reply=True) | Q(meta__audio_reply=True)
 	).exists()
+
+
+def _audio_states(turn) -> list:
+	"""The transcription state of every audio attachment in the turn (None: no entry written yet)."""
+	return [
+		((m.meta or {}).get("transcription") or {}).get(str(i), {}).get("status")
+		for m in turn for i, att in enumerate(m.attachment_info or []) if att.get("type") == "audio"
+	]
+
+
+def _has_text(turn) -> bool:
+	return any((m.text or "").strip() for m in turn)
+
+
+def _audio_unaffordable(turn) -> bool:
+	return not _has_text(turn) and "unaffordable" in _audio_states(turn)
+
+
+def _audio_failed(turn) -> bool:
+	states = _audio_states(turn)
+	return not _has_text(turn) and bool(states) and "transcribed" not in states
+
+
+def _recent_bengali(conversation) -> bool:
+	recent = Message.objects.filter(conversation=conversation, direction="in").order_by("-created_at")[:10]
+	return any("ঀ" <= ch <= "৿" for m in recent for ch in (m.text or ""))
+
+
+def _queue_untranscribed_audio(turn) -> bool:
+	"""True when some voice note has no final transcription yet; starts the ones never started.
+	The inbound rows are left pending so recovery re-runs the turn."""
+	from .media_store import TERMINAL_STATES, transcribe_attachment  # media_store imports this module
+	waiting = False
+	for m in turn:
+		audio = [i for i, att in enumerate(m.attachment_info or []) if att.get("type") == "audio"]
+		for i in audio:
+			state = ((m.meta or {}).get("transcription") or {}).get(str(i), {}).get("status")
+			if state not in TERMINAL_STATES:
+				waiting = True
+				if state is None:
+					transcribe_attachment.delay(str(m.id), i)
+	return waiting
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=5, soft_time_limit=60, time_limit=90)
@@ -216,6 +258,10 @@ def _reply(task, conversation, msg: Message) -> None:
 		_complete(turn)  # staff answer these
 		return
 
+	if _queue_untranscribed_audio(turn):
+		logger.info(f"process_reply: conversation={conversation.id} voice note(s) not transcribed yet, waiting")
+		return
+
 	out_of_credits = False
 	if conversation.channel != "self":
 		try:
@@ -224,6 +270,9 @@ def _reply(task, conversation, msg: Message) -> None:
 		except Exception:  # fail open: a billing error never stops a shopper reply
 			logger.exception("Out-of-credits check failed for conversation %s", conversation.id)
 			out_of_credits = False
+
+	out_of_credits = out_of_credits or _audio_unaffordable(turn)
+	audio_failed = not out_of_credits and _audio_failed(turn)
 
 	try:
 		if not out_of_credits:
@@ -235,7 +284,7 @@ def _reply(task, conversation, msg: Message) -> None:
 		photos_timed_out = True
 	logger.info(f"process_reply: conversation={conversation.id} photos_timed_out={photos_timed_out}")
 	wants_person = any(wants_human(m.text) for m in turn)  # raw text only: quoted bot messages must not trigger it
-	skip_vision = photos_timed_out or out_of_credits or wants_person
+	skip_vision = photos_timed_out or out_of_credits or wants_person or audio_failed
 	vision = {"images": [], "marker": "", "trace": {}}
 	if skip_vision:
 		# annotate_turn may have written "Photo attached" already; no image will be sent, so fix the notes.
@@ -276,6 +325,9 @@ def _reply(task, conversation, msg: Message) -> None:
 		logger.info(f"process_reply: conversation={conversation.id} customer asked for a person, handing off without the agent")
 		reply_text = ""
 		handoff_reason = "customer asked for a person"
+	elif audio_failed:
+		logger.info(f"process_reply: conversation={conversation.id} no agent run (voice note not transcribed)")
+		reply_text = settings.TRANSCRIPTION_FAILED_MESSAGE_BN if _recent_bengali(conversation) else settings.TRANSCRIPTION_FAILED_MESSAGE
 	elif photos_timed_out:
 		logger.info(f"process_reply: conversation={conversation.id} no agent run (photo check timed out)")
 		reply_text = ""

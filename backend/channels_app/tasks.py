@@ -58,7 +58,9 @@ def format_message_with_context(message: Message, visible: bool = True) -> str:
 	rendered = photo_note_text(message.meta, visible=visible)
 	if rendered:
 		content = f"{content} {rendered}" if content else rendered
-	elif message.has_attachments:
+	elif message.has_attachments and not any(
+		t.get("status") == "transcribed" for t in ((message.meta or {}).get("transcription") or {}).values()
+	):
 		att_types = [att.get("type", "unknown") for att in message.attachment_info]
 		content = f"{content} [Message includes attachments: {', '.join(att_types)}]"
 	

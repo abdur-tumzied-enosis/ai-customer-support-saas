@@ -232,6 +232,8 @@ LLM_THINKING_LEVEL = env("LLM_THINKING_LEVEL", default=None)
 HANDOFF_AUTO_RESUME_HOURS = env.int("HANDOFF_AUTO_RESUME_HOURS", default=24)
 HANDOFF_MESSAGE = env("HANDOFF_MESSAGE", default="I've passed this to our team — a person will reply here soon.")
 HANDOFF_MESSAGE_BN = env("HANDOFF_MESSAGE_BN", default="আপনার বিষয়টি আমাদের টিমকে জানিয়েছি — একজন প্রতিনিধি শীঘ্রই এখানে উত্তর দেবেন।")  # sent when the customer writes in Bengali script
+TRANSCRIPTION_FAILED_MESSAGE = env("TRANSCRIPTION_FAILED_MESSAGE", default="Sorry, I couldn't make out your voice message. Could you type it out for me?")
+TRANSCRIPTION_FAILED_MESSAGE_BN = env("TRANSCRIPTION_FAILED_MESSAGE_BN", default="দুঃখিত, আপনার ভয়েস মেসেজটি আমি বুঝতে পারিনি। অনুগ্রহ করে লিখে পাঠাবেন?")
 MEMORY_LLM_MODEL = env("MEMORY_LLM_MODEL", default=None)  # background memory work; None → LLM_MODEL
 EPISODE_GAP_HOURS = env.int("EPISODE_GAP_HOURS", default=12)  # silence that closes a conversation episode
 # Contact memory extraction (one LLM call) runs this long after the first reply of a burst and covers the whole

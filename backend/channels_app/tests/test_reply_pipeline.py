@@ -10,7 +10,8 @@ from django.utils import timezone
 from accounts.models import Project
 from channels_app.models import Conversation, CustomerContact, Message
 from channels_app.facebook_client import split_text
-from channels_app import reply
+from channels_app import media_store, reply, tasks
+from billing.models import CreditTransaction
 from channels_app.reply import deliver_outbound, process_reply, recover_pending_deliveries, recover_stuck_replies
 from channels_app.service.conversation_service import create_conversation, ensure_contact_conversation
 from channels_app.service.message_service import create_ui_message
@@ -563,3 +564,70 @@ class RecoverStuckRepliesTest(PipelineBase):
 		with mock.patch("channels_app.reply.process_reply.delay") as delay:
 			recover_stuck_replies.apply()
 		delay.assert_called_once_with(str(self.conv.id), str(new_b.id))
+
+
+class AudioTurnTest(PipelineBase):
+	def audio_message(self, text="", meta=None):
+		return Message.objects.create(
+			project=self.project, contact=self.contact, conversation=self.conv, direction="in",
+			text=text, has_attachments=True,
+			attachment_info=[{"type": "audio", "path": "chat_media/p/a.ogg"}],
+			meta={"audio_reply": True, **(meta or {})}, status="pending",
+		)
+
+	FAILED = {"transcription": {"0": {"status": "failed"}}}
+	UNAFFORDABLE = {"transcription": {"0": {"status": "unaffordable"}}}
+
+	def test_newer_voice_note_gets_its_own_reply_task(self):
+		older = self.audio_message(meta=self.FAILED)
+		self.audio_message()
+		assert reply._newer_text_message(self.conv, older.created_at) is True
+
+	def test_text_during_transcription_is_answered_when_it_ends(self):
+		voice = self.audio_message()
+		text = Message.objects.create(project=self.project, contact=self.contact, conversation=self.conv,
+			direction="in", text="price?", status="pending")
+		with mock.patch("channels_app.media_store.transcribe_attachment"):
+			process_reply.apply(args=[str(self.conv.id), str(text.id)])   # sees untranscribed audio, waits
+		assert not Message.objects.filter(direction="out").exists()
+		media_store.update_message(str(voice.id), lambda m: (m.meta.update(transcription={"0": {"status": "transcribed"}}), setattr(m, "text", "do you have red")))
+		with mock.patch.object(media_store, "schedule_reply") as scheduled:
+			media_store.maybe_schedule_reply(str(voice.id))
+		assert scheduled.call_args.args[0].id == text.id   # the newest pending message, not the voice note
+
+	def test_a_turn_with_untranscribed_audio_queues_transcription_instead_of_replying(self):
+		msg = self.audio_message()
+		with mock.patch("channels_app.media_store.transcribe_attachment") as enqueued:
+			process_reply.apply(args=[str(self.conv.id), str(msg.id)])
+		assert enqueued.delay.called
+		assert not Message.objects.filter(direction="out").exists()
+		msg.refresh_from_db()
+		assert msg.status == "pending"      # stays recoverable, not completed
+
+	def test_failed_voice_note_sends_canned_reply_without_the_agent(self):
+		msg = self.audio_message(meta=self.FAILED)
+		process_reply.apply(args=[str(self.conv.id), str(msg.id)])
+		self.gen.assert_not_called()
+		assert Message.objects.filter(direction="out").last().text == settings.TRANSCRIPTION_FAILED_MESSAGE
+		assert CreditTransaction.objects.filter(action="reply").count() == 0
+
+	def test_unaffordable_voice_note_hands_off(self):
+		msg = self.audio_message(meta=self.UNAFFORDABLE)
+		process_reply.apply(args=[str(self.conv.id), str(msg.id)])
+		self.gen.assert_not_called()
+		assert Message.objects.filter(direction="out").last().text == settings.HANDOFF_MESSAGE
+		self.conv.refresh_from_db()
+		assert self.conv.handoff_reason == "out of credits"
+
+	def test_failed_audio_with_typed_text_still_answers_the_text(self):
+		msg = self.audio_message(text="how much is this", meta=self.FAILED)
+		process_reply.apply(args=[str(self.conv.id), str(msg.id)])
+		assert self.gen.called
+		assert Message.objects.filter(direction="out").last().text == self.reply_text
+
+	def test_transcript_suppresses_the_generic_attachment_note(self):
+		msg = self.audio_message()
+		msg.text = "hello"
+		msg.meta["transcription"] = {"0": {"status": "transcribed"}}
+		msg.save(update_fields=["text", "meta"])
+		assert "Message includes attachments" not in tasks.format_message_with_context(msg)
