@@ -6,6 +6,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
 from billing import service
+from billing.models import CreditTransaction
 from channels_app.models import CustomerContact, Message
 from channels_app.service.conversation_service import ensure_contact_conversation
 from knowledge.models import KnowledgeBase
@@ -51,3 +52,25 @@ class TranscriptionCreditsTest(TestCase):
 		txn = self._charge()
 		service.grant(self.project, -txn.amount, "adjust", key=f"transcription_refund:{self.msg.id}:0")
 		assert not any(c["action"] == "transcription" for c in self._credits())
+
+	def _total(self):
+		res = self.client.get(f"/api/channels/conversations/{self.conv.id}")
+		detail = Decimal(res.json()["data"]["conversation"]["credits_used"])
+		listed = self.client.get(f"/api/channels/conversations?project_slug={self.project.slug}").json()["data"]["conversations"]
+		row = next(c for c in listed if c["id"] == str(self.conv.id))
+		assert Decimal(str(row["credits_used"])) == detail
+		return detail
+
+	def test_total_excludes_refunded_transcription_charge(self):
+		txn = self._charge()
+		service.grant(self.project, -txn.amount, "adjust", key=f"transcription_refund:{self.msg.id}:0")
+		service.charge(self.project, "reply", key="reply-1", conversation=self.conv, trigger_message=self.msg)
+		assert self._total() == -CreditTransaction.objects.get(idempotency_key="reply-1").amount
+
+	def test_second_attachment_only_first_refunded(self):
+		first = self._charge()
+		second = service.charge(self.project, "transcription", key=f"transcription:{self.msg.id}:1", units=3,
+		                        conversation=self.conv, trigger_message=self.msg)
+		service.grant(self.project, -first.amount, "adjust", key=f"transcription_refund:{self.msg.id}:0")
+		assert self._credits() == [{"action": "transcription", "label": "Voice note transcription", "credits": f"{-second.amount:.2f}"}]
+		assert self._total() == -second.amount

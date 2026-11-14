@@ -20,7 +20,8 @@ from datetime import timedelta
 import requests
 from django.conf import settings
 from django.db import transaction
-from django.db.models import OuterRef, Subquery, Sum
+from django.db.models import Exists, OuterRef, Subquery, Sum, Value
+from django.db.models.functions import Concat, Substr
 from billing.models import ACTIONS, CreditTransaction
 from core.storage import delete_keys, presign_get, thumb_key
 from django.http import HttpResponseRedirect
@@ -224,6 +225,12 @@ def _conversation_dict(conv: Conversation) -> dict:
 	}
 
 
+def _charges(**filters):
+	"""Charge rows for a conversation total, leaving out transcription charges that were refunded."""
+	refund = CreditTransaction.objects.filter(idempotency_key=Concat(Value("transcription_refund:"), Substr(OuterRef("idempotency_key"), len("transcription:") + 1)))
+	return CreditTransaction.objects.filter(kind="charge", **filters).exclude(Exists(refund), action="transcription")
+
+
 def _credits_used(value) -> str:
 	return str(-(value or 0))
 
@@ -294,7 +301,7 @@ class ConversationListView(APIView):
 		conversations = Conversation.objects.filter(project=project).select_related(
 			"knowledge_base", "contact"
 		).prefetch_related("messages").annotate(credits_used=Subquery(
-			CreditTransaction.objects.filter(conversation=OuterRef("pk"), kind="charge").values("conversation").annotate(s=Sum("amount")).values("s")
+			_charges(conversation=OuterRef("pk")).values("conversation").annotate(s=Sum("amount")).values("s")
 		)).order_by("-updated_at")
 		if request.query_params.get("needs_human") == "1":
 			conversations = conversations.filter(handoff_at__gte=_paused_cutoff())
@@ -392,7 +399,7 @@ class ConversationDetailView(APIView):
 			}, status=status.HTTP_404_NOT_FOUND)
 		
 		_verify_project_access(request.user, conversation.project)
-		used = CreditTransaction.objects.filter(conversation=conversation, kind="charge").aggregate(s=Sum("amount"))["s"]
+		used = _charges(conversation=conversation).aggregate(s=Sum("amount"))["s"]
 
 		return Response({
 			"success": True,
