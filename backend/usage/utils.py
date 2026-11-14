@@ -153,7 +153,7 @@ def llm_costs(messages) -> tuple[Optional[Decimal], Optional[Decimal]]:
 
 def record_model_usage(
     project_id: str,
-    kind: Literal["embed", "image", "rerank"],
+    kind: Literal["embed", "image", "rerank", "transcription"],
     *,
     tokens: int,
     cost_usd: Optional[Decimal],
@@ -190,6 +190,44 @@ def record_model_usage(
             )
     except Exception as e:
         logger.error(f"Failed to record {kind} usage: {e}", exc_info=True)
+
+
+def start_attempt(
+	project_id: str,
+	model: str,
+	*,
+	seconds: int,
+	conversation_id: Optional[str] = None,
+	message_id: Optional[str] = None,
+	attachment_index: int = 0,
+) -> Optional[str]:
+	"""Write a transcription attempt row (cost unknown) before the provider call; a crash leaves it "started". Never raises."""
+	try:
+		with transaction.atomic():
+			event = UsageEvent.objects.create(
+				project_id=project_id, kind="transcription", tokens=0, cost_usd=None, cost_source="unknown",
+				provider="openrouter", model_name=model,
+				metadata={"status": "started", "seconds": seconds, "attachment_index": attachment_index},
+				conversation_id=conversation_id, message_id=_consistent_message_id(conversation_id, message_id),
+			)
+		return str(event.pk)
+	except Exception as e:
+		logger.error(f"Failed to start transcription attempt: {type(e).__name__}")
+		return None
+
+
+def finish_attempt(attempt_id: str, *, tokens: int, cost_usd: Optional[Decimal], status: str, usage: Optional[dict] = None) -> None:
+	"""Finalise an attempt row after the provider call. Never raises."""
+	try:
+		meta = UsageEvent.objects.filter(pk=attempt_id).values_list("metadata", flat=True).first()
+		if meta is None:
+			return
+		meta = {**meta, "status": status, **({"provider_usage": usage} if usage is not None else {})}
+		UsageEvent.objects.filter(pk=attempt_id).update(
+			tokens=tokens, cost_usd=cost_usd, cost_source="provider_reported" if cost_usd is not None else "unknown", metadata=meta,
+		)
+	except Exception as e:
+		logger.error(f"Failed to finish transcription attempt: {type(e).__name__}")
 
 
 def record_image_usage(
