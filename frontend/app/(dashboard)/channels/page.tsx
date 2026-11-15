@@ -16,6 +16,7 @@ import { kbOptionLabel } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
 import WebhookSettings from "@/components/channels/WebhookSettings";
 import CopyField from "@/components/channels/CopyField";
+import ConnectionStatusDialog from "@/components/channels/ConnectionStatusDialog";
 import { formatError } from "@/lib/errors";
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
@@ -64,6 +65,8 @@ export default function ChannelsPage() {
 
 	const projectSlug = projects.length > 0 ? projects[0].slug : "";
 	const projectId = projects.length > 0 ? String(projects[0].id) : "";
+
+	const [statusChannel, setStatusChannel] = useState<{ id: string; name: string } | null>(null);
 
 	const [imageSearchOn, setImageSearchOn] = useState(false);
 	useEffect(() => {
@@ -156,7 +159,7 @@ export default function ChannelsPage() {
 		setLoading(true);
 
 		try {
-			await channelApi.create({
+			const created = await channelApi.create({
 				project_slug: projectSlug,
 				name: formData.name,
 				channel: selectedPlatform.name,
@@ -165,6 +168,8 @@ export default function ChannelsPage() {
 			});
 
 			toast.success("Channel added successfully!");
+			const checkable = ["facebook", "instagram"].includes(selectedPlatform.name);
+			if (checkable) setStatusChannel({ id: created.data.channel.id, name: formData.name });
 			setAddDialogOpen(false);
 			resetForm();
 			fetchChannels();
@@ -193,6 +198,9 @@ export default function ChannelsPage() {
 			});
 
 			toast.success("Channel updated successfully!");
+			if (["facebook", "instagram"].includes(editingChannel.channel)) {
+				setStatusChannel({ id: editingChannel.id, name: formData.name || editingChannel.name });
+			}
 			setEditDialogOpen(false);
 			setEditingChannel(null);
 			resetForm();
@@ -451,6 +459,16 @@ export default function ChannelsPage() {
 										</div>
 									</div>
 									<div className="flex gap-1">
+										{["facebook", "instagram"].includes(channel.channel) && (
+											<Button
+												variant="ghost"
+												size="icon"
+												title="Check connection"
+												onClick={() => setStatusChannel({ id: channel.id, name: channel.name })}
+											>
+												<CheckCircle2 className="h-4 w-4" />
+											</Button>
+										)}
 										<Button
 											variant="ghost"
 											size="icon"
@@ -625,6 +643,13 @@ export default function ChannelsPage() {
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+
+			<ConnectionStatusDialog
+				channelId={statusChannel?.id ?? null}
+				channelName={statusChannel?.name ?? ""}
+				open={statusChannel !== null}
+				onOpenChange={(open) => { if (!open) setStatusChannel(null); }}
+			/>
 
 			{/* Edit Channel Dialog */}
 			<Dialog open={editDialogOpen} onOpenChange={(open) => {

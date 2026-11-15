@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
+from .meta_status import GraphError, check_channel, subscribe_page
 from .media import PHOTO_ERROR, UPLOAD_PREFIXES, MediaError, has_photo, is_own_upload, photo_keys, presign_chat_photo, uploaded_photo_ok
 from .media_store import store_message_media, store_outbound_photo
 from agents.image_search import NotAnImage
@@ -1255,3 +1256,38 @@ class ProjectWebhookTestView(APIView):
 		if code is None or not 200 <= code < 300:
 			return _error("delivery_failed", "Your endpoint did not accept the test event (no 2xx response)", status.HTTP_502_BAD_GATEWAY)
 		return Response({"success": True, "data": {"ok": True}})
+
+
+class ChannelStatusView(APIView):
+	"""Live Meta check of a saved Facebook or Instagram channel: permissions and subscription."""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request, channel_id):
+		channel = ChannelCredential.objects.filter(id=channel_id).select_related("project").first()
+		if not channel:
+			return _error("not_found", "Channel not found", status.HTTP_404_NOT_FOUND)
+
+		_verify_project_access(request.user, channel.project)
+		creds = channel.get_credentials()
+		return Response({"success": True, "data": check_channel(str(channel.channel), creds)})
+
+
+class ChannelSubscribeView(APIView):
+	"""Subscribe a saved Facebook or Instagram channel's Page to our messages webhook, then return fresh status."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, channel_id):
+		channel = ChannelCredential.objects.filter(id=channel_id).select_related("project").first()
+		if not channel:
+			return _error("not_found", "Channel not found", status.HTTP_404_NOT_FOUND)
+
+		_verify_project_access(request.user, channel.project)
+		if str(channel.channel) not in ("facebook", "instagram"):
+			return _error("unsupported", "Only Facebook and Instagram channels can be subscribed", status.HTTP_400_BAD_REQUEST)
+
+		creds = channel.get_credentials()
+		try:
+			subscribe_page(creds)
+		except GraphError as e:
+			return _error("subscribe_failed", str(e), status.HTTP_502_BAD_GATEWAY)
+		return Response({"success": True, "data": check_channel(str(channel.channel), creds)})
