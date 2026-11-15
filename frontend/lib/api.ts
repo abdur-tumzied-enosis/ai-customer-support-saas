@@ -516,6 +516,20 @@ export type Platform = {
 	credential_schema: CredentialField[];
 };
 
+// Live Meta status of a saved Facebook or Instagram channel
+export type ChannelCheck = {
+	key: string;
+	label: string;
+	status: "ok" | "missing" | "error";
+	detail: string;
+};
+
+export type ChannelStatus = {
+	ok: boolean;
+	error: string | null;
+	checks: ChannelCheck[];
+};
+
 // Channel Credential types
 export type ChannelCredential = {
 	id: string;
@@ -598,6 +612,16 @@ export const channelApi = {
 	delete: async (channelId: string) => {
 		return apiFetch(`/api/channels/channels/${channelId}`, {
 			method: "DELETE",
+		});
+	},
+
+	status: async (channelId: string) => {
+		return apiFetch<ChannelStatus>(`/api/channels/channels/${channelId}/status`);
+	},
+
+	subscribe: async (channelId: string) => {
+		return apiFetch<ChannelStatus>(`/api/channels/channels/${channelId}/subscribe`, {
+			method: "POST",
 		});
 	},
 

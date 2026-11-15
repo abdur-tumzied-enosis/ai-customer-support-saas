@@ -21,6 +21,8 @@ from .api import (
 	ProjectWebhookView,
 	ProjectWebhookRotateView,
 	ProjectWebhookTestView,
+	ChannelStatusView,
+	ChannelSubscribeView,
 )
 
 urlpatterns = [
@@ -30,6 +32,8 @@ urlpatterns = [
 	# Channel endpoints (new CRUD)
 	path("channels", ChannelListCreateView.as_view(), name="channel-list-create"),
 	path("channels/<uuid:channel_id>", ChannelDetailView.as_view(), name="channel-detail"),
+	path("channels/<uuid:channel_id>/status", ChannelStatusView.as_view(), name="channel-status"),
+	path("channels/<uuid:channel_id>/subscribe", ChannelSubscribeView.as_view(), name="channel-subscribe"),
 	
 	# Legacy endpoints
 	path("facebook/config", FacebookConfigView.as_view(), name="facebook-config"),

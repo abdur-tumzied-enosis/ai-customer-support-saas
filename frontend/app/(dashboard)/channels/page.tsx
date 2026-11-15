@@ -10,12 +10,13 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Facebook, Instagram, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle, Copy, Check, ExternalLink, RefreshCw } from "lucide-react";
+import { Facebook, Instagram, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle, Copy, Check, ExternalLink, RefreshCw, BookOpen } from "lucide-react";
 import { channelApi, featuresApi, platformApi, knowledgeBaseApi, type ChannelCredential, type KnowledgeBase, type Platform } from "@/lib/api";
 import { kbOptionLabel } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
 import WebhookSettings from "@/components/channels/WebhookSettings";
 import CopyField from "@/components/channels/CopyField";
+import ConnectionStatusDialog from "@/components/channels/ConnectionStatusDialog";
 import { formatError } from "@/lib/errors";
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
@@ -64,6 +65,8 @@ export default function ChannelsPage() {
 
 	const projectSlug = projects.length > 0 ? projects[0].slug : "";
 	const projectId = projects.length > 0 ? String(projects[0].id) : "";
+
+	const [statusChannel, setStatusChannel] = useState<{ id: string; name: string } | null>(null);
 
 	const [imageSearchOn, setImageSearchOn] = useState(false);
 	useEffect(() => {
@@ -156,7 +159,7 @@ export default function ChannelsPage() {
 		setLoading(true);
 
 		try {
-			await channelApi.create({
+			const created = await channelApi.create({
 				project_slug: projectSlug,
 				name: formData.name,
 				channel: selectedPlatform.name,
@@ -165,6 +168,8 @@ export default function ChannelsPage() {
 			});
 
 			toast.success("Channel added successfully!");
+			const checkable = ["facebook", "instagram"].includes(selectedPlatform.name);
+			if (checkable) setStatusChannel({ id: created.data.channel.id, name: formData.name });
 			setAddDialogOpen(false);
 			resetForm();
 			fetchChannels();
@@ -193,6 +198,9 @@ export default function ChannelsPage() {
 			});
 
 			toast.success("Channel updated successfully!");
+			if (["facebook", "instagram"].includes(editingChannel.channel)) {
+				setStatusChannel({ id: editingChannel.id, name: formData.name || editingChannel.name });
+			}
 			setEditDialogOpen(false);
 			setEditingChannel(null);
 			resetForm();
@@ -404,13 +412,38 @@ export default function ChannelsPage() {
 						Connect messaging platforms to receive and manage customer conversations
 					</p>
 				</div>
-				<Button onClick={openAddDialog}>
-					<Plus className="mr-2 h-4 w-4" />
-					Add Channel
-				</Button>
+				<div className="flex gap-2">
+					<Button variant="outline" asChild>
+						<Link href="/docs/connect-channels" target="_blank">
+							<BookOpen className="mr-2 h-4 w-4" />
+							Setup guide
+						</Link>
+					</Button>
+					<Button onClick={openAddDialog}>
+						<Plus className="mr-2 h-4 w-4" />
+						Add Channel
+					</Button>
+				</div>
 			</div>
 
-
+			<Card className="border-primary/40 bg-primary/5">
+				<CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+					<div className="flex items-start gap-3">
+						<BookOpen className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+						<div>
+							<p className="font-medium">New to connecting channels? Start with the setup guide.</p>
+							<p className="text-sm text-muted-foreground">
+								Step by step for Messenger, Instagram and WhatsApp, including what to set up in Meta first.
+							</p>
+						</div>
+					</div>
+					<Button asChild className="shrink-0">
+						<Link href="/docs/connect-channels" target="_blank">
+							Open the setup guide <ExternalLink className="ml-2 h-4 w-4" />
+						</Link>
+					</Button>
+				</CardContent>
+			</Card>
 
 			{/* Loading State */}
 			{loading && channels.length === 0 && (
@@ -451,6 +484,16 @@ export default function ChannelsPage() {
 										</div>
 									</div>
 									<div className="flex gap-1">
+										{["facebook", "instagram"].includes(channel.channel) && (
+											<Button
+												variant="ghost"
+												size="icon"
+												title="Check connection"
+												onClick={() => setStatusChannel({ id: channel.id, name: channel.name })}
+											>
+												<CheckCircle2 className="h-4 w-4" />
+											</Button>
+										)}
 										<Button
 											variant="ghost"
 											size="icon"
@@ -625,6 +668,13 @@ export default function ChannelsPage() {
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+
+			<ConnectionStatusDialog
+				channelId={statusChannel?.id ?? null}
+				channelName={statusChannel?.name ?? ""}
+				open={statusChannel !== null}
+				onOpenChange={(open) => { if (!open) setStatusChannel(null); }}
+			/>
 
 			{/* Edit Channel Dialog */}
 			<Dialog open={editDialogOpen} onOpenChange={(open) => {
