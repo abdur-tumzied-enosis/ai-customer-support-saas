@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Facebook, Instagram, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle, Copy, Check, ExternalLink, RefreshCw } from "lucide-react";
+import { Facebook, Instagram, MessageCircle, CheckCircle2, XCircle, Loader2, Plus, Pencil, Trash2, AlertCircle, Copy, Check, ExternalLink, RefreshCw, BookOpen } from "lucide-react";
 import { channelApi, featuresApi, platformApi, knowledgeBaseApi, type ChannelCredential, type KnowledgeBase, type Platform } from "@/lib/api";
 import { kbOptionLabel } from "@/lib/knowledgeBase";
 import { useAuth } from "@/hooks/useAuth";
@@ -412,13 +412,38 @@ export default function ChannelsPage() {
 						Connect messaging platforms to receive and manage customer conversations
 					</p>
 				</div>
-				<Button onClick={openAddDialog}>
-					<Plus className="mr-2 h-4 w-4" />
-					Add Channel
-				</Button>
+				<div className="flex gap-2">
+					<Button variant="outline" asChild>
+						<Link href="/docs/connect-channels" target="_blank">
+							<BookOpen className="mr-2 h-4 w-4" />
+							Setup guide
+						</Link>
+					</Button>
+					<Button onClick={openAddDialog}>
+						<Plus className="mr-2 h-4 w-4" />
+						Add Channel
+					</Button>
+				</div>
 			</div>
 
-
+			<Card className="border-primary/40 bg-primary/5">
+				<CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+					<div className="flex items-start gap-3">
+						<BookOpen className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+						<div>
+							<p className="font-medium">New to connecting channels? Start with the setup guide.</p>
+							<p className="text-sm text-muted-foreground">
+								Step by step for Messenger, Instagram and WhatsApp, including what to set up in Meta first.
+							</p>
+						</div>
+					</div>
+					<Button asChild className="shrink-0">
+						<Link href="/docs/connect-channels" target="_blank">
+							Open the setup guide <ExternalLink className="ml-2 h-4 w-4" />
+						</Link>
+					</Button>
+				</CardContent>
+			</Card>
 
 			{/* Loading State */}
 			{loading && channels.length === 0 && (
