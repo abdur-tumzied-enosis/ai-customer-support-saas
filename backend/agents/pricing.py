@@ -24,6 +24,17 @@ def _mtok(value):
 	return None if per_mtok >= _MAX_MTOK else per_mtok.quantize(Decimal("0.000001"))
 
 
+def _per_second(value):
+	"""OpenRouter's per-second USD string (audio models) → Decimal(18,12), or None when missing or invalid."""
+	try:
+		d = Decimal(str(value))
+	except InvalidOperation:
+		return None
+	if not d.is_finite() or d < 0 or d >= 10 ** 6:
+		return None
+	return d.quantize(Decimal("0.000000000001"))
+
+
 def _entry_prices(model):
 	pricing = model.get("pricing") or {}
 	return _mtok(pricing.get("prompt")), _mtok(pricing.get("completion"))
@@ -53,13 +64,17 @@ def sync_openrouter_prices(api_key=None, timeout=30):
 				continue
 			entry = entries[row.name]
 			input_price, output_price = _entry_prices(entry)
+			per_second = None
+			if row.kind == "transcription":  # audio models bill per second of audio: "prompt" is not a per-token price
+				per_second = _per_second((entry.get("pricing") or {}).get("prompt"))
+				input_price = None
 			modalities = _entry_modalities(entry)
-			new = (input_price, output_price, modalities)
-			if new == (row.input_price_per_mtok, row.output_price_per_mtok, row.input_modalities):
+			new = (input_price, per_second, output_price, modalities)
+			if new == (row.input_price_per_mtok, row.input_price_per_second, row.output_price_per_mtok, row.input_modalities):
 				unchanged += 1
 				continue
 			AIModel.objects.filter(pk=row.pk).update(
-				input_price_per_mtok=input_price, output_price_per_mtok=output_price,
+				input_price_per_mtok=input_price, input_price_per_second=per_second, output_price_per_mtok=output_price,
 				input_modalities=modalities, supports_vision="image" in modalities,
 			)
 			updated += 1

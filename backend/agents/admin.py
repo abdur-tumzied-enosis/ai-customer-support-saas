@@ -9,9 +9,9 @@ from .models import AIModel, ModelConfig
 
 @admin.register(AIModel)
 class AIModelAdmin(admin.ModelAdmin):
-	list_display = ("name", "kind", "provider", "input_price_per_mtok", "output_price_per_mtok", "input_modalities", "supports_vision")
+	list_display = ("name", "kind", "provider", "input_price_per_mtok", "input_price_per_second", "output_price_per_mtok", "input_modalities", "supports_vision")
 	list_filter = ("kind", "provider", "supports_vision")  # input_modalities is JSON: not a usable list_filter
-	readonly_fields = ("input_modalities", "supports_vision")  # synced from OpenRouter; never hand-set
+	readonly_fields = ("input_modalities", "supports_vision", "input_price_per_second")  # synced from OpenRouter; never hand-set
 	search_fields = ("name",)
 	change_list_template = "admin/agents/aimodel/change_list.html"
 
