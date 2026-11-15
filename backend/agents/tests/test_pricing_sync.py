@@ -104,7 +104,9 @@ class SyncOpenRouterPricesTest(TestCase):
 		]
 		result = sync_openrouter_prices()
 		asr.refresh_from_db()
-		assert asr.input_price_per_mtok == Decimal("61.111111")
+		# OpenRouter's prompt price for scribe-v2 is USD per audio second ($0.22/h): stored per second, never per MTok
+		assert asr.input_price_per_mtok is None
+		assert asr.input_price_per_second == Decimal("0.000061111111")
 		assert "elevenlabs/scribe-v2" not in result["not_found"]
 
 

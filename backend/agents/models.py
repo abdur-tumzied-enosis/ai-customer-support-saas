@@ -37,6 +37,7 @@ class AIModel(models.Model):
 	provider = models.CharField(max_length=16, choices=PROVIDER_CHOICES)
 	name = models.CharField(max_length=200, help_text="Provider's model id, e.g. deepseek/deepseek-v4.1-flash or gemini-3.8-flash")
 	input_price_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True, help_text="USD per 1M input tokens")
+	input_price_per_second = models.DecimalField(max_digits=18, decimal_places=12, null=True, blank=True, help_text="USD per second of audio (transcription models)")
 	output_price_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True, help_text="USD per 1M output tokens")
 	image_price_per_mtok = models.DecimalField(max_digits=12, decimal_places=6, null=True, blank=True, help_text="USD per 1M image tokens")
 	notes = models.TextField(blank=True)
