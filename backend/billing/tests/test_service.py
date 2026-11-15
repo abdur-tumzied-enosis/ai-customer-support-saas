@@ -163,3 +163,48 @@ class ConcurrencyTests(ServiceBase, TransactionTestCase):
 		service.grant(self.project, Decimal("1"), "grant")
 		self._run(5)
 		self.assertEqual(self.mail.call_count, 1)
+
+
+class ChargeIfAffordableTest(TestCase):
+	def setUp(self):
+		self.project = Project.objects.create(name="P", slug="p-afford")
+
+	def test_charges_when_balance_covers_it(self):
+		service.grant(self.project, Decimal("10"), "adjust", key="seed")
+		txn = service.charge_if_affordable(self.project, "reply", key="a", units=2)
+		assert txn.amount == Decimal("-2.00")
+		assert service.balance_of(self.project) == Decimal("8.00")
+
+	def test_raises_past_the_overdraft_and_writes_nothing(self):
+		PricingSettings.objects.filter(pk=1).update(overdraft_credits=Decimal("1"))
+		with self.assertRaises(service.InsufficientCredits):
+			service.charge_if_affordable(self.project, "reply", key="a", units=2)
+		assert not CreditTransaction.objects.filter(idempotency_key="a").exists()
+		assert service.balance_of(self.project) == Decimal("0")
+
+	def test_zero_price_returns_none_and_is_not_unaffordable(self):
+		ActionPrice.objects.filter(action="reply").update(credits=Decimal("0"))
+		PricingSettings.objects.filter(pk=1).update(overdraft_credits=Decimal("0"))
+		assert service.charge_if_affordable(self.project, "reply", key="a", units=3) is None
+		assert not CreditTransaction.objects.filter(idempotency_key="a").exists()
+
+	def test_retry_of_a_charge_that_drained_the_wallet_returns_it(self):
+		# the first charge lowered the balance; a retry must find it, not refuse it as unaffordable
+		PricingSettings.objects.filter(pk=1).update(overdraft_credits=Decimal("0"))
+		service.grant(self.project, Decimal("10"), "adjust", key="seed")
+		first = service.charge_if_affordable(self.project, "reply", key="a", units=8)
+		second = service.charge_if_affordable(self.project, "reply", key="a", units=8)
+		assert second.pk == first.pk
+		assert service.balance_of(self.project) == Decimal("2.00")
+
+	def test_allows_the_overdraft_floor_itself(self):
+		PricingSettings.objects.filter(pk=1).update(overdraft_credits=Decimal("5"))
+		assert service.charge_if_affordable(self.project, "reply", key="a", units=5) is not None
+		assert service.balance_of(self.project) == Decimal("-5.00")
+
+	def test_repeated_key_returns_the_existing_row(self):
+		service.grant(self.project, Decimal("10"), "adjust", key="seed")
+		first = service.charge_if_affordable(self.project, "reply", key="a", units=2)
+		second = service.charge_if_affordable(self.project, "reply", key="a", units=2)
+		assert second.pk == first.pk
+		assert service.balance_of(self.project) == Decimal("8.00")

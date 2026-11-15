@@ -137,6 +137,35 @@ def get_user_name(page_access_token: str, psid: str, fields: str = "name") -> st
 WHATSAPP_MAX_TEXT_CHARS = 4000  # Cloud API rejects text bodies over 4096 chars
 
 
+def send_image_message(page_access_token: str, recipient_psid: str, image_url: str) -> dict:
+	"""Send an image via the Messenger/Instagram Send API, by URL (Meta fetches the bytes itself).
+	Same return contract as send_text_message: {"message_id": ...}, {"error": ...}, {"unknown": True} when the
+	outcome may have landed, or {} on a definite failure."""
+	headers = {
+		"Authorization": f"Bearer {page_access_token}",
+		"Content-Type": "application/json; charset=utf-8",
+	}
+	payload = {
+		"recipient": {"id": recipient_psid},
+		"message": {"attachment": {"type": "image", "payload": {"url": image_url}}},
+	}
+	try:
+		resp = requests.post(FACEBOOK_API_URL, headers=headers, json=payload, timeout=10)
+		if resp.status_code != 200:
+			logger.error(f"Facebook image API error: {resp.status_code}")
+			return {"unknown": True} if resp.status_code >= 500 else {}
+		response_data = resp.json()
+		if "error" in response_data:
+			logger.error(f"Facebook image API error response: {response_data['error']}")
+			return {}
+		return response_data
+	except requests.exceptions.RequestException as e:
+		logger.error(f"Failed to send Facebook image: {type(e).__name__}")
+		if never_sent(e) or (e.response is not None and e.response.status_code < 500):
+			return {}
+		return {"unknown": True}
+
+
 def send_whatsapp_text(access_token: str, phone_number_id: str, to: str, text: str, callback_data: str = "") -> dict:
 	"""Send a text via the WhatsApp Cloud API. {"message_id": ...} on success, {"error": <Meta's message>} on failure;
 	failures that may still have delivered (timeout, 5xx) add "unknown": True. callback_data comes back on the message's
@@ -161,3 +190,27 @@ def send_whatsapp_text(access_token: str, phone_number_id: str, to: str, text: s
 	error = data.get("error") or {}
 	logger.error(f"WhatsApp API error: {resp.status_code} - {error}")
 	return {"error": error.get("message") or "whatsapp send failed", **({"unknown": True} if resp.status_code >= 500 else {})}
+
+
+def send_whatsapp_image(access_token: str, phone_number_id: str, to: str, image_url: str, callback_data: str = "") -> dict:
+	"""Send an image via the WhatsApp Cloud API by link (Meta fetches the bytes itself). Same return contract as
+	send_whatsapp_text. Free-form sends only reach customers within 24h of their last message."""
+	payload = {"messaging_product": "whatsapp", "to": to, "type": "image", "image": {"link": image_url}}
+	if callback_data:
+		payload["biz_opaque_callback_data"] = callback_data
+	try:
+		resp = requests.post(
+			f"{GRAPH_API_URL}/{phone_number_id}/messages",
+			headers={"Authorization": f"Bearer {access_token}"},
+			json=payload,
+			timeout=10,
+		)
+		data = resp.json()
+	except (requests.RequestException, ValueError) as e:
+		logger.error(f"WhatsApp image send failed: {type(e).__name__}")
+		return {"error": "whatsapp image send failed", **({} if never_sent(e) else {"unknown": True})}
+	if resp.status_code == 200 and data.get("messages"):
+		return {"message_id": data["messages"][0]["id"]}
+	error = data.get("error") or {}
+	logger.error(f"WhatsApp image API error: {resp.status_code} - {error}")
+	return {"error": error.get("message") or "whatsapp image send failed", **({"unknown": True} if resp.status_code >= 500 else {})}

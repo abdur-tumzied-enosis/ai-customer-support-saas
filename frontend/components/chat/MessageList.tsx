@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { API_BASE_URL } from "@/lib/api";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { User, Bot, Headphones } from "lucide-react";
 import { formatCredits } from "@/lib/billing-api";
@@ -9,6 +10,7 @@ export type ChatMessage = {
 	content: string;
 	sender?: "customer" | "bot" | "staff";
 	hasPhoto?: boolean;
+	photoUrls?: string[];
 	photoMatches?: string;
 	credits?: { label: string; credits: string }[];
 };
@@ -16,6 +18,8 @@ export type ChatMessage = {
 type MessageListProps = {
 	messages: ChatMessage[];
 };
+
+const withApiBase = (path: string) => `${API_BASE_URL}${path}`;
 
 export default function MessageList({ messages }: MessageListProps) {
 	return (
@@ -67,7 +71,23 @@ export default function MessageList({ messages }: MessageListProps) {
 											: "bg-muted text-foreground rounded-bl-md border border-border/50"
 								)}
 							>
-								{m.hasPhoto && <span className="block">📷 Photo</span>}
+								{m.photoUrls?.length ? (
+									<div className="flex flex-wrap gap-2">
+										{m.photoUrls.map((url) => (
+											<a key={url} href={withApiBase(url)} target="_blank" rel="noreferrer" className="block">
+												{/* eslint-disable-next-line @next/next/no-img-element */}
+												<img
+													src={`${withApiBase(url)}&size=thumb`}
+													alt="Photo"
+													loading="lazy"
+													className="max-h-60 rounded-lg object-cover"
+												/>
+											</a>
+										))}
+									</div>
+								) : (
+									m.hasPhoto && <span className="block">📷 Photo</span>
+								)}
 								{m.content}
 							</div>
 							{m.photoMatches && <span className="text-xs text-muted-foreground">{m.photoMatches}</span>}

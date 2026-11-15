@@ -128,9 +128,14 @@ CELERY_TASK_ROUTES = {
     "channels_app.reply.deliver_outbound": {"queue": "replies"},
     "channels_app.reply.recover_pending_deliveries": {"queue": "replies"},
     "channels_app.media_store.store_message_media": {"queue": "replies"},  # on the reply path for photos
+    "channels_app.media_store.transcribe_attachment": {"queue": "replies"},  # on the reply path for voice notes
 }
 STUCK_JOB_THRESHOLD_MINUTES =env.int("STUCK_JOB_THRESHOLD_MINUTES", default=120)
 CELERY_BEAT_SCHEDULE = {
+    'reconcile-transcriptions': {
+        'task': 'channels_app.media_store.reconcile_transcriptions',
+        'schedule': 600,
+    },
     'recover-stuck-ingestion-jobs': {
         'task': 'knowledge.tasks.recover_stuck_jobs',
         'schedule': 600,  # every 10 minutes
@@ -179,6 +184,11 @@ QDRANT_API_KEY = env("QDRANT_API_KEY", default=None)  # Optional: for production
 # Product image search. Master switch (platform kill switch); per-tenant grant is Project.image_search_allowed.
 IMAGE_SEARCH_ENABLED = env.bool("IMAGE_SEARCH_ENABLED", default=False)
 IMAGE_SEARCH_MIN_SCORE = env.float("IMAGE_SEARCH_MIN_SCORE", default=0.80)
+# Voice-note transcription. Master switch; TRANSCRIPTION_PROJECTS (project slugs) limits a pilot, empty means every project.
+TRANSCRIPTION_ENABLED = env.bool("TRANSCRIPTION_ENABLED", default=False)
+TRANSCRIPTION_PROJECTS = env.list("TRANSCRIPTION_PROJECTS", default=[])
+TRANSCRIPTION_MODEL = env("TRANSCRIPTION_MODEL", default="")
+TRANSCRIPTION_MAX_SECONDS = env.int("TRANSCRIPTION_MAX_SECONDS", default=300)
 # Vision fallback for customer photos. Master switch; per-tenant grant is Project.vision_fallback_allowed.
 VISION_FALLBACK_ENABLED = env.bool("VISION_FALLBACK_ENABLED", default=False)
 VISION_BORDERLINE_MARGIN = env.float("VISION_BORDERLINE_MARGIN", default=0.10)
@@ -222,6 +232,8 @@ LLM_THINKING_LEVEL = env("LLM_THINKING_LEVEL", default=None)
 HANDOFF_AUTO_RESUME_HOURS = env.int("HANDOFF_AUTO_RESUME_HOURS", default=24)
 HANDOFF_MESSAGE = env("HANDOFF_MESSAGE", default="I've passed this to our team — a person will reply here soon.")
 HANDOFF_MESSAGE_BN = env("HANDOFF_MESSAGE_BN", default="আপনার বিষয়টি আমাদের টিমকে জানিয়েছি — একজন প্রতিনিধি শীঘ্রই এখানে উত্তর দেবেন।")  # sent when the customer writes in Bengali script
+TRANSCRIPTION_FAILED_MESSAGE = env("TRANSCRIPTION_FAILED_MESSAGE", default="Sorry, I couldn't make out your voice message. Could you type it out for me?")
+TRANSCRIPTION_FAILED_MESSAGE_BN = env("TRANSCRIPTION_FAILED_MESSAGE_BN", default="দুঃখিত, আপনার ভয়েস মেসেজটি আমি বুঝতে পারিনি। অনুগ্রহ করে লিখে পাঠাবেন?")
 MEMORY_LLM_MODEL = env("MEMORY_LLM_MODEL", default=None)  # background memory work; None → LLM_MODEL
 EPISODE_GAP_HOURS = env.int("EPISODE_GAP_HOURS", default=12)  # silence that closes a conversation episode
 # Contact memory extraction (one LLM call) runs this long after the first reply of a burst and covers the whole

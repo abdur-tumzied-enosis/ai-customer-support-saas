@@ -143,6 +143,7 @@ class UsageEvent(models.Model):
 		("embed", "Embedding"),
 		("image", "Image"),
 		("rerank", "Rerank"),
+		("transcription", "Transcription"),
 	]
 	project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="usage_events")
 	kind = models.CharField(max_length=16, choices=KIND_CHOICES)

@@ -8,7 +8,7 @@ from accounts.models import Project
 from channels_app.models import META_CHANNELS, ChannelCredential, CustomerContact, Message, meta_credentials
 from channels_app.facebook_client import get_user_name
 from channels_app.image_reply import wants_photo_reply
-from channels_app.media import has_storable_media
+from channels_app.media import has_storable_media, wants_audio_reply
 from channels_app.media_store import store_message_media
 from channels_app.reply import schedule_reply
 from channels_app.service.conversation_service import ensure_contact_conversation
@@ -177,7 +177,8 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 
 			# Reply to text messages, and to photos when image search is on for this page; other attachments are only stored
 			photo_reply = wants_photo_reply(project, attachment_info, cred.image_search_enabled)
-			wants_reply = (bool(text) and not has_attachments) or photo_reply
+			audio_reply = wants_audio_reply(project, attachment_info)
+			wants_reply = (bool(text) and not has_attachments) or photo_reply or audio_reply
 
 			# Create message record using service
 			msg = create_inbound_message(
@@ -190,7 +191,7 @@ def handle_facebook_message(payload: Dict[str, Any]) -> None:
 				is_reply=is_reply,
 				has_attachments=has_attachments,
 				attachment_info=attachment_info,
-				meta={**evt, "photo_reply": True} if photo_reply else evt,  # Store full event for reference
+				meta={**evt, **({"photo_reply": True} if photo_reply else {}), **({"audio_reply": True} if audio_reply else {})},  # Store full event for reference
 				conversation=conversation,
 				status="pending" if wants_reply else "completed",  # pending until answered (recover_stuck_replies)
 			)

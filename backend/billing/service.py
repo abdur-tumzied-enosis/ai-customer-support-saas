@@ -109,6 +109,27 @@ def charge(project, action, *, key: str, units: int = 1, conversation=None, trig
 		)
 
 
+def charge_if_affordable(project, action, *, key: str, units: int = 1, conversation=None, trigger_message=None, result_message=None):
+	"""Charge only if the result stays within the overdraft. The check and the write share one wallet lock,
+	so two concurrent callers cannot both pass. A repeated key returns the existing row before any check.
+	Returns None for a zero-priced action; raises InsufficientCredits when unaffordable."""
+	price = price_of(action)
+	if price == 0:
+		return None
+	amount = price * units
+	with transaction.atomic():
+		wallet = _lock(project)
+		existing = CreditTransaction.objects.filter(idempotency_key=key).first()
+		if existing:  # before the check: this charge may be what lowered the balance
+			return existing
+		if wallet.balance - amount < -PricingSettings.get().overdraft_credits:
+			raise InsufficientCredits(amount, wallet.balance)
+		return _post(
+			wallet, -amount, kind="charge", action=action, idempotency_key=key,
+			conversation=conversation, trigger_message=trigger_message, result_message=result_message,
+		)
+
+
 def charge_affordable(project, action, rows: list, create) -> int:
 	"""Create as many of `rows` as the balance covers (never overdrawing) and charge one row each."""
 	price = price_of(action)

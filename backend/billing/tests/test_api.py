@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 
@@ -105,6 +105,7 @@ class TransactionsTest(BillingApiBase):
 
 
 class PricingTest(TestCase):
+	@override_settings(TRANSCRIPTION_ENABLED=True)
 	def test_public_and_clean(self):
 		ActionPrice.objects.update_or_create(action="reply", defaults={"credits": Decimal("1"), "notes": "secret cost note"})
 		ActionPrice.objects.update_or_create(action="photo_index", defaults={"credits": Decimal("0")})
@@ -119,9 +120,42 @@ class PricingTest(TestCase):
 		data = res.json()["data"]
 		self.assertEqual([p["name"] for p in data["packages"]], ["Starter"])
 		self.assertEqual(set(data["packages"][0]), {"id", "name", "credits", "bonus_credits", "price", "currency", "features", "highlighted"})
-		self.assertEqual([a["action"] for a in data["actions"]], ["reply", "photo_search", "product_import", "order_setup"])
+		self.assertEqual([a["action"] for a in data["actions"]], ["reply", "photo_search", "product_import", "order_setup", "transcription"])
 		self.assertEqual(data["actions"][0], {"action": "reply", "label": "AI reply", "credits": "1.00"})
 		self.assertEqual(data["signup_credits"], f"{PricingSettings.get().signup_credits:.2f}")
+
+
+class TranscriptionPriceTest(BillingApiBase):
+	def test_action_row_seeded_at_one_credit(self):
+		row = ActionPrice.objects.get(action="transcription")
+		assert row.credits == Decimal("1")
+
+	@override_settings(TRANSCRIPTION_ENABLED=False)
+	def test_pricing_hides_transcription_while_off(self):
+		res = self.client.get("/api/billing/pricing/")
+		assert "transcription" not in [a["action"] for a in res.json()["data"]["actions"]]
+
+	def test_rejects_seconds_per_credit_below_one(self):
+		cfg = PricingSettings.get()
+		cfg.transcription_seconds_per_credit = Decimal("0")
+		with self.assertRaises(ValueError):
+			cfg.save()
+
+	def test_seconds_per_credit_must_be_whole(self):
+		cfg = PricingSettings.get()
+		cfg.transcription_seconds_per_credit = Decimal("2.5")
+		with self.assertRaises(ValueError):
+			cfg.save()
+		assert PricingSettings.get().transcription_seconds_per_credit == Decimal("5")
+		cfg.transcription_seconds_per_credit = Decimal("5")
+		cfg.save()
+
+	@override_settings(TRANSCRIPTION_ENABLED=True)
+	def test_pricing_row_carries_per_seconds(self):
+		res = self.client.get("/api/billing/pricing/")
+		row = next(a for a in res.json()["data"]["actions"] if a["action"] == "transcription")
+		assert row["per_seconds"] == 5
+		assert row["credits"] == "1.00"
 
 
 class ConversationCreditsTest(BillingApiBase):

@@ -3,6 +3,7 @@ from unittest import mock
 
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.test import override_settings
 from PIL import Image
 
 from channels_app.media import MediaError, fetch_photo, has_storable_media
@@ -152,6 +153,21 @@ class InboundDispatchTest(WhatsAppBase):
 	def test_whatsapp_audio_message_queues_store(self):
 		handle_whatsapp_message(payload(wa_audio()))
 		msg = Message.objects.get(external_message_id="wamid.voice")
+		self.store_delay.assert_called_once_with(str(msg.id), False)
+		self.schedule.assert_not_called()
+
+	@override_settings(TRANSCRIPTION_ENABLED=True)
+	def test_whatsapp_audio_requests_reply_when_transcription_on(self):
+		handle_whatsapp_message(payload(wa_audio()))
+		msg = Message.objects.get(external_message_id="wamid.voice")
+		assert msg.status == "pending" and msg.meta["audio_reply"] is True
+		self.store_delay.assert_called_once_with(str(msg.id), True)
+		self.schedule.assert_not_called()
+
+	def test_whatsapp_audio_unchanged_when_transcription_off(self):
+		handle_whatsapp_message(payload(wa_audio()))
+		msg = Message.objects.get(external_message_id="wamid.voice")
+		assert msg.status == "completed" and "audio_reply" not in msg.meta
 		self.store_delay.assert_called_once_with(str(msg.id), False)
 		self.schedule.assert_not_called()
 

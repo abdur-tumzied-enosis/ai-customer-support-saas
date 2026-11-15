@@ -105,7 +105,7 @@ class ReplyBillingTest(PipelineBase):
 		self.run_reply(self.inbound("", **PHOTO))
 		self.assertEqual(self.gen.call_count, 0)
 		self.conv.refresh_from_db()
-		self.assertEqual(self.conv.handoff_reason, "out of credits")
+		self.assertEqual(self.conv.handoff_reason, "out of credits; customer sent a photo")
 		self.conv.handoff_at = None
 		self.conv.handoff_reason = ""
 		self.conv.save()

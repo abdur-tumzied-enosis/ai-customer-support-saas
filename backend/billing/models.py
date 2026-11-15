@@ -15,6 +15,7 @@ ACTIONS = {
 	"order_setup": ("Order setup from your documents", Decimal("5")),
 	"instruction_improve": ("Improve instructions", Decimal("0")),
 	"product_suggest": ("Column mapping suggestion", Decimal("0")),
+	"transcription": ("Voice note transcription", Decimal("1")),
 }
 
 
@@ -35,6 +36,7 @@ class ActionPrice(models.Model):
 class PricingSettings(models.Model):
 	"""Singleton, same pattern as agents.ModelConfig."""
 	usd_per_credit = models.DecimalField(max_digits=10, decimal_places=5, default=Decimal("0.005"))
+	transcription_seconds_per_credit = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("5"))
 	target_coverage_ratio = _credits(default=Decimal("5"))
 	overdraft_credits = _credits(default=Decimal("50"))
 	low_balance_credits = _credits(default=Decimal("100"))
@@ -47,6 +49,10 @@ class PricingSettings(models.Model):
 		return "Pricing settings"
 
 	def save(self, *args, **kwargs):
+		if self.transcription_seconds_per_credit < 1:
+			raise ValueError("transcription_seconds_per_credit must be at least 1")
+		if self.transcription_seconds_per_credit != self.transcription_seconds_per_credit.to_integral_value():
+			raise ValueError("transcription_seconds_per_credit must be a whole number")
 		self.pk = 1
 		kwargs.pop("force_insert", None)
 		super().save(*args, **kwargs)

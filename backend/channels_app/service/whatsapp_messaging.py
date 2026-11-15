@@ -2,7 +2,7 @@
 from typing import Any, Dict
 
 from channels_app.image_reply import wants_photo_reply
-from channels_app.media import has_storable_media
+from channels_app.media import has_storable_media, wants_audio_reply
 from channels_app.media_store import store_message_media
 from channels_app.models import CustomerContact, Message, whatsapp_credentials
 from channels_app.reply import resolve_unknown, schedule_reply
@@ -66,7 +66,8 @@ def _handle_message(phone_number_id: str, message: Dict[str, Any], name: str) ->
 		text = (message.get("image") or {}).get("caption", "")
 	reply_to_id = message.get("context", {}).get("id")
 	reply_to = reply_to_id and Message.objects.filter(contact=contact, external_message_id=reply_to_id).first()
-	wants_reply = bool(text) or photo_reply
+	audio_reply = wants_audio_reply(cred.project, attachments)
+	wants_reply = bool(text) or photo_reply or audio_reply
 
 	msg = create_inbound_message(
 		project=cred.project,
@@ -79,7 +80,7 @@ def _handle_message(phone_number_id: str, message: Dict[str, Any], name: str) ->
 		has_attachments=bool(attachments),
 		attachment_info=attachments,
 		# tasks.get_whatsapp_credential reads phone_number_id
-		meta={**message, "phone_number_id": phone_number_id, **({"photo_reply": True} if photo_reply else {})},
+		meta={**message, "phone_number_id": phone_number_id, **({"photo_reply": True} if photo_reply else {}), **({"audio_reply": True} if audio_reply else {})},
 		conversation=conversation,
 		status="pending" if wants_reply else "completed",
 	)

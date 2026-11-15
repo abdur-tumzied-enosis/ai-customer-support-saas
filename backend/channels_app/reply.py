@@ -18,10 +18,12 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from billing.service import charge_delivered_reply, price_of, shopper_blocked
+from core.storage import presign_get
 
 from . import image_reply, memory, tasks
 from .facebook_client import INSTAGRAM_MAX_TEXT_BYTES, WHATSAPP_MAX_TEXT_CHARS, split_text
 from .handoff import start_handoff, wants_human
+from .media import photo_keys, transcription_on
 from .models import Conversation, Message
 from .service.message_service import create_outbound_message
 
@@ -58,31 +60,67 @@ def _complete(messages) -> None:
 	Message.objects.filter(id__in=[m.id for m in messages]).update(status="completed")
 
 
-def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bool:
-	# Instagram DMs go through the same Send API (Page token, /me/messages), with a smaller text limit
+def _facebook_send(conversation, out_msg: Message, reference_msg: Message):
+	"""The `send(part, ref)` closure for Messenger/Instagram; a part is text or {"image": <r2 key>}.
+	The image URL is presigned per attempt: the URL is short-lived, so a retry must not reuse a stale one.
+	`reference_msg` is the inbound message the credential is found from (its meta names the receiving account),
+	which for a redelivery may not be `out_msg`.
+	Instagram DMs go through the same Send API (Page token, /me/messages), with a smaller text limit."""
 	cred = tasks.get_facebook_credential(reference_msg, conversation.channel)
-	parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
-	send = cred and (lambda text, ref: tasks.send_text_message(
-		page_access_token=cred.get_credentials().page_access_token,
-		recipient_psid=conversation.contact.external_id,
-		text=text,
-	))
-	return _send_parts(out_msg, parts, send, conversation.channel)
+	if not cred:
+		return None
+	token = cred.get_credentials().page_access_token
+	psid = conversation.contact.external_id
+
+	def send(part, ref):
+		if isinstance(part, dict):
+			return tasks.send_image_message(page_access_token=token, recipient_psid=psid, image_url=presign_get(part["image"]))
+		return tasks.send_text_message(page_access_token=token, recipient_psid=psid, text=part)
+
+	return send
+
+
+def _whatsapp_send(conversation, out_msg: Message, reference_msg: Message):
+	"""The `send(part, ref)` closure for WhatsApp; a part is text or {"image": <r2 key>}. See _facebook_send."""
+	cred = tasks.get_whatsapp_credential(reference_msg)
+	creds = cred and cred.get_credentials()
+	if not cred:
+		return None
+
+	def send(part, ref):
+		if isinstance(part, dict):
+			return tasks.send_whatsapp_image(
+				access_token=creds.access_token, phone_number_id=creds.phone_number_id,
+				to=conversation.contact.external_id, image_url=presign_get(part["image"]), callback_data=ref,
+			)
+		return tasks.send_whatsapp_text(creds.access_token, creds.phone_number_id, conversation.contact.external_id, part, callback_data=ref)
+
+	return send
+
+
+def _outbound_parts(out_msg: Message, text_parts: list) -> list:
+	"""What to send, in order: every attached photo, then the text. The platforms take no caption, so a photo
+	with text is two messages. A message with no attachments is unchanged (the bot's normal reply)."""
+	return [{"image": key} for key in photo_keys(out_msg)] + text_parts
+
+
+def _send_facebook(conversation, out_msg: Message, reference_msg: Message) -> bool:
+	# Instagram rejects text over 1000 bytes; Messenger's limit is chars
+	text_parts = split_text(out_msg.text, max_bytes=INSTAGRAM_MAX_TEXT_BYTES if conversation.channel == "instagram" else None)
+	parts = _outbound_parts(out_msg, text_parts)
+	return _send_parts(out_msg, parts, _facebook_send(conversation, out_msg, reference_msg), conversation.channel)
 
 
 def _send_whatsapp(conversation, out_msg: Message, reference_msg: Message) -> bool:
-	cred = tasks.get_whatsapp_credential(reference_msg)
-	creds = cred and cred.get_credentials()
-	send = cred and (lambda text, ref: tasks.send_whatsapp_text(
-		creds.access_token, creds.phone_number_id, conversation.contact.external_id, text, callback_data=ref
-	))
-	return _send_parts(out_msg, split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS), send, "whatsapp")
+	parts = _outbound_parts(out_msg, split_text(out_msg.text, limit=WHATSAPP_MAX_TEXT_CHARS))
+	return _send_parts(out_msg, parts, _whatsapp_send(conversation, out_msg, reference_msg), "whatsapp")
 
 
 def _send_parts(out_msg: Message, parts: list, send, channel: str) -> bool:
-	"""Send `parts` in order with `send(text, ref) -> {"message_id"} | {"error"?, "unknown"?}`; records progress on out_msg.
-	`ref` ("out:<message id>:<part>") is the stable per-part reference. meta["inflight"] is written before each request
-	and cleared once its outcome is known: if it is still set later, that part may or may not have been delivered."""
+	"""Send `parts` in order with `send(part, ref) -> {"message_id"} | {"error"?, "unknown"?}`; records progress on out_msg.
+	A part is text, or `{"image": <r2 key>}` for a photo. `ref` ("out:<message id>:<part>") is the stable per-part
+	reference. meta["inflight"] is written before each request and cleared once its outcome is known: if it is still
+	set later, that part may or may not have been delivered."""
 	sent = out_msg.meta.get("parts_sent", 0)  # resume point when redelivering a partly sent reply
 	response = {}
 	while send and sent < len(parts):
@@ -135,8 +173,59 @@ def _newer_text_message(conversation, after) -> bool:
 	"""A newer inbound message with its own reply task: plain text, or a photo flagged for a reply
 	(other attachment messages never get one)."""
 	return Message.objects.filter(conversation=conversation, direction="in", created_at__gt=after).filter(
-		(Q(has_attachments=False) & ~Q(text="")) | Q(meta__photo_reply=True)
+		(Q(has_attachments=False) & ~Q(text="")) | Q(meta__photo_reply=True) | Q(meta__audio_reply=True)
 	).exists()
+
+
+def _audio_states(turn) -> list:
+	"""The transcription state of every audio attachment in the turn (None: no entry written yet)."""
+	if not turn or not transcription_on(turn[0].project):  # kill switch: audio drives no decision
+		return []
+	return [
+		((m.meta or {}).get("transcription") or {}).get(str(i), {}).get("status")
+		for m in turn if (m.meta or {}).get("audio_reply")  # set only when transcription is on for the project
+		for i, att in enumerate(m.attachment_info or []) if isinstance(att, dict) and att.get("type") == "audio"
+	]
+
+
+def _has_text(turn) -> bool:
+	return any((m.text or "").strip() for m in turn)
+
+
+def _audio_unaffordable(turn) -> bool:
+	return not _has_text(turn) and "unaffordable" in _audio_states(turn)
+
+
+def _audio_failed(turn) -> bool:
+	states = _audio_states(turn)
+	return not _has_text(turn) and bool(states) and "transcribed" not in states
+
+
+def _recent_bengali(conversation) -> bool:
+	recent = Message.objects.filter(conversation=conversation, direction="in").order_by("-created_at")[:10]
+	return any("ঀ" <= ch <= "৿" for m in recent for ch in (m.text or ""))
+
+
+def _queue_untranscribed_audio(turn) -> bool:
+	"""True when some voice note has no final transcription yet; starts the ones never started.
+	The inbound rows are left pending so recovery re-runs the turn."""
+	from .media_store import TERMINAL_STATES, transcribe_attachment  # media_store imports this module
+	waiting = False
+	if not turn or not transcription_on(turn[0].project):
+		return False
+	for m in turn:
+		if not (m.meta or {}).get("audio_reply"):
+			continue
+		old = timezone.now() - m.created_at > timedelta(minutes=3)  # store_message_media's limit is 90s: older and pathless means storage failed
+		for i, att in enumerate(m.attachment_info or []):
+			if not isinstance(att, dict) or att.get("type") != "audio":
+				continue
+			state = ((m.meta or {}).get("transcription") or {}).get(str(i), {}).get("status")
+			if state not in TERMINAL_STATES:
+				waiting = True
+				if state is None and (att.get("path") or old):  # a young pathless note: store_message_media will enqueue it
+					transcribe_attachment.delay(str(m.id), i)
+	return waiting
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=5, soft_time_limit=60, time_limit=90)
@@ -178,6 +267,10 @@ def _reply(task, conversation, msg: Message) -> None:
 		_complete(turn)  # staff answer these
 		return
 
+	if _queue_untranscribed_audio(turn):
+		logger.info(f"process_reply: conversation={conversation.id} voice note(s) not transcribed yet, waiting")
+		return
+
 	out_of_credits = False
 	if conversation.channel != "self":
 		try:
@@ -186,6 +279,9 @@ def _reply(task, conversation, msg: Message) -> None:
 		except Exception:  # fail open: a billing error never stops a shopper reply
 			logger.exception("Out-of-credits check failed for conversation %s", conversation.id)
 			out_of_credits = False
+
+	out_of_credits = out_of_credits or _audio_unaffordable(turn)
+	audio_failed = not out_of_credits and _audio_failed(turn)
 
 	try:
 		if not out_of_credits:
@@ -197,7 +293,7 @@ def _reply(task, conversation, msg: Message) -> None:
 		photos_timed_out = True
 	logger.info(f"process_reply: conversation={conversation.id} photos_timed_out={photos_timed_out}")
 	wants_person = any(wants_human(m.text) for m in turn)  # raw text only: quoted bot messages must not trigger it
-	skip_vision = photos_timed_out or out_of_credits or wants_person
+	skip_vision = photos_timed_out or out_of_credits or wants_person or audio_failed
 	vision = {"images": [], "marker": "", "trace": {}}
 	if skip_vision:
 		# annotate_turn may have written "Photo attached" already; no image will be sent, so fix the notes.
@@ -238,6 +334,9 @@ def _reply(task, conversation, msg: Message) -> None:
 		logger.info(f"process_reply: conversation={conversation.id} customer asked for a person, handing off without the agent")
 		reply_text = ""
 		handoff_reason = "customer asked for a person"
+	elif audio_failed:
+		logger.info(f"process_reply: conversation={conversation.id} no agent run (voice note not transcribed)")
+		reply_text = settings.TRANSCRIPTION_FAILED_MESSAGE_BN if _recent_bengali(conversation) else settings.TRANSCRIPTION_FAILED_MESSAGE
 	elif photos_timed_out:
 		logger.info(f"process_reply: conversation={conversation.id} no agent run (photo check timed out)")
 		reply_text = ""
@@ -422,7 +521,8 @@ def _age_unknown_deliveries(now) -> None:
 	only very late the customer gets a duplicate). Messenger and Instagram have no such signal, so staff are told."""
 	stale = Message.objects.filter(
 		direction="out", status="unknown", deliver_after__lt=now - UNKNOWN_REVIEW_AFTER, conversation__isnull=False,
-	).select_related("conversation__contact").order_by("deliver_after")[:100]
+	).exclude(sender="staff").select_related("conversation__contact").order_by("deliver_after")[:100]  # a staff send is
+	# inline and never retried automatically: re-sending one could deliver the same photo or text twice
 	needs_review = 0
 	for out_msg in stale:
 		if out_msg.conversation.channel == "whatsapp":

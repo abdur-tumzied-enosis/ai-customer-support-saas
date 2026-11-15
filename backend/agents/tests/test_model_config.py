@@ -2,6 +2,7 @@ from decimal import Decimal
 from unittest import mock
 
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 from langchain_core.messages import AIMessage
 
@@ -185,3 +186,14 @@ class VisionCapabilityTest(TestCase):
 		ModelConfig.objects.create(reply_model=reply)
 		with self.assertRaises(ValueError):
 			create_basic_agent([], route="vision")
+
+
+class TranscriptionModelValidationTest(TestCase):
+	def test_supported_model_saves(self):
+		row = AIModel.objects.get(provider="openrouter", name="elevenlabs/scribe-v2")
+		ModelConfig(pk=1, transcription_model=row).full_clean()
+
+	def test_unsupported_model_is_rejected(self):
+		row = AIModel.objects.create(provider="openrouter", name="vendor/old-asr", kind="transcription")
+		with self.assertRaises(ValidationError):
+			ModelConfig(pk=1, transcription_model=row).full_clean()

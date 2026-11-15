@@ -3,11 +3,15 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
+import logging
+
+logger = logging.getLogger(__name__)
 from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
-from .media import PHOTO_ERROR, has_photo, is_own_upload, presign_chat_photo, uploaded_photo_ok
-from .media_store import store_message_media
+from .media import PHOTO_ERROR, UPLOAD_PREFIXES, MediaError, has_photo, is_own_upload, photo_keys, presign_chat_photo, uploaded_photo_ok
+from .media_store import store_message_media, store_outbound_photo
+from agents.image_search import NotAnImage
 from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
 from .service.conversation_service import create_conversation
 from .tasks import photo_note_text
@@ -16,8 +20,11 @@ from datetime import timedelta
 import requests
 from django.conf import settings
 from django.db import transaction
-from django.db.models import OuterRef, Subquery, Sum
+from django.db.models import Exists, OuterRef, Subquery, Sum, Value
+from django.db.models.functions import Concat, Substr
 from billing.models import ACTIONS, CreditTransaction
+from core.storage import delete_keys, presign_get, thumb_key
+from django.http import HttpResponseRedirect
 from django.utils import timezone
 from . import memory
 from .handoff import conversation_event_data, end_handoff, note_staff_activity, start_handoff
@@ -218,6 +225,12 @@ def _conversation_dict(conv: Conversation) -> dict:
 	}
 
 
+def _charges(**filters):
+	"""Charge rows for a conversation total, leaving out transcription charges that were refunded."""
+	refund = CreditTransaction.objects.filter(idempotency_key=Concat(Value("transcription_refund:"), Substr(OuterRef("idempotency_key"), len("transcription:") + 1)))
+	return CreditTransaction.objects.filter(kind="charge", **filters).exclude(Exists(refund), action="transcription")
+
+
 def _credits_used(value) -> str:
 	return str(-(value or 0))
 
@@ -232,6 +245,7 @@ def _message_dict(msg: Message, credits=()) -> dict:
 		"created_at": msg.created_at.isoformat(),
 		"agent_reply_id": str(msg.agent_reply_id) if msg.agent_reply_id else None,
 		"has_photo": has_photo(msg),
+		"photo_urls": [f"/api/channels/messages/{msg.id}/photo?index={i}" for i, _ in enumerate(photo_keys(msg))],
 		"photo_matches": photo_note_text(msg.meta) if msg.direction == "in" else "",
 		"credits": list(credits),
 	}
@@ -240,8 +254,16 @@ def _message_dict(msg: Message, credits=()) -> dict:
 def _message_credits(conversation) -> dict:
 	"""{message id: [credit entries]} from one query: replies attach to the reply message, photo searches to the customer message."""
 	out = {}
-	rows = CreditTransaction.objects.filter(conversation=conversation, kind="charge", action__in=("reply", "photo_search"))
-	for t in rows.order_by("created_at"):
+	rows = list(CreditTransaction.objects.filter(
+		conversation=conversation, kind="charge", action__in=("reply", "photo_search", "transcription")
+	).order_by("created_at"))
+	# A refunded voice note shows no charge; its refund key is derived from the charge key.
+	refunded = set(CreditTransaction.objects.filter(idempotency_key__in=[
+		t.idempotency_key.replace("transcription:", "transcription_refund:", 1) for t in rows if t.action == "transcription"
+	]).values_list("idempotency_key", flat=True))
+	for t in rows:
+		if t.action == "transcription" and t.idempotency_key.replace("transcription:", "transcription_refund:", 1) in refunded:
+			continue
 		msg_id = t.result_message_id if t.action == "reply" else t.trigger_message_id
 		if msg_id:
 			out.setdefault(msg_id, []).append({"action": t.action, "label": ACTIONS[t.action][0], "credits": f"{-t.amount:.2f}"})
@@ -279,7 +301,7 @@ class ConversationListView(APIView):
 		conversations = Conversation.objects.filter(project=project).select_related(
 			"knowledge_base", "contact"
 		).prefetch_related("messages").annotate(credits_used=Subquery(
-			CreditTransaction.objects.filter(conversation=OuterRef("pk"), kind="charge").values("conversation").annotate(s=Sum("amount")).values("s")
+			_charges(conversation=OuterRef("pk")).values("conversation").annotate(s=Sum("amount")).values("s")
 		)).order_by("-updated_at")
 		if request.query_params.get("needs_human") == "1":
 			conversations = conversations.filter(handoff_at__gte=_paused_cutoff())
@@ -377,7 +399,7 @@ class ConversationDetailView(APIView):
 			}, status=status.HTTP_404_NOT_FOUND)
 		
 		_verify_project_access(request.user, conversation.project)
-		used = CreditTransaction.objects.filter(conversation=conversation, kind="charge").aggregate(s=Sum("amount"))["s"]
+		used = _charges(conversation=conversation).aggregate(s=Sum("amount"))["s"]
 
 		return Response({
 			"success": True,
@@ -560,7 +582,7 @@ def _test_photo_conversation(request, conversation_id):
 	return conversation, None
 
 
-def _test_photo_prefix(conversation) -> str:
+def _chat_photo_prefix(conversation) -> str:
 	return f"tmp/chat/{conversation.project.slug}/{conversation.id}/"
 
 
@@ -572,7 +594,7 @@ class ConversationPhotoPresignView(APIView):
 		conversation, err = _test_photo_conversation(request, conversation_id)
 		if err:
 			return err
-		upload = presign_chat_photo(_test_photo_prefix(conversation), request.data.get("content_type"), request.data.get("size"))
+		upload = presign_chat_photo(_chat_photo_prefix(conversation), request.data.get("content_type"), request.data.get("size"))
 		if not upload:
 			return _error("invalid_image", PHOTO_ERROR, status.HTTP_400_BAD_REQUEST)
 		return Response({"success": True, "data": upload})
@@ -587,7 +609,7 @@ class ConversationPhotoView(APIView):
 		if err:
 			return err
 		key = request.data.get("key")
-		if not is_own_upload(_test_photo_prefix(conversation), key):
+		if not is_own_upload(_chat_photo_prefix(conversation), key):
 			return _error("invalid_upload", "Upload the photo first", status.HTTP_400_BAD_REQUEST)
 		if not uploaded_photo_ok(key):
 			return _error("invalid_image", PHOTO_ERROR, status.HTTP_400_BAD_REQUEST)
@@ -643,6 +665,26 @@ class MessageStatusView(APIView):
 				}
 			}
 		}, status=status.HTTP_200_OK)
+
+
+class MessagePhotoView(APIView):
+	"""Redirects to a short-lived presigned R2 URL for one photo of a message: the browser fetches the bytes from
+	R2, not through Django. `index` picks among the message's photos (a message may carry several)."""
+	permission_classes = [IsAuthenticated]
+
+	def get(self, request, message_id):
+		message = Message.objects.filter(id=message_id).select_related("project").first()
+		if not message or not ProjectUser.objects.filter(project=message.project, user=request.user).exists():
+			return _error("not_found", "Message not found", status.HTTP_404_NOT_FOUND)  # other projects look unknown
+		index = request.query_params.get("index")
+		keys = photo_keys(message)
+		if not index or not index.isdigit() or int(index) >= len(keys):
+			return _error("not_found", "Photo not found", status.HTTP_404_NOT_FOUND)
+		key = keys[int(index)]
+		if not key.startswith(UPLOAD_PREFIXES):
+			return _error("not_found", "Photo not found", status.HTTP_404_NOT_FOUND)  # never presign an arbitrary key
+		key = thumb_key(key) if request.query_params.get("size") == "thumb" else key
+		return HttpResponseRedirect(presign_get(key))
 
 
 class ChannelListCreateView(APIView):
@@ -987,6 +1029,21 @@ class ConversationResumeView(APIView):
 		return Response({"success": True, "data": {"conversation": _conversation_dict(conversation)}})
 
 
+def _window_error(conversation, last_in):
+	"""The 24h free-form messaging window, shared by the text and photo staff replies: None when the send is
+	allowed, else the refusal response."""
+	if conversation.channel not in ("facebook", "instagram", "whatsapp"):
+		return None
+	if last_in and timezone.now() - last_in.created_at <= timedelta(hours=24):
+		return None
+	hint = "Message templates aren't supported yet." if conversation.channel == "whatsapp" else "Reply from the Meta inbox instead."
+	return _error(
+		"outside_messaging_window",
+		f"{conversation.channel.capitalize()} only allows replies within 24 hours of the customer's last message. {hint}",
+		status.HTTP_400_BAD_REQUEST,
+	)
+
+
 class ConversationStaffReplyView(APIView):
 	permission_classes = [IsAuthenticated]
 
@@ -999,15 +1056,9 @@ class ConversationStaffReplyView(APIView):
 			return _error("invalid_text", "Reply must be 1-2000 characters", status.HTTP_400_BAD_REQUEST)
 
 		last_in = conversation.messages.filter(direction="in").order_by("-created_at").first()
-		if conversation.channel in ("facebook", "instagram", "whatsapp") and (
-			not last_in or timezone.now() - last_in.created_at > timedelta(hours=24)
-		):
-			hint = "Message templates aren't supported yet." if conversation.channel == "whatsapp" else "Reply from the Meta inbox instead."
-			return _error(
-				"outside_messaging_window",
-				f"{conversation.channel.capitalize()} only allows replies within 24 hours of the customer's last message. {hint}",
-				status.HTTP_400_BAD_REQUEST,
-			)
+		refusal = _window_error(conversation, last_in)
+		if refusal:
+			return refusal
 
 		msg = create_outbound_message(
 			project=conversation.project, contact=conversation.contact, text=text,
@@ -1019,6 +1070,84 @@ class ConversationStaffReplyView(APIView):
 			msg.status = "failed"
 			msg.save(update_fields=["status"])
 			return _error("send_failed", "The message could not be delivered to the customer", status.HTTP_502_BAD_GATEWAY)
+		emit_event(conversation.project, "message.staff_reply", {
+			**conversation_event_data(conversation),
+			"message": {"id": str(msg.id), "text": msg.text, "created_at": msg.created_at.isoformat()},
+		})
+		schedule_memory_update(conversation)
+		msg_id = str(msg.id)
+		transaction.on_commit(lambda: memory.draft_knowledge_suggestion.delay(msg_id))
+		return Response({"success": True, "data": {"message": _message_dict(msg)}}, status=status.HTTP_201_CREATED)
+
+
+class ConversationStaffPhotoPresignView(APIView):
+	"""Step 1 of a staff photo: a presigned PUT straight to R2 (the bytes never pass through Django)."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, conversation_id):
+		conversation = _get_conversation(request, conversation_id)
+		if not conversation:
+			return _error("not_found", "Conversation not found", status.HTTP_404_NOT_FOUND)
+		upload = presign_chat_photo(_chat_photo_prefix(conversation), request.data.get("content_type"), request.data.get("size"))
+		if not upload:
+			return _error("invalid_image", PHOTO_ERROR, status.HTTP_400_BAD_REQUEST)
+		return Response({"success": True, "data": upload})
+
+
+class ConversationStaffPhotoView(APIView):
+	"""Step 2: send the uploaded photo (by key, and optional text) to the customer as staff."""
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request, conversation_id):
+		conversation = _get_conversation(request, conversation_id)
+		if not conversation:
+			return _error("not_found", "Conversation not found", status.HTTP_404_NOT_FOUND)
+		last_in = conversation.messages.filter(direction="in").order_by("-created_at").first()
+		refusal = _window_error(conversation, last_in)
+		if refusal:
+			return refusal
+		key = request.data.get("key")
+		if not is_own_upload(_chat_photo_prefix(conversation), key):
+			return _error("invalid_upload", "Upload the photo first", status.HTTP_400_BAD_REQUEST)
+		if not uploaded_photo_ok(key):
+			return _error("invalid_image", PHOTO_ERROR, status.HTTP_400_BAD_REQUEST)
+		att = {"type": "image", "path": key}
+		try:
+			# Stored before the row exists, so a bad upload leaves no message behind, and the copy we send is
+			# the stored one (JPEG: chat platforms reject the WebP a customer photo becomes).
+			att["path"] = store_outbound_photo(conversation, att)
+		except (MediaError, NotAnImage):
+			return _error("invalid_image", PHOTO_ERROR, status.HTTP_400_BAD_REQUEST)
+
+		msg = create_outbound_message(
+			project=conversation.project, contact=conversation.contact,
+			text=(request.data.get("text") or "").strip(),
+			conversation=conversation, sender="staff", meta=answered_marker(last_in),
+			attachment_info=[att],
+		)
+		try:
+			delivered = deliver(conversation, msg, last_in)
+		except Exception:
+			# It may have reached the customer (a timeout mid-request, or a presign failure): hold it rather than
+			# report a failure that already happened, and keep the bytes.
+			logger.exception(f"Staff photo delivery raised for message {msg.id}")
+			delivered = False
+			msg.meta = {**msg.meta, "inflight": msg.meta.get("inflight", 0)}
+		if not delivered:
+			# "inflight" means a part may have reached the customer: hold the row and keep the stored photo,
+			# since the customer may already have it. Otherwise the send definitely failed and the bytes go.
+			unknown = "inflight" in msg.meta
+			msg.status = "unknown" if unknown else "failed"
+			msg.save(update_fields=["status"])
+			if not unknown:
+				delete_keys(att["path"], thumb_key(att["path"]))
+				# the bytes are gone, so the row must stop pointing at them (otherwise the thread shows a broken image)
+				msg.attachment_info = []
+				msg.has_attachments = False
+				msg.save(update_fields=["attachment_info", "has_attachments"])
+				return _error("send_failed", "The message could not be delivered to the customer", status.HTTP_502_BAD_GATEWAY)
+			return _error("send_unknown", "The photo may or may not have reached the customer", status.HTTP_502_BAD_GATEWAY)
+		note_staff_activity(conversation)
 		emit_event(conversation.project, "message.staff_reply", {
 			**conversation_event_data(conversation),
 			"message": {"id": str(msg.id), "text": msg.text, "created_at": msg.created_at.isoformat()},

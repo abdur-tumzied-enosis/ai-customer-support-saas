@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import requests
 from celery.exceptions import SoftTimeLimitExceeded
+from django.conf import settings
 from django.core.files.storage import default_storage
 
 from agents.image_search import MAX_IMAGE_BYTES
@@ -34,9 +35,26 @@ def is_photo(att: dict) -> bool:
 	return att.get("type") == "image" and not (att.get("payload") or {}).get("sticker_id")
 
 
+def transcription_on(project) -> bool:
+	return bool(settings.TRANSCRIPTION_ENABLED and (not settings.TRANSCRIPTION_PROJECTS or project.slug in settings.TRANSCRIPTION_PROJECTS))
+
+
+def wants_audio_reply(project, attachment_info) -> bool:
+	return transcription_on(project) and any(isinstance(a, dict) and a.get("type") == "audio" for a in attachment_info or [])
+
+
 def has_photo(msg: Message) -> bool:
 	"""A real photo among the attachments (not a sticker, voice note, like or document)."""
 	return any(isinstance(a, dict) and is_photo(a) for a in msg.attachment_info or [])
+
+
+def photo_keys(msg: Message) -> list[str]:
+	"""Stored paths of the photo attachments, in order. A photo whose bytes were never stored (still only on Meta's
+	CDN) has no path and is skipped, which is how the dashboard tells "show this" from "just say Photo"."""
+	return [
+		a["path"] for a in msg.attachment_info or []
+		if isinstance(a, dict) and is_photo(a) and isinstance(a.get("path"), str) and a["path"]
+	]
 
 
 def is_storable(att: dict) -> bool:

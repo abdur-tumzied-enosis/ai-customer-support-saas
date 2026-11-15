@@ -5,7 +5,7 @@ from typing import Optional
 from knowledge.models import KnowledgeBase, CustomInstruction
 from . import memory  # also registers the memory Celery tasks
 from .models import Message, ChannelCredential, meta_credentials, whatsapp_credentials
-from .facebook_client import send_text_message, send_whatsapp_text
+from .facebook_client import send_image_message, send_text_message, send_whatsapp_image, send_whatsapp_text
 from .service.message_service import create_outbound_message
 from agents.rag import generate_reply, Context, ToolDeps, ChatMessage
 from agents.vector_store import get_retriever
@@ -58,7 +58,9 @@ def format_message_with_context(message: Message, visible: bool = True) -> str:
 	rendered = photo_note_text(message.meta, visible=visible)
 	if rendered:
 		content = f"{content} {rendered}" if content else rendered
-	elif message.has_attachments:
+	elif message.has_attachments and not any(
+		t.get("status") == "transcribed" for t in ((message.meta or {}).get("transcription") or {}).values()
+	):
 		att_types = [att.get("type", "unknown") for att in message.attachment_info]
 		content = f"{content} [Message includes attachments: {', '.join(att_types)}]"
 	

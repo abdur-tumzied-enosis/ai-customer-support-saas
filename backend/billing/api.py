@@ -59,13 +59,22 @@ class PricingView(APIView):
 
 	def get(self, request):
 		actions = [(a, price_of(a)) for a in ACTIONS]
+		cfg = PricingSettings.get()
+		rows = []
+		for a, c in actions:
+			if not c or (a == "transcription" and not settings.TRANSCRIPTION_ENABLED):
+				continue
+			row = {"action": a, "label": ACTIONS[a][0], "credits": money(c)}
+			if a == "transcription":
+				row["per_seconds"] = int(cfg.transcription_seconds_per_credit)
+			rows.append(row)
 		return _ok({
 			"packages": [{
 				"id": p.id, "name": p.name, "credits": p.credits, "bonus_credits": p.bonus_credits, "price": money(p.price),
 				"currency": p.currency, "features": p.features, "highlighted": p.highlighted,
 			} for p in CreditPackage.objects.filter(active=True)],
-			"actions": [{"action": a, "label": ACTIONS[a][0], "credits": money(c)} for a, c in actions if c],
-			"signup_credits": money(PricingSettings.get().signup_credits),
+			"actions": rows,
+			"signup_credits": money(cfg.signup_credits),
 		})
 
 
