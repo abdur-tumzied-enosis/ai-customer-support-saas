@@ -550,8 +550,36 @@ export type ChannelCredential = {
 	is_active: boolean;
 	image_search_enabled: boolean;
 	is_configured: boolean;
+	connected_via?: string | null;
 	created_at: string;
 	updated_at: string;
+};
+
+// Meta self-serve connect types
+export type MetaConnectChannel = {
+	id: string;
+	name: string;
+	channel: string;
+	is_active: boolean;
+	is_configured: boolean;
+};
+
+export type MetaPageChoice = {
+	id: string;
+	name: string;
+	instagram_username: string;
+};
+
+export type MetaTokenResult = {
+	connected: boolean;
+	channels?: MetaConnectChannel[];
+	setup_id?: string;
+	pages?: MetaPageChoice[];
+};
+
+export type MetaConnectResult = {
+	connected: boolean;
+	channels: MetaConnectChannel[];
 };
 
 // Platform API functions
@@ -623,6 +651,20 @@ export const channelApi = {
 	subscribe: async (channelId: string) => {
 		return apiFetch<ChannelStatus>(`/api/channels/channels/${channelId}/subscribe`, {
 			method: "POST",
+		});
+	},
+
+	exchangeMetaToken: async (data: { project_slug: string; access_token: string }) => {
+		return apiFetch<MetaTokenResult>("/api/channels/meta/token", {
+			method: "POST",
+			json: data,
+		});
+	},
+
+	connectMetaPage: async (data: { project_slug: string; setup_id: string; page_id: string }) => {
+		return apiFetch<MetaConnectResult>("/api/channels/meta/connect", {
+			method: "POST",
+			json: data,
 		});
 	},
 

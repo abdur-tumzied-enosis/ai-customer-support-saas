@@ -17,6 +17,7 @@ import { useAuth } from "@/hooks/useAuth";
 import WebhookSettings from "@/components/channels/WebhookSettings";
 import CopyField from "@/components/channels/CopyField";
 import ConnectionStatusDialog from "@/components/channels/ConnectionStatusDialog";
+import MetaConnectButton from "@/components/channels/MetaConnectButton";
 import { formatError } from "@/lib/errors";
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
@@ -432,6 +433,16 @@ export default function ChannelsPage() {
 				</CardContent>
 			</Card>
 
+			<Card>
+				<CardContent className="flex flex-col gap-3 py-4">
+					<div>
+						<p className="font-medium">Connect Messenger and Instagram</p>
+						<p className="text-sm text-muted-foreground">Log in with Facebook and choose the Page to connect.</p>
+					</div>
+					<MetaConnectButton projectSlug={projectSlug} onConnected={fetchChannels} />
+				</CardContent>
+			</Card>
+
 			{/* Loading State */}
 			{loading && channels.length === 0 && (
 				<div className="flex items-center justify-center py-12">
@@ -471,7 +482,7 @@ export default function ChannelsPage() {
 										</div>
 									</div>
 									<div className="flex gap-1">
-										{["facebook", "instagram"].includes(channel.channel) && (
+										{["facebook", "instagram"].includes(channel.channel) && channel.connected_via !== "oauth" && (
 											<Button
 												variant="ghost"
 												size="icon"

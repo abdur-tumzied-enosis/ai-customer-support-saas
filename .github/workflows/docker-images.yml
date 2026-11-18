@@ -1,5 +1,5 @@
 # Builds the production images natively on arm64 (the server's arch) and pushes them to Docker Hub.
-# Secrets (GitHub environment `ai-customer-support-saas`): DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (Read & Write), DOCKERHUB_REPO, NEXT_PUBLIC_API_URL (https://api.example.com).
+# Secrets (GitHub environment `ai-customer-support-saas`): DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (Read & Write), DOCKERHUB_REPO, NEXT_PUBLIC_API_URL (https://api.example.com), NEXT_PUBLIC_META_APP_ID (Meta app id, baked into the web bundle).
 name: docker-images
 
 on:
@@ -45,6 +45,7 @@ jobs:
           push: true
           build-args: |
             NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_META_APP_ID=${{ secrets.NEXT_PUBLIC_META_APP_ID }}
           # :<name> is what the server pulls; :<name>-<sha> is kept for rollback
           tags: |
             ${{ env.IMAGE }}:${{ matrix.name }}
