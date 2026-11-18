@@ -19,6 +19,7 @@ from .tasks import photo_note_text
 from .service.message_service import create_ui_message
 from datetime import timedelta
 import requests
+import secrets
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Exists, OuterRef, Subquery, Sum, Value
@@ -754,7 +755,8 @@ class ChannelListCreateView(APIView):
 		# Required fields
 		name = request.data.get("name")
 		channel = request.data.get("channel")
-		credentials = request.data.get("credentials", {})
+		# Blank fields are not stored; the form may send them empty
+		credentials = {k: v for k, v in (request.data.get("credentials") or {}).items() if str(v or "").strip()}
 
 		if not name:
 			raise ValidationError({"name": "This field is required"})
@@ -786,6 +788,10 @@ class ChannelListCreateView(APIView):
 					"message": f"Platform '{channel}' not found"
 				}
 			}, status=status.HTTP_404_NOT_FOUND)
+
+		# Webhook setup needs a verify token from the start, even when the form left it out
+		if any(f.get("name") == "verify_token" for f in platform.credential_schema or []) and not credentials.get("verify_token"):
+			credentials["verify_token"] = secrets.token_urlsafe(24)
 
 		# Create channel credential
 		channel_cred = ChannelCredential.objects.create(
@@ -913,7 +919,11 @@ class ChannelDetailView(APIView):
 			update_fields.append("name")
 
 		if "credentials" in request.data:
-			channel.credentials = request.data["credentials"]
+			# Merge: fields left out or sent empty keep their stored value
+			from dataclasses import asdict
+			base = dict(channel.credentials or {}) or asdict(channel.get_credentials())  # legacy columns when JSON is empty
+			incoming = {k: v for k, v in (request.data["credentials"] or {}).items() if str(v or "").strip()}
+			channel.credentials = {**base, **incoming}
 			update_fields.append("credentials")
 
 		if "is_active" in request.data:
@@ -1258,8 +1268,20 @@ class ProjectWebhookTestView(APIView):
 		return Response({"success": True, "data": {"ok": True}})
 
 
+def _channel_status(request, channel, creds) -> dict:
+	"""Live Meta status plus the webhook values to paste into the Meta app."""
+	path = Platform.objects.filter(name=str(channel.channel)).values_list("webhook_path", flat=True).first() or ""
+	callback_url = (
+		settings.PUBLIC_BASE_URL.rstrip("/") + path if settings.PUBLIC_BASE_URL
+		else request.build_absolute_uri(path)
+	)
+	status_data = check_channel(str(channel.channel), creds, callback_url)
+	status_data["webhook"] = {"callback_url": callback_url, "verify_token": creds.verify_token or ""}
+	return status_data
+
+
 class ChannelStatusView(APIView):
-	"""Live Meta check of a saved Facebook or Instagram channel: permissions and subscription."""
+	"""Live Meta check of a saved Facebook or Instagram channel: permissions, subscription and app webhook."""
 	permission_classes = [IsAuthenticated]
 
 	def get(self, request, channel_id):
@@ -1269,7 +1291,7 @@ class ChannelStatusView(APIView):
 
 		_verify_project_access(request.user, channel.project)
 		creds = channel.get_credentials()
-		return Response({"success": True, "data": check_channel(str(channel.channel), creds)})
+		return Response({"success": True, "data": _channel_status(request, channel, creds)})
 
 
 class ChannelSubscribeView(APIView):
@@ -1290,4 +1312,4 @@ class ChannelSubscribeView(APIView):
 			subscribe_page(creds)
 		except GraphError as e:
 			return _error("subscribe_failed", str(e), status.HTTP_502_BAD_GATEWAY)
-		return Response({"success": True, "data": check_channel(str(channel.channel), creds)})
+		return Response({"success": True, "data": _channel_status(request, channel, creds)})

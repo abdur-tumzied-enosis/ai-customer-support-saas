@@ -140,16 +140,7 @@ export default function ChannelsPage() {
 			return;
 		}
 
-		// Validate required credentials
-		const missingFields = selectedPlatform.credential_schema
-			.filter(field => field.required && !formData.credentials[field.name]?.trim())
-			.map(field => field.label);
-
-		if (missingFields.length > 0) {
-			toast.error(`Please fill in required fields: ${missingFields.join(", ")}`);
-			return;
-		}
-
+		// Only name and agent memory are required here; Meta IDs and tokens can be added later from Edit
 		// The backend ignores incoming messages on channels without an agent memory
 		if (!formData.knowledge_base_id) {
 			toast.error("Please select an agent memory");
@@ -378,10 +369,7 @@ export default function ChannelsPage() {
 	const renderCredentialFields = (platform: Platform, isEdit: boolean = false) => {
 		return platform.credential_schema.filter((field) => field.name !== VERIFY_TOKEN).map((field) => (
 			<div key={field.name} className="space-y-2">
-				<Label htmlFor={field.name}>
-					{field.label}
-					{field.required && <span className="text-destructive ml-1">*</span>}
-				</Label>
+				<Label htmlFor={field.name}>{field.label}</Label>
 				<Input
 					id={field.name}
 					type={field.type === "password" ? "password" : "text"}
@@ -393,7 +381,6 @@ export default function ChannelsPage() {
 							credentials: { ...prev.credentials, [field.name]: e.target.value },
 						}))
 					}
-					required={!isEdit && field.required}
 				/>
 				{field.description && (
 					<p className="text-xs text-muted-foreground">{field.description}</p>
@@ -632,11 +619,14 @@ export default function ChannelsPage() {
 									/>
 								</div>
 
-								{renderCredentialFields(selectedPlatform)}
-
 								{renderKnowledgeBaseSelect("kb-select")}
 
 								{renderWebhookSetup(selectedPlatform)}
+
+									<p className="text-xs text-muted-foreground">
+										Page ID, Page token and App details are optional now. Add them later from Edit.
+									</p>
+									{renderCredentialFields(selectedPlatform)}
 							</>
 						)}
 					</div>

@@ -528,6 +528,7 @@ export type ChannelStatus = {
 	ok: boolean;
 	error: string | null;
 	checks: ChannelCheck[];
+	webhook: { callback_url: string; verify_token: string };
 };
 
 // Channel Credential types

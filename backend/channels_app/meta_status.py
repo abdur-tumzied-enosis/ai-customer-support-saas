@@ -10,6 +10,8 @@ import requests
 GRAPH_URL = "https://graph.facebook.com/v21.0"
 TIMEOUT = 10
 SUBSCRIBED_FIELD = "messages"
+# Object name Meta uses for the app-level webhook of each channel
+WEBHOOK_OBJECT = {"facebook": "page", "instagram": "instagram"}
 REQUIRED_PERMISSIONS = {
 	"facebook": ["pages_messaging", "pages_manage_metadata"],
 	"instagram": ["instagram_basic", "instagram_manage_messages", "pages_manage_metadata"],
@@ -63,7 +65,26 @@ def _item(key: str, label: str, status: str, detail: str = "") -> dict:
 	return {"key": key, "label": label, "status": status, "detail": detail}
 
 
-def check_channel(channel: str, creds) -> dict:
+def _app_webhook_item(channel: str, app_id: str, app_secret: str, callback_url: str) -> dict:
+	"""Is the app's webhook for this channel set to our callback URL with messages active?"""
+	try:
+		subs = _get(f"{app_id}/subscriptions", access_token=f"{app_id}|{app_secret}").get("data", [])
+	except GraphError as e:
+		return _item("app_webhook", "App webhook (Meta app settings)", "error", str(e))
+	sub = next((s for s in subs if s.get("object") == WEBHOOK_OBJECT[channel]), None)
+	if not sub:
+		return _item("app_webhook", "App webhook (Meta app settings)", "missing",
+			"No webhook saved in the Meta app. Set the Callback URL and Verify token in Meta, then click Verify and save.")
+	if (sub.get("callback_url") or "").rstrip("/") != callback_url.rstrip("/"):
+		return _item("app_webhook", "App webhook (Meta app settings)", "missing",
+			f"Meta sends events to a different URL: {sub.get('callback_url') or 'none'}. Change it to the Callback URL shown here.")
+	if SUBSCRIBED_FIELD not in (sub.get("fields") or []) or not sub.get("active"):
+		return _item("app_webhook", "App webhook (Meta app settings)", "missing",
+			f"Verified, but the {SUBSCRIBED_FIELD} field is not active. Subscribe it in Meta.")
+	return _item("app_webhook", "App webhook (Meta app settings)", "ok", "Verified and sending messages to us")
+
+
+def check_channel(channel: str, creds, callback_url: str = "") -> dict:
 	"""Return the live status of a channel. `creds` exposes the credential fields as attributes."""
 	if channel not in REQUIRED_PERMISSIONS:
 		return {"ok": False, "error": "Status checks cover Facebook and Instagram channels only.", "checks": []}
@@ -99,6 +120,12 @@ def check_channel(channel: str, creds) -> dict:
 			"ok" if subscribed else "missing",
 			"Page sends messages to us" if subscribed else "Page is not subscribed to our app's messages",
 		))
+
+		if not getattr(creds, "verify_token", ""):
+			checks.append(_item("verify_token", "Verify token", "missing", "Set a verify token on this channel, then paste it into Meta"))
+		else:
+			checks.append(_item("verify_token", "Verify token", "ok", "Set"))
+		checks.append(_app_webhook_item(channel, app_id, app_secret, callback_url))
 
 		if channel == "instagram":
 			ig_id = getattr(creds, "instagram_account_id", "") or ""
