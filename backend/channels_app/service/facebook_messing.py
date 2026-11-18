@@ -1,7 +1,9 @@
 
 
+import secrets
 from typing import Any, Dict
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 
 from accounts.models import Project
@@ -47,9 +49,13 @@ def handle_facebook_webhook_verification(request: HttpRequest) -> HttpResponse:
 	
 	# Check basic requirements
 	if mode != "subscribe" or not verify_token:
-		logger.warning(f"Invalid webhook verification request: mode={mode}, verify_token={verify_token}")
+		logger.warning(f"Invalid webhook verification request: mode={mode}")
 		return HttpResponse(status=403)
 	
+	global_token = settings.META_VERIFY_TOKEN
+	if global_token and secrets.compare_digest(verify_token.encode(), global_token.encode()):
+		return HttpResponse(str(challenge).encode("utf-8"))
+
 	# Query database directly for channel with matching verify_token in credentials JSON
 	# Using JSONField lookup: credentials__verify_token
 	channel = ChannelCredential.objects.filter(
@@ -67,7 +73,7 @@ def handle_facebook_webhook_verification(request: HttpRequest) -> HttpResponse:
 	
 	# No matching verify token found
 	logger.warning(
-		f"Webhook verification failed: No channel found with verify_token={verify_token}"
+		"Webhook verification failed: no channel matched the verify token"
 	)
 	return HttpResponse(status=403)
 

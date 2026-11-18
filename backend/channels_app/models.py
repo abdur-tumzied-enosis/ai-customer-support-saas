@@ -25,6 +25,7 @@ from django.db import models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from accounts.models import Project
+from channels_app.credential_crypto import decrypt_credentials, encrypt_credentials
 
 
 # =============================================================================
@@ -89,9 +90,13 @@ class FacebookCredentials(BaseCredentials):
 	meta_app_id: str = ""
 	meta_app_secret: str = ""
 	verify_token: str = ""
+	connected_via: str = ""
+	meta_user_id: str = ""
 	
 	def is_configured(self) -> bool:
 		"""Check if all required Facebook credentials are provided."""
+		if self.connected_via == "oauth":
+			return bool(self.page_id and self.page_access_token)
 		return bool(
 			self.page_id and 
 			self.page_access_token and 
@@ -270,9 +275,13 @@ class InstagramCredentials(BaseCredentials):
 	meta_app_id: str = ""
 	meta_app_secret: str = ""
 	verify_token: str = ""
+	connected_via: str = ""
+	meta_user_id: str = ""
 	
 	def is_configured(self) -> bool:
 		"""Check if all required Instagram credentials are provided."""
+		if self.connected_via == "oauth":
+			return bool(self.instagram_account_id and self.page_id and self.page_access_token)
 		return bool(
 			self.instagram_account_id and 
 			self.page_id and 
@@ -626,7 +635,7 @@ class ChannelCredential(models.Model):
 		# If credentials JSON is populated, use it
 		if self.credentials:
 			creds_dict: Dict[str, Any] = self.credentials if isinstance(self.credentials, dict) else {}
-			return cred_class.from_dict(creds_dict)
+			return cred_class.from_dict(decrypt_credentials(creds_dict))
 		
 		# Fallback to legacy fields for Facebook
 		if channel_str == "facebook":
@@ -657,7 +666,7 @@ class ChannelCredential(models.Model):
 		    channel.set_credentials(fb_creds)
 		    channel.save()
 		"""
-		self.credentials = credentials.to_dict()
+		self.credentials = encrypt_credentials(credentials.to_dict())
 	
 	def is_configured(self) -> bool:
 		"""Check if all required credentials are provided."""
@@ -669,13 +678,13 @@ class ChannelCredential(models.Model):
 		Returns True if migration was performed.
 		"""
 		if self.channel == "facebook" and self.page_id and not self.credentials:
-			self.credentials = {
+			self.credentials = encrypt_credentials({
 				"page_id": self.page_id,
 				"page_access_token": self.page_access_token,
 				"meta_app_id": self.meta_app_id,
 				"meta_app_secret": self.meta_app_secret,
 				"verify_token": self.verify_token,
-			}
+			})
 			return True
 		return False
 

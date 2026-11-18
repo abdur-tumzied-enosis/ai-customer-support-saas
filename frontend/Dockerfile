@@ -15,6 +15,8 @@ COPY . .
 # NEXT_PUBLIC_* values are inlined into the bundle at build time, so they must be build args
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_META_APP_ID
+ENV NEXT_PUBLIC_META_APP_ID=$NEXT_PUBLIC_META_APP_ID
 # Build Next.js (standalone output configured in next.config.mjs)
 RUN npm run build
 

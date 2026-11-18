@@ -38,6 +38,20 @@ class FacebookWebhookTest(TestCase):
 		)
 		assert resp.status_code == 200
 
+	@override_settings(META_VERIFY_TOKEN="global-vt")
+	def test_global_verify_token_matches(self):
+		resp = self.client.get("/webhooks/meta/", {
+			"hub.mode": "subscribe", "hub.verify_token": "global-vt", "hub.challenge": "9999",
+		})
+		assert resp.status_code == 200 and resp.content.decode() == "9999"
+
+	@override_settings(META_VERIFY_TOKEN="global-vt")
+	def test_non_ascii_verify_token_is_rejected_not_a_500(self):
+		resp = self.client.get("/webhooks/meta/", {
+			"hub.mode": "subscribe", "hub.verify_token": "café", "hub.challenge": "1",
+		})
+		assert resp.status_code == 403
+
 
 @mock.patch("channels_app.service.facebook_messing.get_user_name", return_value="Ann")
 @mock.patch("channels_app.service.facebook_messing.store_message_media.delay")

@@ -6,14 +6,17 @@ from rest_framework.exceptions import ValidationError
 import logging
 
 logger = logging.getLogger(__name__)
+from django.core.exceptions import ImproperlyConfigured
 from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
 from .meta_status import GraphError, check_channel, subscribe_page
+from .meta_connect import unsubscribe_page
 from .media import PHOTO_ERROR, UPLOAD_PREFIXES, MediaError, has_photo, is_own_upload, photo_keys, presign_chat_photo, uploaded_photo_ok
 from .media_store import store_message_media, store_outbound_photo
 from agents.image_search import NotAnImage
-from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
+from .models import META_CHANNELS, ChannelCredential, Conversation, CustomerContact, Message, Platform
+from .credential_crypto import encrypt_credentials
 from .service.conversation_service import create_conversation
 from .tasks import photo_note_text
 from .service.message_service import create_ui_message
@@ -204,6 +207,14 @@ def _get_project(user, project_slug: str) -> Project:
 		raise ValidationError({"error": "Project not found"})
 	_verify_project_access(user, project)
 	return project
+
+
+def _encryption_unavailable():
+	# Token writes must fail loudly without TOKEN_ENCRYPTION_KEY; nothing is saved in plaintext
+	return Response({"success": False, "error": {
+		"code": "encryption_not_configured",
+		"message": "Meta token encryption is not configured on this server. Ask the administrator to set TOKEN_ENCRYPTION_KEY.",
+	}}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
 
 def _iso(dt):
@@ -732,6 +743,7 @@ class ChannelListCreateView(APIView):
 				"is_active": channel.is_active,
 				"image_search_enabled": channel.image_search_enabled,
 				"is_configured": channel.is_configured(),
+				"connected_via": (channel.credentials or {}).get("connected_via"),
 				"created_at": channel.created_at.isoformat(),
 				"updated_at": channel.updated_at.isoformat(),
 			})
@@ -793,6 +805,10 @@ class ChannelListCreateView(APIView):
 		if any(f.get("name") == "verify_token" for f in platform.credential_schema or []) and not credentials.get("verify_token"):
 			credentials["verify_token"] = secrets.token_urlsafe(24)
 
+		try:
+			credentials = encrypt_credentials(credentials)
+		except ImproperlyConfigured:
+			return _encryption_unavailable()
 		# Create channel credential
 		channel_cred = ChannelCredential.objects.create(
 			project=project,
@@ -923,7 +939,10 @@ class ChannelDetailView(APIView):
 			from dataclasses import asdict
 			base = dict(channel.credentials or {}) or asdict(channel.get_credentials())  # legacy columns when JSON is empty
 			incoming = {k: v for k, v in (request.data["credentials"] or {}).items() if str(v or "").strip()}
-			channel.credentials = {**base, **incoming}
+			try:
+				channel.credentials = encrypt_credentials({**base, **incoming})
+			except ImproperlyConfigured:
+				return _encryption_unavailable()
 			update_fields.append("credentials")
 
 		if "is_active" in request.data:
@@ -1007,6 +1026,18 @@ class ChannelDetailView(APIView):
 			}, status=status.HTTP_404_NOT_FOUND)
 
 		_verify_project_access(request.user, channel.project)
+
+		if channel.channel in META_CHANNELS:
+			creds = channel.get_credentials()
+			if getattr(creds, "connected_via", "") == "oauth":
+				# Subscriptions belong to the Page, not the project: any active row anywhere still needs the webhook
+				shared = ChannelCredential.objects.filter(is_active=True,
+					credentials__page_id=creds.page_id).exclude(id=channel.id).exists()
+				if not shared:
+					try:
+						unsubscribe_page(creds.page_id, creds.page_access_token)
+					except GraphError as exc:
+						logger.warning("Could not unsubscribe Page %s on channel delete: %s", creds.page_id, exc)
 
 		channel.delete()
 
