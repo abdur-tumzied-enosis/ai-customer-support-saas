@@ -178,3 +178,21 @@ class MetaConnectApiTest(TestCase):
 			res = self.client.post("/api/channels/meta/token",
 				{"project_slug": "p-meta", "access_token": "short"}, format="json")
 		assert res.status_code == 502 and res.data["error"]["code"] == "meta_error"
+
+	@mock.patch("channels_app.api.unsubscribe_page")
+	def test_deleting_last_row_for_page_unsubscribes(self, unsubscribe):
+		self.token([PAGES[0]])  # creates facebook + instagram rows for p1
+		fb = ChannelCredential.objects.get(channel="facebook", project=self.project)
+		assert self.client.delete(f"/api/channels/channels/{fb.id}").status_code == 200
+		assert ChannelCredential.objects.filter(project=self.project, channel="instagram").exists()  # sibling active
+		unsubscribe.assert_not_called()
+		ig = ChannelCredential.objects.get(channel="instagram", project=self.project)
+		assert self.client.delete(f"/api/channels/channels/{ig.id}").status_code == 200
+		unsubscribe.assert_called_once_with("p1", mock.ANY)
+
+	@mock.patch("channels_app.api.unsubscribe_page", side_effect=GraphError("meta down"))
+	def test_unsubscribe_failure_still_deletes_oauth_row(self, unsubscribe):
+		row = ChannelCredential.objects.create(project=self.project, channel="facebook",
+			credentials={"page_id": "p9", "page_access_token": "t", "connected_via": "oauth"})
+		assert self.client.delete(f"/api/channels/channels/{row.id}").status_code == 200
+		assert not ChannelCredential.objects.filter(id=row.id).exists()

@@ -1,5 +1,6 @@
+from django.conf import settings
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -7,6 +8,7 @@ from knowledge.models import KnowledgeBase
 from . import meta_connect
 from .api import _get_project
 from .meta_status import GraphError
+from .models import ChannelCredential
 
 
 def _error(code: str, message: str, http_status: int):
@@ -112,3 +114,23 @@ class MetaConnectView(APIView):
 		meta_connect.consume_setup_session(setup_id)
 		return Response({"success": True, "data": {
 			"connected": True, "channels": [_channel_dict(r) for r in rows]}})
+
+
+class MetaDeauthorizeView(APIView):
+	"""Meta calls this when a customer removes the app; the signed_request is the only credential."""
+	permission_classes = [AllowAny]
+	authentication_classes = []
+
+	def post(self, request):
+		payload = meta_connect.verify_signed_request(request.data.get("signed_request", ""), settings.META_APP_SECRET)
+		user_id = str((payload or {}).get("user_id") or "")
+		if not user_id:
+			return _error("invalid_signature", "Invalid signed_request", status.HTTP_400_BAD_REQUEST)
+
+		rows = ChannelCredential.objects.filter(is_active=True, credentials__connected_via="oauth",
+			credentials__meta_user_id=user_id)
+		for row in rows:
+			row.is_active = False
+			row.credentials["page_access_token"] = ""
+			row.save(update_fields=["is_active", "credentials"])
+		return Response({"success": True})

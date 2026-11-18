@@ -10,10 +10,11 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from accounts.models import Project, ProjectUser
 from knowledge.models import KnowledgeBase
 from .meta_status import GraphError, check_channel, subscribe_page
+from .meta_connect import unsubscribe_page
 from .media import PHOTO_ERROR, UPLOAD_PREFIXES, MediaError, has_photo, is_own_upload, photo_keys, presign_chat_photo, uploaded_photo_ok
 from .media_store import store_message_media, store_outbound_photo
 from agents.image_search import NotAnImage
-from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
+from .models import META_CHANNELS, ChannelCredential, Conversation, CustomerContact, Message, Platform
 from .credential_crypto import encrypt_credentials
 from .service.conversation_service import create_conversation
 from .tasks import photo_note_text
@@ -1010,6 +1011,18 @@ class ChannelDetailView(APIView):
 			}, status=status.HTTP_404_NOT_FOUND)
 
 		_verify_project_access(request.user, channel.project)
+
+		if channel.channel in META_CHANNELS:
+			creds = channel.get_credentials()
+			if getattr(creds, "connected_via", "") == "oauth":
+				# Another active row for the same Page still needs its webhook subscription
+				shared = ChannelCredential.objects.filter(project=channel.project, is_active=True,
+					credentials__page_id=creds.page_id).exclude(id=channel.id).exists()
+				if not shared:
+					try:
+						unsubscribe_page(creds.page_id, creds.page_access_token)
+					except GraphError as exc:
+						logger.warning("Could not unsubscribe Page %s on channel delete: %s", creds.page_id, exc)
 
 		channel.delete()
 

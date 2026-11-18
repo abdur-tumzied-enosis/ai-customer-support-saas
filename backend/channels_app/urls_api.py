@@ -24,7 +24,7 @@ from .api import (
 	ChannelStatusView,
 	ChannelSubscribeView,
 )
-from .api_meta import MetaTokenView, MetaConnectView
+from .api_meta import MetaTokenView, MetaConnectView, MetaDeauthorizeView
 
 urlpatterns = [
 	# Platform endpoints
@@ -39,6 +39,7 @@ urlpatterns = [
 	# Meta self-serve connect
 	path("meta/token", MetaTokenView.as_view(), name="meta-token"),
 	path("meta/connect", MetaConnectView.as_view(), name="meta-connect"),
+	path("meta/deauthorize", MetaDeauthorizeView.as_view(), name="meta-deauthorize"),
 	
 	# Legacy endpoints
 	path("facebook/config", FacebookConfigView.as_view(), name="facebook-config"),
