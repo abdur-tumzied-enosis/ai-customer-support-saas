@@ -18,7 +18,6 @@ from channels_app.models import ChannelCredential, FacebookCredentials, Instagra
 GRAPH_URL = "https://graph.facebook.com/v21.0"
 TIMEOUT = 10
 SUBSCRIBED_FIELDS = "messages,messaging_postbacks"
-MANAGE_PERMS = {"ADMIN", "MODERATE"}
 SETUP_TTL_SECONDS = 600
 SETUP_CACHE_PREFIX = "meta_setup:"
 SETUP_CLAIM_PREFIX = "meta_setup_claim:"
@@ -72,11 +71,7 @@ def get_meta_user_id(user_token: str) -> str:
 
 
 def _can_manage(item: dict) -> bool:
-	perms = item.get("perms")
-	if isinstance(perms, str):
-		perms = perms.split(",")
-	if perms:
-		return bool(MANAGE_PERMS & {str(p).strip() for p in perms})
+	# Graph v21 rejects the perms field on /me/accounts for this app, so tasks is the only role signal
 	return "MANAGE" in (item.get("tasks") or [])
 
 
@@ -84,7 +79,7 @@ def list_manageable_pages(user_token: str) -> list[dict]:
 	pages = []
 	url = f"{GRAPH_URL}/me/accounts"
 	params = {
-		"fields": "id,name,access_token,perms,tasks,instagram_business_account{id,username}",
+		"fields": "id,name,access_token,tasks,instagram_business_account{id,username}",
 		"limit": 100,
 		"access_token": user_token,
 	}

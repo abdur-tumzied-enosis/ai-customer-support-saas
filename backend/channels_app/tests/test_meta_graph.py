@@ -60,26 +60,26 @@ class MetaGraphTest(SimpleTestCase):
 				exchange_long_lived_token("bad")
 		assert str(ctx.exception) == "Invalid token"
 
-	def test_page_listing_keeps_admins_moderators_and_tasks_manage_and_extracts_instagram(self):
+	def test_page_listing_keeps_manage_tasks_only_and_extracts_instagram(self):
 		payload = {"data": [
-			{"id": "1", "name": "Admin Page", "access_token": "p1", "perms": ["ADMIN"],
+			{"id": "1", "name": "Admin Page", "access_token": "p1", "tasks": ["MANAGE", "MESSAGING"],
 				"instagram_business_account": {"id": "ig1", "username": "shop"}},
-			{"id": "2", "name": "Viewer Page", "access_token": "p2", "perms": ["READ"],
+			{"id": "2", "name": "Viewer Page", "access_token": "p2", "tasks": ["MESSAGING"],
 				"instagram_business_account": None},
-			{"id": "3", "name": "Moderator Page", "access_token": "p3", "perms": "MODERATE"},
-			{"id": "4", "name": "Tasks Page", "access_token": "p4", "tasks": ["MESSAGING", "MANAGE"]},
+			{"id": "3", "name": "Tasks Page", "access_token": "p3", "tasks": ["MANAGE"]},
 		]}
-		with mock.patch("channels_app.meta_connect.requests.get", return_value=_resp(payload)):
+		with mock.patch("channels_app.meta_connect.requests.get", return_value=_resp(payload)) as get:
 			pages = list_manageable_pages("long")
-		assert [p["id"] for p in pages] == ["1", "3", "4"]
+		assert "perms" not in get.call_args.kwargs["params"]["fields"]
+		assert [p["id"] for p in pages] == ["1", "3"]
 		assert pages[0]["instagram_account_id"] == "ig1"
 		assert pages[0]["instagram_username"] == "shop"
 		assert pages[1]["instagram_account_id"] == ""
 
 	def test_page_listing_follows_pagination(self):
-		first = {"data": [{"id": "1", "name": "A", "access_token": "a", "perms": ["ADMIN"]}],
+		first = {"data": [{"id": "1", "name": "A", "access_token": "a", "tasks": ["MANAGE"]}],
 			"paging": {"next": "https://graph.facebook.com/next"}}
-		second = {"data": [{"id": "2", "name": "B", "access_token": "b", "perms": ["ADMIN"]}]}
+		second = {"data": [{"id": "2", "name": "B", "access_token": "b", "tasks": ["MANAGE"]}]}
 		with mock.patch("channels_app.meta_connect.requests.get", side_effect=[_resp(first), _resp(second)]):
 			assert [p["id"] for p in list_manageable_pages("long")] == ["1", "2"]
 
