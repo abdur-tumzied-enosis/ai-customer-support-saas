@@ -18,7 +18,7 @@ type Props = { projectId: string; kbId: string; onBack: () => void };
 // Why turning orders on is blocked, in words the user can act on.
 const BLOCK_REASON: Record<string, string> = {
 	channel: "Connect a channel first. Open Channels.",
-	product_source: "Add product information first. Open Knowledge.",
+	product_source: "Add product information first. Open Agent Memory.",
 };
 
 // Step 2. Zone A adds products from the website; zone B is your products, with the rows that need a price first.
@@ -147,7 +147,7 @@ export default function SetupStepProducts({ projectId, kbId, onBack }: Props) {
 					<div className="flex flex-col gap-1 sm:items-end">
 						{needPrice > 0 && active > 0 && (
 							<p className="text-sm text-amber-700 dark:text-amber-400">
-								{needPrice} products without a price stay hidden until you add one in Knowledge &gt; Products.
+								{needPrice} products without a price stay hidden until you add one in Agent Memory &gt; Products.
 							</p>
 						)}
 						{reason && (

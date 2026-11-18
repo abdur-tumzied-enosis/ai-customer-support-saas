@@ -22,7 +22,7 @@ const links = [
 	{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
 	{ href: "/conversations", label: "Conversations", icon: MessageSquare },
 	{ href: "/orders", label: "Orders", icon: ShoppingBag },
-	{ href: "/knowledge", label: "Knowledge", icon: BookOpen },
+	{ href: "/knowledge", label: "Agent Memory", icon: BookOpen },
 	{ href: "/channels", label: "Channels", icon: Radio },
 	{ href: "/widgets", label: "Website widget", icon: MessagesSquare },
 	{ href: "/analytics", label: "Analytics", icon: BarChart3 },

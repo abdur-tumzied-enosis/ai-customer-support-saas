@@ -31,7 +31,7 @@ export default function KnowledgeSectionNav({ active, activeOnDesktopOnly = fals
 	const { productStats, suggestionCount } = useKnowledge();
 
 	return (
-		<nav aria-label="Knowledge sections">
+		<nav aria-label="Agent Memory sections">
 			<ul className="space-y-1">
 				{KNOWLEDGE_SECTIONS.map(({ slug, name, icon: Icon }) => {
 					const isActive = slug === active;

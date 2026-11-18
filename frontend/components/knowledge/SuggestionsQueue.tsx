@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { suggestionApi, type MemorySuggestion } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 
-const KIND_LABEL = { knowledge: "Knowledge · Q&A", instruction: "Instruction" } as const;
+const KIND_LABEL = { knowledge: "Agent Memory · Q&A", instruction: "Instruction" } as const;
 
 // Lessons the bot drafted from staff answers and handoffs. Nothing reaches the bot until someone approves it.
 type Props = {
