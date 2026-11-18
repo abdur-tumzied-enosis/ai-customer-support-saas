@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 
 import requests
@@ -22,28 +23,37 @@ SETUP_TTL_SECONDS = 600
 SETUP_CACHE_PREFIX = "meta_setup:"
 SETUP_CLAIM_PREFIX = "meta_setup_claim:"
 
+logger = logging.getLogger(__name__)
+
 
 class PageConflict(Exception):
 	pass
 
 
-def _json(resp) -> dict:
+def _json(resp, method: str, path: str) -> dict:
 	try:
 		body = resp.json()
 	except ValueError:
 		body = {}
 	if resp.status_code != 200 or "error" in body:
-		raise GraphError((body.get("error") or {}).get("message") or "Meta request failed")
+		# Log Meta's error fields only: never the request URL or params, which carry tokens and the app secret
+		err = body.get("error") or {}
+		logger.warning("Meta %s %s failed: http=%s code=%s subcode=%s type=%s message=%s fbtrace_id=%s",
+			method, path, resp.status_code, err.get("code"), err.get("error_subcode"), err.get("type"),
+			err.get("message"), err.get("fbtrace_id"))
+		raise GraphError(err.get("message") or "Meta request failed")
 	return body
 
 
 def _call(method: str, url: str, **kwargs) -> dict:
+	path = url.split("?", 1)[0].replace(GRAPH_URL, "")
 	try:
 		resp = getattr(requests, method)(url, timeout=TIMEOUT, **kwargs)
-	except requests.RequestException:
+	except requests.RequestException as exc:
 		# The exception text embeds the request URL, which carries tokens and the app secret; never surface it
+		logger.warning("Meta %s %s: no response (%s)", method.upper(), path, type(exc).__name__)
 		raise GraphError("Could not reach Meta") from None
-	return _json(resp)
+	return _json(resp, method.upper(), path)
 
 
 def exchange_long_lived_token(short_lived_token: str) -> str:

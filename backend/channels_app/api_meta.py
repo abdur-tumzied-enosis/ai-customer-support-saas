@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -9,6 +11,8 @@ from . import meta_connect
 from .api import _get_project
 from .meta_status import GraphError
 from .models import ChannelCredential
+
+logger = logging.getLogger(__name__)
 
 
 def _error(code: str, message: str, http_status: int):
@@ -38,17 +42,21 @@ class MetaTokenView(APIView):
 		project = _get_project(request.user, project_slug)
 		kb = KnowledgeBase.objects.filter(project=project, is_default=True).first()
 		if kb is None:
+			logger.warning("Meta token: project=%s has no default knowledge base", project.id)
 			return _error("no_default_knowledge_base",
 				"Set a default knowledge base for this project before connecting Meta",
 				status.HTTP_400_BAD_REQUEST)
 
+		logger.info("Meta token: exchanging login token with app_id=%s project=%s", settings.META_APP_ID, project.id)
 		try:
 			long_token = meta_connect.exchange_long_lived_token(access_token)
 			meta_user_id = meta_connect.get_meta_user_id(long_token)
 			pages = meta_connect.list_manageable_pages(long_token)
 		except GraphError as exc:
+			logger.warning("Meta token: stopped at Graph call, project=%s, reason=%s", project.id, exc)
 			return _error("meta_error", str(exc), status.HTTP_502_BAD_GATEWAY)
 
+		logger.info("Meta token: user=%s manageable_pages=%d", meta_user_id, len(pages))
 		if not pages:
 			return _error("no_pages", "No Facebook Pages you manage were found", status.HTTP_400_BAD_REQUEST)
 
@@ -110,10 +118,12 @@ class MetaConnectView(APIView):
 			rows = meta_connect.connect_page(project, page, kb, session["meta_user_id"])
 		except meta_connect.PageConflict:
 			meta_connect.release_setup_session(setup_id)
+			logger.warning("Meta connect: page=%s already active in another project", page_id)
 			return _error("page_connected_elsewhere",
 				"This Page is already connected to another project", status.HTTP_409_CONFLICT)
 		except GraphError as exc:
 			meta_connect.release_setup_session(setup_id)
+			logger.warning("Meta connect: page=%s stopped at Graph call, reason=%s", page_id, exc)
 			return _error("meta_error", str(exc), status.HTTP_502_BAD_GATEWAY)
 		except Exception:
 			meta_connect.release_setup_session(setup_id)
