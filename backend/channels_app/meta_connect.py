@@ -20,6 +20,7 @@ SUBSCRIBED_FIELDS = "messages,messaging_postbacks"
 MANAGE_PERMS = {"ADMIN", "MODERATE"}
 SETUP_TTL_SECONDS = 600
 SETUP_CACHE_PREFIX = "meta_setup:"
+SETUP_CLAIM_PREFIX = "meta_setup_claim:"
 
 
 class PageConflict(Exception):
@@ -141,6 +142,16 @@ def read_setup_session(setup_id: str) -> dict | None:
 	if cached is None:
 		return None
 	return json.loads(decrypt_secret(cached))
+
+
+def claim_setup_session(setup_id: str) -> bool:
+	# cache.add is atomic: exactly one of several concurrent connects for one setup wins the claim
+	return cache.add(f"{SETUP_CLAIM_PREFIX}{setup_id}", 1, timeout=SETUP_TTL_SECONDS)
+
+
+def release_setup_session(setup_id: str) -> None:
+	# A failed connect frees the claim so the customer can retry with the same setup_id
+	cache.delete(f"{SETUP_CLAIM_PREFIX}{setup_id}")
 
 
 def consume_setup_session(setup_id: str) -> dict | None:

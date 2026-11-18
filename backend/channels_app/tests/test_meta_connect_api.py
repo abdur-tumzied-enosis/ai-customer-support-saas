@@ -196,3 +196,30 @@ class MetaConnectApiTest(TestCase):
 			credentials={"page_id": "p9", "page_access_token": "t", "connected_via": "oauth"})
 		assert self.client.delete(f"/api/channels/channels/{row.id}").status_code == 200
 		assert not ChannelCredential.objects.filter(id=row.id).exists()
+
+	def test_parallel_submit_of_one_setup_connects_once(self):
+		res, _ = self.token()
+		setup_id = res.data["data"]["setup_id"]
+		nested = {}
+
+		def second_submit_while_first_is_connecting(*args, **kwargs):
+			nested["res"] = self.connect(setup_id, "p1")
+		with mock.patch("channels_app.meta_connect.subscribe_page_for_oauth",
+				side_effect=second_submit_while_first_is_connecting):
+			first = self.client.post("/api/channels/meta/connect",
+				{"project_slug": "p-meta", "setup_id": setup_id, "page_id": "p1"}, format="json")
+		assert first.status_code == 200
+		assert nested["res"].status_code == 400
+		assert ChannelCredential.objects.filter(project=self.project).count() == 2
+
+	@mock.patch("channels_app.api.unsubscribe_page")
+	def test_deleting_a_stale_row_keeps_a_page_another_project_is_using(self, unsubscribe):
+		other = Project.objects.create(name="Other", slug="p-other-live")
+		ChannelCredential.objects.create(project=other, channel="facebook", is_active=True,
+			credentials={"page_id": "p1", "page_access_token": "tok-live", "connected_via": "oauth",
+				"meta_user_id": "u9"})
+		stale = ChannelCredential.objects.create(project=self.project, channel="facebook", is_active=False,
+			credentials={"page_id": "p1", "page_access_token": "tok-stale", "connected_via": "oauth",
+				"meta_user_id": "mu1"})
+		assert self.client.delete(f"/api/channels/channels/{stale.id}").status_code == 200
+		unsubscribe.assert_not_called()

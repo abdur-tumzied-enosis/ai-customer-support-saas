@@ -60,3 +60,37 @@ class ChannelCreateWithoutCredentialsTest(TestCase):
 		cred = ChannelCredential.objects.get(project=self.project, name="Main FB")
 		self.assertTrue(cred.credentials["verify_token"])
 		self.assertNotIn("page_id", cred.credentials)
+
+
+@override_settings(TOKEN_ENCRYPTION_KEY="")
+class ManualWriteWithoutEncryptionKeyTest(TestCase):
+	def setUp(self):
+		user = get_user_model().objects.create_user(username="k@x.com", email="k@x.com", password="pw-12345678")
+		self.project = Project.objects.create(name="P", slug="p-nokey")
+		ProjectUser.objects.create(project=self.project, user=user, role="admin")
+		self.client = APIClient()
+		self.client.force_authenticate(user=user)
+		self.channel = ChannelCredential.objects.create(
+			project=self.project, channel="facebook", name="FB",
+			credentials={"page_id": "123", "page_access_token": "tok", "meta_app_id": "app1",
+				"meta_app_secret": "sec", "verify_token": "vt"},
+		)
+
+	def test_creating_a_token_channel_without_the_key_is_refused_with_a_clear_error(self):
+		res = self.client.post("/api/channels/channels", {
+			"project_slug": "p-nokey", "name": "New FB", "channel": "facebook",
+			"credentials": {"page_id": "9", "page_access_token": "tok9", "meta_app_id": "a", "meta_app_secret": "s"},
+		}, format="json")
+		assert res.status_code == 503 and res.data["error"]["code"] == "encryption_not_configured"
+		assert not ChannelCredential.objects.filter(name="New FB").exists()
+
+	def test_changing_a_token_without_the_key_is_refused_and_keeps_the_old_token(self):
+		res = self.client.patch(f"/api/channels/channels/{self.channel.id}",
+			{"credentials": {"page_access_token": "new-tok"}}, format="json")
+		assert res.status_code == 503 and res.data["error"]["code"] == "encryption_not_configured"
+		self.channel.refresh_from_db()
+		assert self.channel.credentials["page_access_token"] == "tok"
+
+	def test_name_only_edit_still_works_without_the_key(self):
+		res = self.client.patch(f"/api/channels/channels/{self.channel.id}", {"name": "Renamed"}, format="json")
+		assert res.status_code == 200

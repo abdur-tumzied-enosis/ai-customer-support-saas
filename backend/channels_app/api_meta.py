@@ -102,15 +102,24 @@ class MetaConnectView(APIView):
 				"Set a default knowledge base for this project before connecting Meta",
 				status.HTTP_400_BAD_REQUEST)
 
+		# Claim before connecting so a parallel submit of the same setup cannot create duplicate rows
+		if not meta_connect.claim_setup_session(setup_id):
+			return _error("invalid_setup", "This Meta setup is already being connected. Start the connection again.",
+				status.HTTP_400_BAD_REQUEST)
 		try:
 			rows = meta_connect.connect_page(project, page, kb, session["meta_user_id"])
 		except meta_connect.PageConflict:
+			meta_connect.release_setup_session(setup_id)
 			return _error("page_connected_elsewhere",
 				"This Page is already connected to another project", status.HTTP_409_CONFLICT)
 		except GraphError as exc:
+			meta_connect.release_setup_session(setup_id)
 			return _error("meta_error", str(exc), status.HTTP_502_BAD_GATEWAY)
+		except Exception:
+			meta_connect.release_setup_session(setup_id)
+			raise
 
-		# Consume only after success so a failed connect can be retried with the same setup_id
+		# Consume only after success; a failed connect keeps the session for a retry
 		meta_connect.consume_setup_session(setup_id)
 		return Response({"success": True, "data": {
 			"connected": True, "channels": [_channel_dict(r) for r in rows]}})
