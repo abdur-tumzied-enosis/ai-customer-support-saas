@@ -7,7 +7,6 @@ import { CheckCircle2, AlertCircle, XCircle, Loader2, RefreshCw } from "lucide-r
 import { channelApi, type ChannelStatus } from "@/lib/api";
 import { formatError } from "@/lib/errors";
 import { useToast } from "@/components/ui/toast";
-import CopyField from "@/components/channels/CopyField";
 
 type Props = {
 	channelId: string | null;
@@ -75,7 +74,7 @@ export default function ConnectionStatusDialog({ channelId, channelName, open, o
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-lg">
+			<DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
 				<DialogHeader>
 					<DialogTitle>Connection status: {channelName}</DialogTitle>
 					<DialogDescription>
@@ -102,15 +101,6 @@ export default function ConnectionStatusDialog({ channelId, channelName, open, o
 									? status.error
 									: `${missingCount} item${missingCount === 1 ? "" : "s"} need attention.`}
 						</p>
-
-						<div className="space-y-3 rounded-md bg-muted/40 p-3">
-							<p className="text-xs text-muted-foreground">
-								In Meta, open your app, go to Webhooks, choose Page (or Instagram), paste these two values,
-								click Verify and save, then subscribe the messages field.
-							</p>
-							<CopyField label="Callback URL" value={status.webhook.callback_url} />
-							<CopyField label="Verify token" value={status.webhook.verify_token} />
-						</div>
 
 						{status.checks.length > 0 && (
 							<ul className="divide-y rounded-md border">
