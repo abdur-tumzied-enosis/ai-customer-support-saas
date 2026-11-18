@@ -59,7 +59,7 @@ function KnowledgeShell({ children }: { children: React.ReactNode }) {
 							className="inline-flex items-center gap-1 rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
 						>
 							<ArrowLeft className="h-4 w-4" />
-							Knowledge
+							Agent Memory
 						</Link>
 					)}
 					{children}

@@ -13,7 +13,7 @@ import { formatError } from "@/lib/errors";
 // The two checks that block ordering outright. Delivery and product codes are handled inside the setup flow.
 const BLOCKERS: Record<string, { href: Route; label: string }> = {
 	channel: { href: "/channels" as Route, label: "Open Channels" },
-	product_source: { href: "/knowledge/documents" as Route, label: "Open Knowledge" },
+	product_source: { href: "/knowledge/documents" as Route, label: "Open Agent Memory" },
 };
 
 // One line per setup state; the setup flow itself shows the detail.
