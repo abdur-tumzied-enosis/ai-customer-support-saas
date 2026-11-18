@@ -24,3 +24,4 @@ django-storages[s3]==1.14.4
 # boto3 1.36+ adds default CRC checksums R2 rejects unless the client is configured for it; stay below until needed
 boto3==1.35.99
 tinytag==2.1.1
+cryptography==44.0.0

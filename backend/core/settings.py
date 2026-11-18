@@ -205,6 +205,8 @@ RERANK_MIN_SCORE = env.float("RERANK_MIN_SCORE", default=0.2)
 META_APP_ID = env("META_APP_ID", default="")
 META_APP_SECRET = env("META_APP_SECRET", default="")
 FB_VERIFY_TOKEN = env("FB_VERIFY_TOKEN", default="verify-token")
+META_VERIFY_TOKEN = env("META_VERIFY_TOKEN", default="")
+TOKEN_ENCRYPTION_KEY = env("TOKEN_ENCRYPTION_KEY", default="")  # Fernet key; required to store Meta tokens
 PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", default="")  # how Meta reaches this backend (ngrok/domain); "" → request host
 
 # Credit top-ups: Telegram alert + bKash number customers pay to
