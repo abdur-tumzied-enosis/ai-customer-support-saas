@@ -15,7 +15,7 @@ from channels_app.credential_crypto import decrypt_secret, encrypt_secret
 from channels_app.meta_status import GraphError
 from channels_app.models import ChannelCredential, FacebookCredentials, InstagramCredentials, Platform
 
-GRAPH_URL = "https://graph.facebook.com/v21.0"
+GRAPH_URL = "https://graph.facebook.com/v27.0"
 TIMEOUT = 10
 SUBSCRIBED_FIELDS = "messages,messaging_postbacks"
 SETUP_TTL_SECONDS = 600
