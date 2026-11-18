@@ -1,11 +1,15 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from accounts.models import Project, ProjectUser
+from channels_app.credential_crypto import ENC_PREFIX, decrypt_credentials
 from channels_app.models import ChannelCredential
 
+TEST_KEY = "DdZ_qWzIlhW-IcbMX1pHYAAqQNYv9h9rcyfDRCeRwPY="
 
+
+@override_settings(TOKEN_ENCRYPTION_KEY=TEST_KEY)
 class ChannelCredentialMergeTest(TestCase):
 	def setUp(self):
 		user = get_user_model().objects.create_user(username="c@x.com", email="c@x.com", password="pw-12345678")
@@ -26,7 +30,8 @@ class ChannelCredentialMergeTest(TestCase):
 		res = self._patch({"verify_token": "new-vt"})
 		self.assertEqual(res.status_code, 200)
 		self.channel.refresh_from_db()
-		self.assertEqual(self.channel.credentials, {
+		self.assertTrue(self.channel.credentials["page_access_token"].startswith(ENC_PREFIX))
+		self.assertEqual(decrypt_credentials(self.channel.credentials), {
 			"page_id": "123", "page_access_token": "tok", "meta_app_id": "app1",
 			"meta_app_secret": "sec", "verify_token": "new-vt",
 		})
@@ -35,9 +40,10 @@ class ChannelCredentialMergeTest(TestCase):
 		self._patch({"meta_app_secret": "   ", "page_access_token": "tok2"})
 		self.channel.refresh_from_db()
 		self.assertEqual(self.channel.credentials["meta_app_secret"], "sec")
-		self.assertEqual(self.channel.credentials["page_access_token"], "tok2")
+		self.assertEqual(decrypt_credentials(self.channel.credentials)["page_access_token"], "tok2")
 
 
+@override_settings(TOKEN_ENCRYPTION_KEY=TEST_KEY)
 class ChannelCreateWithoutCredentialsTest(TestCase):
 	def setUp(self):
 		user = get_user_model().objects.create_user(username="n@x.com", email="n@x.com", password="pw-12345678")

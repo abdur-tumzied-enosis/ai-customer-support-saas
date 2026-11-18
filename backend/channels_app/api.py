@@ -14,6 +14,7 @@ from .media import PHOTO_ERROR, UPLOAD_PREFIXES, MediaError, has_photo, is_own_u
 from .media_store import store_message_media, store_outbound_photo
 from agents.image_search import NotAnImage
 from .models import ChannelCredential, Conversation, CustomerContact, Message, Platform
+from .credential_crypto import encrypt_credentials
 from .service.conversation_service import create_conversation
 from .tasks import photo_note_text
 from .service.message_service import create_ui_message
@@ -793,6 +794,7 @@ class ChannelListCreateView(APIView):
 		if any(f.get("name") == "verify_token" for f in platform.credential_schema or []) and not credentials.get("verify_token"):
 			credentials["verify_token"] = secrets.token_urlsafe(24)
 
+		credentials = encrypt_credentials(credentials)
 		# Create channel credential
 		channel_cred = ChannelCredential.objects.create(
 			project=project,
@@ -923,7 +925,7 @@ class ChannelDetailView(APIView):
 			from dataclasses import asdict
 			base = dict(channel.credentials or {}) or asdict(channel.get_credentials())  # legacy columns when JSON is empty
 			incoming = {k: v for k, v in (request.data["credentials"] or {}).items() if str(v or "").strip()}
-			channel.credentials = {**base, **incoming}
+			channel.credentials = encrypt_credentials({**base, **incoming})
 			update_fields.append("credentials")
 
 		if "is_active" in request.data:
