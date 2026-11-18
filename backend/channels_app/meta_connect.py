@@ -7,9 +7,12 @@ import secrets
 import requests
 from django.conf import settings
 from django.core.cache import cache
+from django.db import transaction
+from django.db.models import Q
 
 from channels_app.credential_crypto import decrypt_secret, encrypt_secret
 from channels_app.meta_status import GraphError
+from channels_app.models import ChannelCredential, FacebookCredentials, InstagramCredentials, Platform
 
 GRAPH_URL = "https://graph.facebook.com/v21.0"
 TIMEOUT = 10
@@ -146,3 +149,35 @@ def consume_setup_session(setup_id: str) -> dict | None:
 	if payload is None:
 		return None
 	return payload if cache.delete(_session_key(setup_id)) else None
+
+
+def connect_page(project, page: dict, knowledge_base, meta_user_id: str) -> list[ChannelCredential]:
+	page_id = page["id"]
+	ig_id = page.get("instagram_account_id") or ""
+	owner = Q(credentials__page_id=page_id)
+	if ig_id:
+		owner |= Q(credentials__instagram_account_id=ig_id)
+	if ChannelCredential.objects.filter(owner, is_active=True).exclude(project=project).exists():
+		raise PageConflict(page_id)
+	# Subscribe before any local write so a Graph failure leaves existing rows untouched
+	subscribe_page_for_oauth(page_id, page["access_token"])
+	common = {"page_id": page_id, "page_access_token": page["access_token"],
+		"meta_app_id": settings.META_APP_ID, "connected_via": "oauth", "meta_user_id": meta_user_id}
+	targets = [("facebook", f"Messenger — {page['name']}", FacebookCredentials(**common))]
+	if ig_id:
+		targets.append(("instagram", f"Instagram — @{page.get('instagram_username', '')}",
+			InstagramCredentials(instagram_account_id=ig_id, **common)))
+	rows = []
+	with transaction.atomic():
+		for channel, name, creds in targets:
+			row = ChannelCredential.objects.filter(project=project, channel=channel,
+				credentials__page_id=page_id).first()
+			if row is None:
+				row = ChannelCredential(project=project, channel=channel, name=name,
+					platform=Platform.objects.filter(name=channel).first())
+			row.set_credentials(creds)  # encrypts the token and drops stale app secret / verify token keys
+			row.knowledge_base = knowledge_base
+			row.is_active = True
+			row.save()
+			rows.append(row)
+	return rows

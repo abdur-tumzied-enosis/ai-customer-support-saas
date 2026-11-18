@@ -733,6 +733,7 @@ class ChannelListCreateView(APIView):
 				"is_active": channel.is_active,
 				"image_search_enabled": channel.image_search_enabled,
 				"is_configured": channel.is_configured(),
+				"connected_via": (channel.credentials or {}).get("connected_via"),
 				"created_at": channel.created_at.isoformat(),
 				"updated_at": channel.updated_at.isoformat(),
 			})
